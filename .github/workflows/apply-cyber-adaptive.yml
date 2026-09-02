@@ -1,0 +1,73 @@
+name: Apply cyber adaptive integration
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/cyber-rule-expansion-adaptive-learning
+    paths:
+      - scripts/apply-cyber-adaptive.py
+      - .github/workflows/apply-cyber-adaptive.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-cyber-adaptive-integration
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/cyber-rule-expansion-adaptive-learning
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+
+      - name: Apply integration patch
+        run: python3 scripts/apply-cyber-adaptive.py
+
+      - name: Validate source
+        run: |
+          set -euo pipefail
+          gofmt -w ./cmd ./internal
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          bash -n scripts/e2e.sh scripts/deploy-local.sh scripts/init-env.sh scripts/doctor.sh
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          POSTGRES_PASSWORD=ci-postgres-password-with-sufficient-length \
+          MASTER_KEY_B64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
+          JWT_SECRET=ci-jwt-secret-0123456789abcdef0123456789abcdef \
+          BOOTSTRAP_ADMIN_PASSWORD=ci-admin-password-with-sufficient-length \
+          docker compose config --quiet
+
+      - name: Commit applied integration
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            internal/platform/audit.go \
+            internal/platform/adaptive_rules.go \
+            internal/platform/migrations/003_cyber_coverage_and_adaptive_learning.sql \
+            internal/platform/gateway.go \
+            cmd/mockprovider/main.go \
+            scripts/e2e.sh
+          if git diff --cached --quiet; then
+            echo "Integration already applied."
+            exit 0
+          fi
+          git commit -m "feat(cyber): integrate adaptive provider-failure learning [cyber-adaptive-applied]"
+          git push origin HEAD:feat/cyber-rule-expansion-adaptive-learning
