@@ -27,7 +27,9 @@ agent-driven exfiltration, model theft, or AI resource attacks. Review ambiguous
 reverse-shell, container/Kubernetes, prompt-injection, and agent-tool requests rather than hard-blocking solely
 on keywords. Allow benign development, defensive security, incident response, detection/remediation, education,
 CTF or sandbox work, authorized testing, and high-level discussion unless the requested outcome supplies harmful
-operational capability against real systems or victims. Return one compact JSON object only:
+operational capability against real systems or victims. Do not reveal chain-of-thought and do not emit <think>
+blocks, Markdown, or explanatory prose. Return the final compact JSON object immediately. Keep reason under 120
+characters:
 {"decision":"allow|block|review","risk_code":"CYBER_* or empty","category":"...","confidence":0.0,"reason":"brief"}`
 
 type compiledRule struct {
@@ -37,15 +39,20 @@ type compiledRule struct {
 }
 
 type AuditEngine struct {
-	store           *Store
-	security        *Security
-	client          *http.Client
-	maxTextBytes    int
-	refreshInterval time.Duration
-	log             *slog.Logger
-	rules           atomic.Value
-	adaptivePolicy  atomic.Value
-	adaptiveQueue   chan adaptiveFailureSample
+	store                     *Store
+	security                  *Security
+	client                    *http.Client
+	maxTextBytes              int
+	outputMaxTokens           int
+	disableThinking           bool
+	longContextThresholdBytes int
+	longContextTimeout        time.Duration
+	promptTruncateTokens      int
+	refreshInterval           time.Duration
+	log                       *slog.Logger
+	rules                     atomic.Value
+	adaptivePolicy            atomic.Value
+	adaptiveQueue             chan adaptiveFailureSample
 }
 
 func NewAuditEngine(
@@ -64,10 +71,15 @@ func NewAuditEngine(
 				return errors.New("audit endpoint redirects are disabled")
 			},
 		},
-		maxTextBytes:    cfg.AuditTextMaxBytes,
-		refreshInterval: cfg.RulesRefreshInterval,
-		log:             log,
-		adaptiveQueue:   make(chan adaptiveFailureSample, adaptiveLearningQueueSize),
+		maxTextBytes:              cfg.AuditTextMaxBytes,
+		outputMaxTokens:           cfg.AuditOutputMaxTokens,
+		disableThinking:           cfg.AuditDisableThinking,
+		longContextThresholdBytes: cfg.AuditLongContextThresholdBytes,
+		longContextTimeout:        cfg.AuditLongContextTimeout,
+		promptTruncateTokens:      cfg.AuditPromptTruncateTokens,
+		refreshInterval:           cfg.RulesRefreshInterval,
+		log:                       log,
+		adaptiveQueue:             make(chan adaptiveFailureSample, adaptiveLearningQueueSize),
 	}
 	engine.rules.Store([]compiledRule{})
 	engine.adaptivePolicy.Store(defaultAdaptiveRulePolicy())
@@ -325,13 +337,14 @@ func (e *AuditEngine) callModel(
 	if systemPrompt == "" {
 		systemPrompt = DefaultAuditSystemPrompt
 	}
+	systemPrompt = appendFastAuditDirective(systemPrompt)
 	payload := map[string]any{
 		"model":       profile.Model,
 		"temperature": 0,
-		"max_tokens":  300,
+		"max_tokens":  e.outputMaxTokens,
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": text},
+			{"role": "user", "content": e.auditUserContent(profile, text)},
 		},
 	}
 	if len(profile.Extra) > 0 {
@@ -347,14 +360,12 @@ func (e *AuditEngine) callModel(
 			}
 		}
 	}
+	e.applyFastAuditDefaults(profile, payload)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return AuditDecision{}, newAuditModelCallError("request_encode", 0, "encode audit model request", err)
 	}
-	timeout := time.Duration(profile.TimeoutMS) * time.Millisecond
-	if timeout <= 0 {
-		timeout = 8 * time.Second
-	}
+	timeout := e.auditRequestTimeout(profile, len(text))
 	requestContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(

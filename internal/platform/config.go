@@ -12,105 +12,115 @@ import (
 )
 
 type Config struct {
-	Environment                  string
-	HTTPAddr                     string
-	DatabaseURL                  string
-	PostgresMaxConns             int32
-	PostgresMinConns             int32
-	RedisURL                     string
-	RedisStreamMaxLen            int64
-	KafkaEnabled                 bool
-	KafkaBrokers                 []string
-	KafkaTopic                   string
-	KafkaClientID                string
-	KafkaTLS                     bool
-	KafkaSASLMechanism           string
-	KafkaUsername                string
-	KafkaPassword                string
-	KafkaQueueSize               int
-	KafkaTopicPartitions         int
-	KafkaTopicReplicationFactor  int
-	MasterKey                    []byte
-	JWTSecret                    []byte
-	JWTIssuer                    string
-	JWTTTL                       time.Duration
-	BootstrapAdminUsername       string
-	BootstrapAdminPassword       string
-	BootstrapTrackingKeyID       string
-	BootstrapTrackingSecret      string
-	DefaultAuditEndpoint         string
-	DefaultAuditModel            string
-	DefaultAuditAPIKey           string
-	DefaultAuditTimeout          time.Duration
-	DefaultAuditBlockThreshold   float64
-	RetentionDays                int
-	ErrorHTTPStatus              int
-	RequestMaxBytes              int64
-	ResponseInspectMaxBytes      int64
-	AuditTextMaxBytes            int
-	SSELineMaxBytes              int
-	TraceQueueSize               int
-	TraceBatchSize               int
-	TraceFlushInterval           time.Duration
-	AllowPrivateUpstreams        bool
-	UpstreamTLSMinVersion        uint16
-	GlobalMaxConcurrency         int
-	TrackingClockSkew            time.Duration
-	TrackingNonceTTL             time.Duration
-	RouteCacheTTL                time.Duration
-	RulesRefreshInterval         time.Duration
-	PartitionMaintenanceInterval time.Duration
-	ShutdownTimeout              time.Duration
+	Environment                    string
+	HTTPAddr                       string
+	DatabaseURL                    string
+	PostgresMaxConns               int32
+	PostgresMinConns               int32
+	RedisURL                       string
+	RedisStreamMaxLen              int64
+	KafkaEnabled                   bool
+	KafkaBrokers                   []string
+	KafkaTopic                     string
+	KafkaClientID                  string
+	KafkaTLS                       bool
+	KafkaSASLMechanism             string
+	KafkaUsername                  string
+	KafkaPassword                  string
+	KafkaQueueSize                 int
+	KafkaTopicPartitions           int
+	KafkaTopicReplicationFactor    int
+	MasterKey                      []byte
+	JWTSecret                      []byte
+	JWTIssuer                      string
+	JWTTTL                         time.Duration
+	BootstrapAdminUsername         string
+	BootstrapAdminPassword         string
+	BootstrapTrackingKeyID         string
+	BootstrapTrackingSecret        string
+	DefaultAuditEndpoint           string
+	DefaultAuditModel              string
+	DefaultAuditAPIKey             string
+	DefaultAuditTimeout            time.Duration
+	DefaultAuditBlockThreshold     float64
+	RetentionDays                  int
+	ErrorHTTPStatus                int
+	RequestMaxBytes                int64
+	ResponseInspectMaxBytes        int64
+	AuditTextMaxBytes              int
+	AuditOutputMaxTokens           int
+	AuditDisableThinking           bool
+	AuditLongContextThresholdBytes int
+	AuditLongContextTimeout        time.Duration
+	AuditPromptTruncateTokens      int
+	SSELineMaxBytes                int
+	TraceQueueSize                 int
+	TraceBatchSize                 int
+	TraceFlushInterval             time.Duration
+	AllowPrivateUpstreams          bool
+	UpstreamTLSMinVersion          uint16
+	GlobalMaxConcurrency           int
+	TrackingClockSkew              time.Duration
+	TrackingNonceTTL               time.Duration
+	RouteCacheTTL                  time.Duration
+	RulesRefreshInterval           time.Duration
+	PartitionMaintenanceInterval   time.Duration
+	ShutdownTimeout                time.Duration
 }
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		Environment:                  envString("APP_ENV", "production"),
-		HTTPAddr:                     envString("HTTP_ADDR", ":8080"),
-		DatabaseURL:                  strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		PostgresMaxConns:             int32(envInt("POSTGRES_MAX_CONNS", 80)),
-		PostgresMinConns:             int32(envInt("POSTGRES_MIN_CONNS", 5)),
-		RedisURL:                     strings.TrimSpace(os.Getenv("REDIS_URL")),
-		RedisStreamMaxLen:            int64(envInt("REDIS_STREAM_MAXLEN", 100000)),
-		KafkaEnabled:                 envBool("KAFKA_ENABLED", false),
-		KafkaBrokers:                 splitCSV(os.Getenv("KAFKA_BROKERS")),
-		KafkaTopic:                   envString("KAFKA_TOPIC", "risk.request.events.v1"),
-		KafkaClientID:                envString("KAFKA_CLIENT_ID", "newapi-risk-platform"),
-		KafkaTLS:                     envBool("KAFKA_TLS", false),
-		KafkaSASLMechanism:           strings.ToLower(envString("KAFKA_SASL_MECHANISM", "")),
-		KafkaUsername:                os.Getenv("KAFKA_USERNAME"),
-		KafkaPassword:                os.Getenv("KAFKA_PASSWORD"),
-		KafkaQueueSize:               envInt("KAFKA_QUEUE_SIZE", 8192),
-		KafkaTopicPartitions:         envInt("KAFKA_TOPIC_PARTITIONS", 12),
-		KafkaTopicReplicationFactor:  envInt("KAFKA_TOPIC_REPLICATION_FACTOR", 1),
-		JWTIssuer:                    envString("JWT_ISSUER", "newapi-risk-platform"),
-		JWTTTL:                       envDuration("JWT_TTL", 8*time.Hour),
-		BootstrapAdminUsername:       envString("BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		BootstrapAdminPassword:       os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
-		BootstrapTrackingKeyID:       envString("BOOTSTRAP_TRACKING_KEY_ID", "newapi-default"),
-		BootstrapTrackingSecret:      os.Getenv("BOOTSTRAP_TRACKING_SECRET"),
-		DefaultAuditEndpoint:         strings.TrimRight(strings.TrimSpace(os.Getenv("AUDIT_DEFAULT_ENDPOINT")), "/"),
-		DefaultAuditModel:            envString("AUDIT_DEFAULT_MODEL", "audit-small"),
-		DefaultAuditAPIKey:           os.Getenv("AUDIT_DEFAULT_API_KEY"),
-		DefaultAuditTimeout:          envDuration("AUDIT_DEFAULT_TIMEOUT", 8*time.Second),
-		DefaultAuditBlockThreshold:   envFloat("AUDIT_DEFAULT_BLOCK_THRESHOLD", 0.65),
-		RetentionDays:                envInt("POSTGRES_RETENTION_DAYS", 7),
-		ErrorHTTPStatus:              envInt("ERROR_HTTP_STATUS", 555),
-		RequestMaxBytes:              int64(envInt("REQUEST_MAX_BYTES", 8*1024*1024)),
-		ResponseInspectMaxBytes:      int64(envInt("RESPONSE_INSPECT_MAX_BYTES", 2*1024*1024)),
-		AuditTextMaxBytes:            envInt("AUDIT_TEXT_MAX_BYTES", 256*1024),
-		SSELineMaxBytes:              envInt("SSE_LINE_MAX_BYTES", 1024*1024),
-		TraceQueueSize:               envInt("TRACE_QUEUE_SIZE", 32768),
-		TraceBatchSize:               envInt("TRACE_BATCH_SIZE", 256),
-		TraceFlushInterval:           envDuration("TRACE_FLUSH_INTERVAL", 250*time.Millisecond),
-		AllowPrivateUpstreams:        envBool("ALLOW_PRIVATE_UPSTREAMS", false),
-		GlobalMaxConcurrency:         envInt("GLOBAL_MAX_CONCURRENCY", 4096),
-		TrackingClockSkew:            envDuration("TRACKING_CLOCK_SKEW", 5*time.Minute),
-		TrackingNonceTTL:             envDuration("TRACKING_NONCE_TTL", 10*time.Minute),
-		RouteCacheTTL:                envDuration("ROUTE_CACHE_TTL", 10*time.Second),
-		RulesRefreshInterval:         envDuration("RULES_REFRESH_INTERVAL", 15*time.Second),
-		PartitionMaintenanceInterval: envDuration("PARTITION_MAINTENANCE_INTERVAL", time.Hour),
-		ShutdownTimeout:              envDuration("SHUTDOWN_TIMEOUT", 30*time.Second),
+		Environment:                    envString("APP_ENV", "production"),
+		HTTPAddr:                       envString("HTTP_ADDR", ":8080"),
+		DatabaseURL:                    strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		PostgresMaxConns:               int32(envInt("POSTGRES_MAX_CONNS", 80)),
+		PostgresMinConns:               int32(envInt("POSTGRES_MIN_CONNS", 5)),
+		RedisURL:                       strings.TrimSpace(os.Getenv("REDIS_URL")),
+		RedisStreamMaxLen:              int64(envInt("REDIS_STREAM_MAXLEN", 100000)),
+		KafkaEnabled:                   envBool("KAFKA_ENABLED", false),
+		KafkaBrokers:                   splitCSV(os.Getenv("KAFKA_BROKERS")),
+		KafkaTopic:                     envString("KAFKA_TOPIC", "risk.request.events.v1"),
+		KafkaClientID:                  envString("KAFKA_CLIENT_ID", "newapi-risk-platform"),
+		KafkaTLS:                       envBool("KAFKA_TLS", false),
+		KafkaSASLMechanism:             strings.ToLower(envString("KAFKA_SASL_MECHANISM", "")),
+		KafkaUsername:                  os.Getenv("KAFKA_USERNAME"),
+		KafkaPassword:                  os.Getenv("KAFKA_PASSWORD"),
+		KafkaQueueSize:                 envInt("KAFKA_QUEUE_SIZE", 8192),
+		KafkaTopicPartitions:           envInt("KAFKA_TOPIC_PARTITIONS", 12),
+		KafkaTopicReplicationFactor:    envInt("KAFKA_TOPIC_REPLICATION_FACTOR", 1),
+		JWTIssuer:                      envString("JWT_ISSUER", "newapi-risk-platform"),
+		JWTTTL:                         envDuration("JWT_TTL", 8*time.Hour),
+		BootstrapAdminUsername:         envString("BOOTSTRAP_ADMIN_USERNAME", "admin"),
+		BootstrapAdminPassword:         os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
+		BootstrapTrackingKeyID:         envString("BOOTSTRAP_TRACKING_KEY_ID", "newapi-default"),
+		BootstrapTrackingSecret:        os.Getenv("BOOTSTRAP_TRACKING_SECRET"),
+		DefaultAuditEndpoint:           strings.TrimRight(strings.TrimSpace(os.Getenv("AUDIT_DEFAULT_ENDPOINT")), "/"),
+		DefaultAuditModel:              envString("AUDIT_DEFAULT_MODEL", "audit-small"),
+		DefaultAuditAPIKey:             os.Getenv("AUDIT_DEFAULT_API_KEY"),
+		DefaultAuditTimeout:            envDuration("AUDIT_DEFAULT_TIMEOUT", 8*time.Second),
+		DefaultAuditBlockThreshold:     envFloat("AUDIT_DEFAULT_BLOCK_THRESHOLD", 0.65),
+		RetentionDays:                  envInt("POSTGRES_RETENTION_DAYS", 7),
+		ErrorHTTPStatus:                envInt("ERROR_HTTP_STATUS", 555),
+		RequestMaxBytes:                int64(envInt("REQUEST_MAX_BYTES", 8*1024*1024)),
+		ResponseInspectMaxBytes:        int64(envInt("RESPONSE_INSPECT_MAX_BYTES", 2*1024*1024)),
+		AuditTextMaxBytes:              envInt("AUDIT_TEXT_MAX_BYTES", 2*1024*1024),
+		AuditOutputMaxTokens:           envInt("AUDIT_OUTPUT_MAX_TOKENS", 128),
+		AuditDisableThinking:           envBool("AUDIT_DISABLE_THINKING", true),
+		AuditLongContextThresholdBytes: envInt("AUDIT_LONG_CONTEXT_THRESHOLD_BYTES", 128*1024),
+		AuditLongContextTimeout:        envDuration("AUDIT_LONG_CONTEXT_TIMEOUT", 120*time.Second),
+		AuditPromptTruncateTokens:      envInt("AUDIT_PROMPT_TRUNCATE_TOKENS", 260000),
+		SSELineMaxBytes:                envInt("SSE_LINE_MAX_BYTES", 1024*1024),
+		TraceQueueSize:                 envInt("TRACE_QUEUE_SIZE", 32768),
+		TraceBatchSize:                 envInt("TRACE_BATCH_SIZE", 256),
+		TraceFlushInterval:             envDuration("TRACE_FLUSH_INTERVAL", 250*time.Millisecond),
+		AllowPrivateUpstreams:          envBool("ALLOW_PRIVATE_UPSTREAMS", false),
+		GlobalMaxConcurrency:           envInt("GLOBAL_MAX_CONCURRENCY", 4096),
+		TrackingClockSkew:              envDuration("TRACKING_CLOCK_SKEW", 5*time.Minute),
+		TrackingNonceTTL:               envDuration("TRACKING_NONCE_TTL", 10*time.Minute),
+		RouteCacheTTL:                  envDuration("ROUTE_CACHE_TTL", 10*time.Second),
+		RulesRefreshInterval:           envDuration("RULES_REFRESH_INTERVAL", 15*time.Second),
+		PartitionMaintenanceInterval:   envDuration("PARTITION_MAINTENANCE_INTERVAL", time.Hour),
+		ShutdownTimeout:                envDuration("SHUTDOWN_TIMEOUT", 30*time.Second),
 	}
 	master, err := decodeSecret32("MASTER_KEY_B64", os.Getenv("MASTER_KEY_B64"))
 	if err != nil {
@@ -157,6 +167,18 @@ func (c Config) Validate() error {
 	}
 	if c.AuditTextMaxBytes < 4096 || c.AuditTextMaxBytes > 2*1024*1024 {
 		problems = append(problems, "AUDIT_TEXT_MAX_BYTES must be between 4 KiB and 2 MiB")
+	}
+	if c.AuditOutputMaxTokens < 32 || c.AuditOutputMaxTokens > 1024 {
+		problems = append(problems, "AUDIT_OUTPUT_MAX_TOKENS must be between 32 and 1024")
+	}
+	if c.AuditLongContextThresholdBytes < 4096 || c.AuditLongContextThresholdBytes > c.AuditTextMaxBytes {
+		problems = append(problems, "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES must be between 4 KiB and AUDIT_TEXT_MAX_BYTES")
+	}
+	if c.AuditLongContextTimeout < time.Second || c.AuditLongContextTimeout > 10*time.Minute {
+		problems = append(problems, "AUDIT_LONG_CONTEXT_TIMEOUT must be between 1s and 10m")
+	}
+	if c.AuditPromptTruncateTokens < 1024 || c.AuditPromptTruncateTokens > 1000000 {
+		problems = append(problems, "AUDIT_PROMPT_TRUNCATE_TOKENS must be between 1024 and 1000000")
 	}
 	if c.SSELineMaxBytes < 64*1024 || c.SSELineMaxBytes > 8*1024*1024 {
 		problems = append(problems, "SSE_LINE_MAX_BYTES must be between 64 KiB and 8 MiB")
