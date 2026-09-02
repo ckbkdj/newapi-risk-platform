@@ -23,6 +23,7 @@ jobs:
       - name: Apply E2E regression
         run: |
           set -euo pipefail
+          # The helper edits only the permanent project E2E test.
           python3 scripts/add-upstream-trace-e2e.py
           bash -n scripts/e2e.sh
       - name: Commit E2E regression
