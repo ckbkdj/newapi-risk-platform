@@ -12,26 +12,25 @@ def once(old: str, new: str, label: str) -> None:
     text = text.replace(old, new, 1)
 
 once(
-    "  --data-binary '{\"model\":\"stream-late-error\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"safe stream request\"}]}'\")\n",
-    "  -H 'X-Request-ID: e2e-stream-late' \\\n  --data-binary '{\"model\":\"stream-late-error\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"safe stream request\"}]}'\")\n",
+    "  --data-binary '{\"model\":\"stream-late-error\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"safe stream request\"}]}'",
+    "  -H 'X-Request-ID: e2e-stream-late' \\\n  --data-binary '{\"model\":\"stream-late-error\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"safe stream request\"}]}'",
     "late stream request id",
 )
 once(
-    "  --data-binary '{\"model\":\"stream-normal\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"safe normal stream request\"}]}'\")\n",
-    "  -H 'X-Request-ID: e2e-stream-normal' \\\n  --data-binary '{\"model\":\"stream-normal\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"safe normal stream request\"}]}'\")\n",
+    "  --data-binary '{\"model\":\"stream-normal\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"safe normal stream request\"}]}'",
+    "  -H 'X-Request-ID: e2e-stream-normal' \\\n  --data-binary '{\"model\":\"stream-normal\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"safe normal stream request\"}]}'",
     "normal stream request id",
 )
 once(
-    "     grep -Fq 'e2e-own-secret-self-service' \"${WORKDIR}/traces.json\" && \\\n     grep -Fq 'e2e-audit-failover' \"${WORKDIR}/traces.json\"; then\n",
-    "     grep -Fq 'e2e-own-secret-self-service' \"${WORKDIR}/traces.json\" && \\\n     grep -Fq 'e2e-stream-late' \"${WORKDIR}/traces.json\" && \\\n     grep -Fq 'e2e-stream-normal' \"${WORKDIR}/traces.json\" && \\\n     grep -Fq 'e2e-audit-failover' \"${WORKDIR}/traces.json\"; then\n",
+    "     grep -Fq 'e2e-own-secret-self-service' \"${WORKDIR}/traces.json\" && \\\n     grep -Fq 'e2e-audit-failover' \"${WORKDIR}/traces.json\"; then",
+    "     grep -Fq 'e2e-own-secret-self-service' \"${WORKDIR}/traces.json\" && \\\n     grep -Fq 'e2e-stream-late' \"${WORKDIR}/traces.json\" && \\\n     grep -Fq 'e2e-stream-normal' \"${WORKDIR}/traces.json\" && \\\n     grep -Fq 'e2e-audit-failover' \"${WORKDIR}/traces.json\"; then",
     "trace wait condition",
 )
 once(
     '''attempts = fm.get("audit_attempts", [])
 if len(attempts) != 6 or not attempts[-1].get("success"):
     raise RuntimeError(f"attempt diagnostics missing: {attempts}")
-PY
-''',
+PY''',
     '''attempts = fm.get("audit_attempts", [])
 if len(attempts) != 6 or not attempts[-1].get("success"):
     raise RuntimeError(f"attempt diagnostics missing: {attempts}")
@@ -62,8 +61,7 @@ if stream_normal.get("decision") != "allow" or int(stream_normal.get("http_statu
 for key in ("error_reason", "failure_stage", "stream_error_semantics", "upstream_error_reason"):
     if normal_meta.get(key):
         raise RuntimeError(f"normal stream was polluted with {key}: {normal_meta}")
-PY
-''',
+PY''',
     "stream trace metadata assertions",
 )
 
