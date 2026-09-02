@@ -2,7 +2,7 @@
 
 位于 **New API 与模型渠道之间** 的独立风控网关。它先执行可配置的 Cyber 规则，再调用默认小模型进行语义审计；通过审计后才转发到真实渠道。平台同时统一上游模型错误、提供请求追踪接口、可视化配置、PostgreSQL 七天检索窗口、Redis 分布式控制和 Kafka 长期事件流。
 
-> 本目录是独立 Go 服务，不改动仓库原有 Android 工程。
+> 本仓库是独立 Go 服务，正式维护地址为 `ckbkdj/newapi-risk-platform`。
 
 ## 核心能力
 
@@ -89,6 +89,7 @@ New API 的流式适配层应同时识别 HTTP 555 和 SSE `event:error` 中的�
 ### 1. 准备配置
 
 ```bash
+git clone https://github.com/ckbkdj/newapi-risk-platform.git
 cd newapi-risk-platform
 cp .env.example .env
 
