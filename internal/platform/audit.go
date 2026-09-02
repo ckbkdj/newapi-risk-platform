@@ -27,7 +27,9 @@ agent-driven exfiltration, model theft, or AI resource attacks. Review ambiguous
 reverse-shell, container/Kubernetes, prompt-injection, and agent-tool requests rather than hard-blocking solely
 on keywords. Allow benign development, defensive security, incident response, detection/remediation, education,
 CTF or sandbox work, authorized testing, and high-level discussion unless the requested outcome supplies harmful
-operational capability against real systems or victims. Return one compact JSON object only:
+operational capability against real systems or victims. Do not reveal chain-of-thought and do not emit <think>
+blocks, Markdown, or explanatory prose. Return the final compact JSON object immediately. Keep reason under 120
+characters:
 {"decision":"allow|block|review","risk_code":"CYBER_* or empty","category":"...","confidence":0.0,"reason":"brief"}`
 
 type compiledRule struct {
@@ -37,15 +39,24 @@ type compiledRule struct {
 }
 
 type AuditEngine struct {
-	store           *Store
-	security        *Security
-	client          *http.Client
-	maxTextBytes    int
-	refreshInterval time.Duration
-	log             *slog.Logger
-	rules           atomic.Value
-	adaptivePolicy  atomic.Value
-	adaptiveQueue   chan adaptiveFailureSample
+	store                     *Store
+	security                  *Security
+	client                    *http.Client
+	maxTextBytes              int
+	outputMaxTokens           int
+	disableThinking           bool
+	longContextThresholdBytes int
+	longContextTimeout        time.Duration
+	contextTargetTokens       int
+	fallbackChunkBytes        int
+	chunkOverlapBytes         int
+	chunkConcurrency          int
+	maxAuditChunks            int
+	refreshInterval           time.Duration
+	log                       *slog.Logger
+	rules                     atomic.Value
+	adaptivePolicy            atomic.Value
+	adaptiveQueue             chan adaptiveFailureSample
 }
 
 func NewAuditEngine(
@@ -59,15 +70,26 @@ func NewAuditEngine(
 		security: security,
 		client: &http.Client{
 			Transport: NewSafeTransport(cfg.AllowPrivateUpstreams, cfg.UpstreamTLSMinVersion),
-			Timeout:   30 * time.Second,
+			// Per-request contexts enforce the profile or long-context timeout.
+			// A fixed client timeout would cancel 262K prefills before they finish.
+			Timeout: 0,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return errors.New("audit endpoint redirects are disabled")
 			},
 		},
-		maxTextBytes:    cfg.AuditTextMaxBytes,
-		refreshInterval: cfg.RulesRefreshInterval,
-		log:             log,
-		adaptiveQueue:   make(chan adaptiveFailureSample, adaptiveLearningQueueSize),
+		maxTextBytes:              cfg.AuditTextMaxBytes,
+		outputMaxTokens:           cfg.AuditOutputMaxTokens,
+		disableThinking:           cfg.AuditDisableThinking,
+		longContextThresholdBytes: cfg.AuditLongContextThresholdBytes,
+		longContextTimeout:        cfg.AuditLongContextTimeout,
+		contextTargetTokens:       cfg.AuditContextTargetTokens,
+		fallbackChunkBytes:        cfg.AuditFallbackChunkBytes,
+		chunkOverlapBytes:         cfg.AuditChunkOverlapBytes,
+		chunkConcurrency:          cfg.AuditChunkConcurrency,
+		maxAuditChunks:            cfg.AuditMaxChunks,
+		refreshInterval:           cfg.RulesRefreshInterval,
+		log:                       log,
+		adaptiveQueue:             make(chan adaptiveFailureSample, adaptiveLearningQueueSize),
 	}
 	engine.rules.Store([]compiledRule{})
 	engine.adaptivePolicy.Store(defaultAdaptiveRulePolicy())
@@ -257,16 +279,26 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		return result
 	}
 
-	decision, err := e.callModel(ctx, profile, text)
+	decision, callMetadata, err := e.callModel(ctx, profile, text)
 	result.Model = profile.Model
+	result.AuditMode = callMetadata.Mode
+	result.AuditChunkCount = callMetadata.ChunkCount
+	result.AuditChunkBytes = callMetadata.ChunkBytes
+	result.AuditRequestedTokens = callMetadata.RequestedTokens
+	result.AuditContextWindowTokens = callMetadata.ContextWindowTokens
+	result.AuditRetryCount = callMetadata.RetryCount
 	if err != nil {
 		errorClass, auditHTTPStatus, reason := auditModelErrorDetails(err)
 		result.ErrorClass = errorClass
 		result.AuditHTTPStatus = auditHTTPStatus
+		riskCode := "AUDIT_MODEL_ERROR"
+		if errorClass == "context_length" || errorClass == "input_too_large" {
+			riskCode = "AUDIT_CONTEXT_TOO_LARGE"
+		}
 		if route.FailClosed || profile.FailClosed {
 			result.AuditDecision = AuditDecision{
 				Decision:   DecisionBlock,
-				RiskCode:   "AUDIT_MODEL_ERROR",
+				RiskCode:   riskCode,
 				Category:   "audit_infrastructure",
 				Confidence: 1,
 				Reason:     reason,
@@ -312,7 +344,7 @@ type modelAuditResponse struct {
 	Reason     string  `json:"reason"`
 }
 
-func (e *AuditEngine) callModel(
+func (e *AuditEngine) callModelOnce(
 	ctx context.Context,
 	profile AuditProfile,
 	text string,
@@ -321,23 +353,19 @@ func (e *AuditEngine) callModel(
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
 	}
-	systemPrompt := strings.TrimSpace(profile.SystemPrompt)
-	if systemPrompt == "" {
-		systemPrompt = DefaultAuditSystemPrompt
-	}
 	payload := map[string]any{
 		"model":       profile.Model,
 		"temperature": 0,
-		"max_tokens":  300,
-		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": text},
-		},
+		"max_tokens":  e.outputMaxTokens,
+		"messages":    e.auditMessages(profile, text),
 	}
 	if len(profile.Extra) > 0 {
 		var extra map[string]any
 		if json.Unmarshal(profile.Extra, &extra) == nil {
 			for key, value := range extra {
+				if isInternalAuditExtraKey(key) {
+					continue
+				}
 				switch key {
 				case "model", "messages", "stream":
 					continue
@@ -347,14 +375,12 @@ func (e *AuditEngine) callModel(
 			}
 		}
 	}
+	e.applyFastAuditDefaults(profile, payload)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return AuditDecision{}, newAuditModelCallError("request_encode", 0, "encode audit model request", err)
 	}
-	timeout := time.Duration(profile.TimeoutMS) * time.Millisecond
-	if timeout <= 0 {
-		timeout = 8 * time.Second
-	}
+	timeout := e.auditRequestTimeout(profile, len(text))
 	requestContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(

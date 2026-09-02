@@ -53,6 +53,27 @@ func TestAuditHTTPStatusErrorIncludesSanitizedProviderMessage(t *testing.T) {
 	}
 }
 
+func TestAuditHTTPStatusErrorParsesRealVLLMContextMessage(t *testing.T) {
+	body := []byte(`{"error":{"message":"This model's maximum context length is 262144 tokens. However, you requested 128 output tokens and your prompt contains 270000 input tokens, for a total of 270128 tokens."}}`)
+	err := auditHTTPStatusError(400, body)
+	class, status, reason := auditModelErrorDetails(err)
+	if class != "context_length" || status != 400 {
+		t.Fatalf("unexpected context details: class=%s status=%d reason=%s", class, status, reason)
+	}
+	maximum, requested := auditContextTokenCounts(err)
+	if maximum != 262144 || requested != 270000 {
+		t.Fatalf("token counts = max:%d requested:%d, want max:262144 requested:270000", maximum, requested)
+	}
+}
+
+func TestParseAuditContextTokenCountsDoesNotConfuseOutputTokens(t *testing.T) {
+	message := "This model's maximum context length is 262,144 tokens. However, you requested 128 output tokens and your prompt contains 270,000 input tokens, for a total of 270,128 tokens."
+	maximum, requested := parseAuditContextTokenCounts(message)
+	if maximum != 262144 || requested != 270000 {
+		t.Fatalf("token counts = max:%d requested:%d", maximum, requested)
+	}
+}
+
 func TestClassifyAuditTransportErrorTimeout(t *testing.T) {
 	class, _, reason := auditModelErrorDetails(classifyAuditTransportError(context.DeadlineExceeded))
 	if class != "timeout" || !strings.Contains(reason, "timed out") {

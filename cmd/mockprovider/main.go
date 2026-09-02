@@ -12,9 +12,11 @@ import (
 )
 
 type chatRequest struct {
-	Model    string `json:"model"`
-	Stream   bool   `json:"stream"`
-	Messages []struct {
+	Model              string         `json:"model"`
+	Stream             bool           `json:"stream"`
+	MaxTokens          int            `json:"max_tokens"`
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs"`
+	Messages           []struct {
 		Role    string `json:"role"`
 		Content any    `json:"content"`
 	} `json:"messages"`
@@ -48,6 +50,27 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	text := strings.ToLower(messageText(request))
 	userText := strings.ToLower(userMessageText(request))
+	if strings.Contains(strings.ToLower(request.Model), "qwen") {
+		enableThinking, ok := request.ChatTemplateKwargs["enable_thinking"].(bool)
+		preserveThinking, preserveOK := request.ChatTemplateKwargs["preserve_thinking"].(bool)
+		if !ok || enableThinking || !preserveOK || preserveThinking || request.MaxTokens != 128 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": map[string]any{"message": "Qwen fast audit request parameters are missing"},
+			})
+			return
+		}
+		if len(userText) > 3500 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": map[string]any{
+					"message": fmt.Sprintf(
+						"This model's maximum context length is 4096 tokens. However, your request has %d input tokens",
+						len(userText)+300,
+					),
+				},
+			})
+			return
+		}
+	}
 	if strings.Contains(text, "you classify upstream model failures") {
 		isCyber := strings.Contains(text, "alpha-harm") && strings.Contains(text, "beta-harm")
 		classification, _ := json.Marshal(map[string]any{

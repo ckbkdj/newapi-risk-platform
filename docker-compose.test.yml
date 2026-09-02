@@ -4,9 +4,14 @@ services:
       ALLOW_PRIVATE_UPSTREAMS: "true"
       ACK_PRIVATE_UPSTREAM_SSRF_RISK: "true"
       AUDIT_DEFAULT_ENDPOINT: http://mock-provider:18081/audit/v1
-      AUDIT_DEFAULT_MODEL: audit-small
+      AUDIT_DEFAULT_MODEL: qwen3.8-audit-mock
       AUDIT_DEFAULT_TIMEOUT: 5s
       AUDIT_DEFAULT_BLOCK_THRESHOLD: "0.65"
+      AUDIT_CONTEXT_TARGET_TOKENS: "3000"
+      AUDIT_FALLBACK_CHUNK_BYTES: "1024"
+      AUDIT_CHUNK_OVERLAP_BYTES: "64"
+      AUDIT_CHUNK_CONCURRENCY: "2"
+      AUDIT_MAX_CHUNKS: "32"
     depends_on:
       mock-provider:
         condition: service_started

@@ -80,6 +80,33 @@ text = set_value(text, "HTTP_PORT", str(port))
 if not values.get("BIND_ADDRESS", "").strip():
     text = set_value(text, "BIND_ADDRESS", "0.0.0.0")
 
+# Keep existing operator overrides, but add every new long-context/fast-audit
+# setting to old .env files. The historical 262144 value meant 256 KiB, not
+# 262144 model tokens, so it is safe and necessary to migrate that exact old
+# default to 8 MiB so the request layer can segment the complete input.
+audit_defaults = {
+    "AUDIT_TEXT_MAX_BYTES": "8388608",
+    "AUDIT_OUTPUT_MAX_TOKENS": "128",
+    "AUDIT_DISABLE_THINKING": "true",
+    "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES": "131072",
+    "AUDIT_LONG_CONTEXT_TIMEOUT": "120s",
+    "AUDIT_CONTEXT_TARGET_TOKENS": values.get("AUDIT_PROMPT_TRUNCATE_TOKENS", "260000"),
+    "AUDIT_FALLBACK_CHUNK_BYTES": "196608",
+    "AUDIT_CHUNK_OVERLAP_BYTES": "4096",
+    "AUDIT_CHUNK_CONCURRENCY": "2",
+    "AUDIT_MAX_CHUNKS": "64",
+}
+for key, default in audit_defaults.items():
+    current = values.get(key, "").strip()
+    should_set = not current
+    if key == "AUDIT_TEXT_MAX_BYTES" and current in {"262144", "2097152"}:
+        should_set = True
+        warnings.append(
+            "AUDIT_TEXT_MAX_BYTES was upgraded to 8 MiB so the request layer can segment and audit the complete prompt."
+        )
+    if should_set:
+        text = set_value(text, key, default)
+
 force_new_postgres = os.environ.get("FORCE_NEW_POSTGRES_PASSWORD", "").lower() in {"1", "true", "yes"}
 postgres_password = values.get("POSTGRES_PASSWORD", "")
 if force_new_postgres or not postgres_password:

@@ -111,12 +111,18 @@ type AuditDecision struct {
 
 type AuditResult struct {
 	AuditDecision
-	PromptHMAC      string        `json:"prompt_hmac"`
-	TextBytes       int           `json:"text_bytes"`
-	Latency         time.Duration `json:"-"`
-	Model           string        `json:"model,omitempty"`
-	ErrorClass      string        `json:"error_class,omitempty"`
-	AuditHTTPStatus int           `json:"audit_http_status,omitempty"`
+	PromptHMAC               string        `json:"prompt_hmac"`
+	TextBytes                int           `json:"text_bytes"`
+	Latency                  time.Duration `json:"-"`
+	Model                    string        `json:"model,omitempty"`
+	ErrorClass               string        `json:"error_class,omitempty"`
+	AuditHTTPStatus          int           `json:"audit_http_status,omitempty"`
+	AuditMode                string        `json:"audit_mode,omitempty"`
+	AuditChunkCount          int           `json:"audit_chunk_count,omitempty"`
+	AuditChunkBytes          int           `json:"audit_chunk_bytes,omitempty"`
+	AuditRequestedTokens     int           `json:"audit_requested_tokens,omitempty"`
+	AuditContextWindowTokens int           `json:"audit_context_window_tokens,omitempty"`
+	AuditRetryCount          int           `json:"audit_retry_count,omitempty"`
 }
 
 type TraceEvent struct {
