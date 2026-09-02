@@ -9,16 +9,16 @@ import (
 
 const (
 	maxAuditFallbackProfiles = 8
-	maxAuditRetryCount       = 5
-	maxAuditTotalAttempts    = 24
+	maxAuditRetryCount        = 5
+	maxAuditTotalAttempts     = 24
 )
 
 type auditFailoverMetadata struct {
-	CallMetadata   auditCallMetadata
-	AttemptCount   int
+	CallMetadata    auditCallMetadata
+	AttemptCount    int
 	ModelRetryCount int
-	FallbackCount  int
-	Attempts       []AuditAttempt
+	FallbackCount   int
+	Attempts        []AuditAttempt
 }
 
 func (e *AuditEngine) callModelWithFailover(
@@ -30,10 +30,15 @@ func (e *AuditEngine) callModelWithFailover(
 		Attempts: make([]AuditAttempt, 0, 1+root.RetryCount),
 	}
 	profiles := []AuditProfile{root}
+	seen := map[int64]struct{}{root.ID: {}}
 	for _, fallbackID := range root.FallbackProfileIDs {
-		if fallbackID <= 0 || fallbackID == root.ID || len(profiles) >= maxAuditFallbackProfiles+1 {
+		if fallbackID <= 0 || len(profiles) >= maxAuditFallbackProfiles+1 {
 			continue
 		}
+		if _, exists := seen[fallbackID]; exists {
+			continue
+		}
+		seen[fallbackID] = struct{}{}
 		id := fallbackID
 		profile, err := e.getAuditProfile(ctx, &id)
 		if err != nil || !profile.Enabled {
@@ -84,7 +89,7 @@ func (e *AuditEngine) callModelWithFailover(
 			}
 
 			decision, callMetadata, err := e.callModel(ctx, profile, text)
-			metadata.CallMetadata = callMetadata
+			metadata.CallMetadata = mergeAuditCallMetadata(metadata.CallMetadata, callMetadata)
 			metadata.AttemptCount++
 			attemptRecord := AuditAttempt{
 				ProfileID:   profile.ID,
@@ -117,6 +122,35 @@ func (e *AuditEngine) callModelWithFailover(
 	return AuditDecision{}, usedProfile, metadata, lastErr
 }
 
+func mergeAuditCallMetadata(existing auditCallMetadata, current auditCallMetadata) auditCallMetadata {
+	result := current
+	if result.Mode == "" {
+		result.Mode = existing.Mode
+	}
+	if result.ChunkCount == 0 {
+		result.ChunkCount = existing.ChunkCount
+	}
+	if result.ChunkBytes == 0 {
+		result.ChunkBytes = existing.ChunkBytes
+	}
+	if result.RetryCount < existing.RetryCount {
+		result.RetryCount = existing.RetryCount
+	}
+	// Preserve the largest over-limit observation across failed primary and
+	// fallback models so a later successful fallback cannot erase the user's
+	// actual token diagnostics from the trace.
+	if existing.RequestedTokens > result.RequestedTokens {
+		result.RequestedTokens = existing.RequestedTokens
+		result.ContextWindowTokens = existing.ContextWindowTokens
+	} else if result.RequestedTokens == 0 && existing.RequestedTokens > 0 {
+		result.RequestedTokens = existing.RequestedTokens
+		result.ContextWindowTokens = existing.ContextWindowTokens
+	} else if result.ContextWindowTokens == 0 {
+		result.ContextWindowTokens = existing.ContextWindowTokens
+	}
+	return result
+}
+
 func auditErrorRetryableOnSameProfile(err error) bool {
 	var callError *AuditModelCallError
 	if !errors.As(err, &callError) {
@@ -127,7 +161,6 @@ func auditErrorRetryableOnSameProfile(err error) bool {
 		"timeout",
 		"rate_limited",
 		"audit_server_error",
-		"http_status",
 		"response_read",
 		"response_format",
 		"empty_response",
@@ -135,16 +168,20 @@ func auditErrorRetryableOnSameProfile(err error) bool {
 		"invalid_decision":
 		return true
 	default:
+		// Authentication, model/endpoint-not-found, generic 4xx, credential
+		// decryption, and context-size failures are deterministic. Retrying the
+		// same profile only adds latency; the ordered fallback chain may still
+		// recover them on another profile.
 		return false
 	}
 }
 
 func waitAuditRetry(ctx context.Context, retryIndex int) error {
-	delay := 100 * time.Millisecond
-	for index := 0; index < retryIndex && delay < time.Second; index++ {
+	delay := 75 * time.Millisecond
+	for index := 0; index < retryIndex && delay < 300*time.Millisecond; index++ {
 		delay *= 2
-		if delay > time.Second {
-			delay = time.Second
+		if delay > 300*time.Millisecond {
+			delay = 300 * time.Millisecond
 		}
 	}
 	timer := time.NewTimer(delay)
