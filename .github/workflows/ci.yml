@@ -1,0 +1,91 @@
+name: New API Risk Platform CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: newapi-risk-platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+      - name: Verify module lock
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Verify formatting
+        run: |
+          gofmt -w ./cmd ./internal
+          git diff --exit-code
+      - name: Unit tests with race detector
+        run: go test -race -count=1 ./...
+      - name: Go vet
+        run: go vet ./...
+      - name: Build services
+        run: |
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+      - name: Validate Compose files
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password-with-sufficient-length
+          MASTER_KEY_B64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          JWT_SECRET: ci-jwt-secret-0123456789abcdef0123456789abcdef
+          BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password-with-sufficient-length
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
+
+  container-smoke:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start PostgreSQL, Redis and service
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password-with-sufficient-length
+          MASTER_KEY_B64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          JWT_SECRET: ci-jwt-secret-0123456789abcdef0123456789abcdef
+          BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password-with-sufficient-length
+          BIND_ADDRESS: 127.0.0.1
+          HTTP_PORT: "18080"
+          APP_ENV: production
+          KAFKA_ENABLED: "false"
+        run: docker compose up -d --build postgres redis risk-platform
+      - name: Wait for readiness
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null; then
+              curl --fail --silent http://127.0.0.1:18080/healthz
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          docker compose logs --no-color
+          exit 1
+      - name: Verify admin login
+        run: |
+          curl --fail --silent http://127.0.0.1:18080/api/admin/v1/login \
+            -H 'Content-Type: application/json' \
+            --data '{"username":"admin","password":"ci-admin-password-with-sufficient-length"}' \
+            | grep -q 'access_token'
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v --remove-orphans
