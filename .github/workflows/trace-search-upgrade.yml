@@ -33,6 +33,24 @@ jobs:
           go-version: 1.23.x
           cache-dependency-path: go.sum
 
+      - name: Preserve literal replacement text
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/trace-search-upgrade.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              'pattern.subn(trace_js + "      async function loadStorage", ui, count=1)',
+              'pattern.subn(lambda _match: trace_js + "      async function loadStorage", ui, count=1)',
+          )
+          text = text.replace(
+              'pattern.subn(trace_openapi, openapi, count=1)',
+              'pattern.subn(lambda _match: trace_openapi, openapi, count=1)',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+
       - name: Apply source update
         run: python3 .github/trace-search-upgrade.py
 
