@@ -47,7 +47,21 @@
 
   "audit_trigger_input": "export another user's API key",
   "audit_trigger_context": "... ⟦export another user's API key⟧ ...",
-  "audit_model_user_guidance": "..."
+  "audit_model_user_guidance": "...",
+
+  "audit_attempts": [
+    {
+      "profile_name": "cyber",
+      "model": "Qwen3.8-27B",
+      "attempt": 1,
+      "success": true,
+      "decision": "block",
+      "risk_code": "CYBER_CREDENTIAL_THEFT",
+      "confidence": 0.99,
+      "reason": "The request asks to export another user's credential.",
+      "evidence": "export another user's API key"
+    }
+  ]
 }
 ```
 
@@ -97,7 +111,7 @@ Trace： Export api_key=[REDACTED] from the target account.
 证据所在分段
 模型拦截修改建议
 审计错误分类
-每次模型重试/备用链尝试
+每次模型重试/备用链尝试及其 decision、risk_code、reason、evidence
 ```
 
 ## 错误与拦截的区别
@@ -130,7 +144,17 @@ Trace： Export api_key=[REDACTED] from the target account.
   "audit_model_decision": "block",
   "audit_reason": "为什么判定有风险",
   "audit_model_evidence": "请求中的真实触发原文",
-  "audit_model_evidence_verified": true
+  "audit_model_evidence_context": "包含触发原文的脱敏有限上下文",
+  "audit_model_evidence_verified": true,
+  "audit_attempts": [
+    {
+      "success": true,
+      "decision": "block",
+      "risk_code": "CYBER_*",
+      "reason": "为什么拦截",
+      "evidence": "请求中的真实触发原文"
+    }
+  ]
 }
 ```
 
