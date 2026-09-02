@@ -36,17 +36,22 @@ jobs:
                   if count != 2:
                       raise SystemExit(f"{label}: expected two matches, found {count}")
                   gateway.write_text(text.replace(old, new), encoding="utf-8")
+              else:
+                  replace_once(gateway, old, new, label)
           '''
-          new = '''    if label == 'buffered client disconnect':
+          new = '''    if label in {'buffered client disconnect', 'stream success'}:
                   marker = 'func (g *Gateway) proxySSE('
                   before, suffix = text.split(marker, 1)
+                  expected = 2 if label == 'buffered client disconnect' else 1
                   count = suffix.count(old)
-                  if count != 2:
-                      raise SystemExit(f"{label}: expected two proxySSE matches, found {count}")
+                  if count != expected:
+                      raise SystemExit(f"{label}: expected {expected} proxySSE matches, found {count}")
                   gateway.write_text(before + marker + suffix.replace(old, new), encoding="utf-8")
+              else:
+                  replace_once(gateway, old, new, label)
           '''
           if old not in text:
-              raise SystemExit('client-disconnect patch anchor not found')
+              raise SystemExit('ambiguous return patch anchor not found')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
           python3 scripts/apply-upstream-trace-fix.py
