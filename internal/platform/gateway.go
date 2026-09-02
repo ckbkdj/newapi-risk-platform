@@ -278,7 +278,17 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		failureBody, _ := io.ReadAll(io.LimitReader(response.Body, adaptiveProviderErrorLimit))
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+		g.audit.ObserveUpstreamFailure(
+			route,
+			requestID,
+			clientIdentity,
+			body,
+			response.StatusCode,
+			"UPSTREAM_MODEL_ERROR",
+			failureBody,
+		)
 		trace.Metadata["error_class"] = "upstream_http_error"
 		finish("error", "UPSTREAM_MODEL_ERROR", g.cfg.ErrorHTTPStatus, response.StatusCode, 0)
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_MODEL_ERROR", "upstream model returned an error")
@@ -286,8 +296,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
-		bytesWritten, riskCode, status := g.proxySSE(w, response, requestID)
+		bytesWritten, riskCode, status, failureEvidence := g.proxySSE(w, response, requestID)
 		if riskCode != "" {
+			if riskCode == "UPSTREAM_STREAM_ERROR" {
+				g.audit.ObserveUpstreamFailure(route, requestID, clientIdentity, body, response.StatusCode, riskCode, failureEvidence)
+			}
 			trace.Metadata["stream_error_semantics"] = "logical_555_after_headers"
 			finish("error", riskCode, status, response.StatusCode, bytesWritten)
 			return
@@ -296,8 +309,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bytesWritten, riskCode, status := g.proxyBuffered(w, response, requestID)
+	bytesWritten, riskCode, status, failureEvidence := g.proxyBuffered(w, response, requestID)
 	if riskCode != "" {
+		if riskCode == "UPSTREAM_MODEL_ERROR" {
+			g.audit.ObserveUpstreamFailure(route, requestID, clientIdentity, body, response.StatusCode, riskCode, failureEvidence)
+		}
 		finish("error", riskCode, status, response.StatusCode, bytesWritten)
 		return
 	}
@@ -393,15 +409,15 @@ func (g *Gateway) proxyBuffered(
 	w http.ResponseWriter,
 	response *http.Response,
 	requestID string,
-) (int64, string, int) {
+) (int64, string, int, []byte) {
 	prefix, err := io.ReadAll(io.LimitReader(response.Body, g.cfg.ResponseInspectMaxBytes+1))
 	if err != nil {
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_READ_ERROR", "upstream model response failed")
-		return 0, "UPSTREAM_READ_ERROR", g.cfg.ErrorHTTPStatus
+		return 0, "UPSTREAM_READ_ERROR", g.cfg.ErrorHTTPStatus, nil
 	}
 	if int64(len(prefix)) <= g.cfg.ResponseInspectMaxBytes && responseContainsErrorEnvelope(prefix) {
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_MODEL_ERROR", "upstream model returned an error")
-		return 0, "UPSTREAM_MODEL_ERROR", g.cfg.ErrorHTTPStatus
+		return 0, "UPSTREAM_MODEL_ERROR", g.cfg.ErrorHTTPStatus, append([]byte(nil), prefix...)
 	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Risk-Request-ID", requestID)
@@ -414,16 +430,16 @@ func (g *Gateway) proxyBuffered(
 		writeError = copyError
 	}
 	if writeError != nil {
-		return total, "CLIENT_DISCONNECT", response.StatusCode
+		return total, "CLIENT_DISCONNECT", response.StatusCode, nil
 	}
-	return total, "", response.StatusCode
+	return total, "", response.StatusCode, nil
 }
 
 func (g *Gateway) proxySSE(
 	w http.ResponseWriter,
 	response *http.Response,
 	requestID string,
-) (int64, string, int) {
+) (int64, string, int, []byte) {
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), g.cfg.SSELineMaxBytes)
 	buffered := make([][]string, 0, 4)
@@ -432,14 +448,14 @@ func (g *Gateway) proxySSE(
 		event, ok, err := nextSSEEvent(scanner)
 		if err != nil {
 			writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_STREAM_ERROR", "upstream stream failed before starting")
-			return 0, "UPSTREAM_STREAM_ERROR", g.cfg.ErrorHTTPStatus
+			return 0, "UPSTREAM_STREAM_ERROR", g.cfg.ErrorHTTPStatus, nil
 		}
 		if !ok {
 			break
 		}
 		if isSSEErrorEvent(event) {
 			writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_STREAM_ERROR", "upstream model returned a stream error")
-			return 0, "UPSTREAM_STREAM_ERROR", g.cfg.ErrorHTTPStatus
+			return 0, "UPSTREAM_STREAM_ERROR", g.cfg.ErrorHTTPStatus, sseEventEvidence(event)
 		}
 		buffered = append(buffered, event)
 		bufferedBytes += sseEventSize(event)
@@ -468,7 +484,7 @@ func (g *Gateway) proxySSE(
 	}
 	for _, event := range buffered {
 		if err := writeEvent(event); err != nil {
-			return total, "CLIENT_DISCONNECT", response.StatusCode
+			return total, "CLIENT_DISCONNECT", response.StatusCode, nil
 		}
 	}
 	for {
@@ -479,7 +495,7 @@ func (g *Gateway) proxySSE(
 			if canFlush {
 				flusher.Flush()
 			}
-			return total, "UPSTREAM_STREAM_INTERRUPTED", response.StatusCode
+			return total, "UPSTREAM_STREAM_INTERRUPTED", response.StatusCode, nil
 		}
 		if !hasEvent {
 			break
@@ -490,13 +506,13 @@ func (g *Gateway) proxySSE(
 			if canFlush {
 				flusher.Flush()
 			}
-			return total, "UPSTREAM_STREAM_ERROR", response.StatusCode
+			return total, "UPSTREAM_STREAM_ERROR", response.StatusCode, sseEventEvidence(event)
 		}
 		if err := writeEvent(event); err != nil {
-			return total, "CLIENT_DISCONNECT", response.StatusCode
+			return total, "CLIENT_DISCONNECT", response.StatusCode, nil
 		}
 	}
-	return total, "", response.StatusCode
+	return total, "", response.StatusCode, nil
 }
 
 func nextSSEEvent(scanner *bufio.Scanner) ([]string, bool, error) {
@@ -534,6 +550,14 @@ func sseEventSize(lines []string) int {
 		total += len(line) + 1
 	}
 	return total
+}
+
+func sseEventEvidence(lines []string) []byte {
+	text := strings.Join(lines, "\n")
+	if len(text) > adaptiveProviderErrorLimit {
+		text = text[:adaptiveProviderErrorLimit]
+	}
+	return []byte(text)
 }
 
 func isSSEErrorEvent(lines []string) bool {

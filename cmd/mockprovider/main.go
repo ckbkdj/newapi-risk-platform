@@ -47,6 +47,23 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := strings.ToLower(messageText(request))
+	if strings.Contains(text, "you classify upstream model failures") {
+		isCyber := strings.Contains(text, "alpha-harm") && strings.Contains(text, "beta-harm")
+		classification, _ := json.Marshal(map[string]any{
+			"is_cyber":   isCyber,
+			"category":   map[bool]string{true: "malware", false: ""}[isCyber],
+			"confidence": map[bool]float64{true: 0.999, false: 0.99}[isCyber],
+			"indicators": map[bool][]string{true: {"alpha-harm", "beta-harm"}, false: {}}[isCyber],
+			"reason":     map[bool]string{true: "mock provider policy rejection", false: "not a cyber policy failure"}[isCyber],
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "adaptive-audit-mock",
+			"choices": []any{map[string]any{
+				"message": map[string]any{"role": "assistant", "content": string(classification)},
+			}},
+		})
+		return
+	}
 	decision := "allow"
 	riskCode := ""
 	category := "benign"
@@ -97,6 +114,11 @@ func providerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch request.Model {
+	case "adaptive-policy-reject":
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": map[string]any{"message": "request rejected by provider cyber safety policy", "type": "safety_policy_error"},
+		})
+		return
 	case "upstream-http-error":
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error": map[string]any{"message": "mock provider HTTP failure", "type": "server_error"},
