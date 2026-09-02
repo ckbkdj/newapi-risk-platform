@@ -203,6 +203,48 @@ for _ in $(seq 1 40); do
 done
 [[ "${trace_ok}" == 1 ]] || fail "expected gateway and New API traces were not persisted"
 
+
+trace_from="$(date -u -d '10 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')"
+trace_to="$(date -u -d '2 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
+curl --fail --silent --show-error --get \
+  "${BASE_URL}/api/admin/v1/traces" \
+  "${auth[@]}" \
+  --data-urlencode "from=${trace_from}" \
+  --data-urlencode "to=${trace_to}" \
+  --data-urlencode "request_id=e2e-newapi-request-1" \
+  --data-urlencode "user_id=anonymous-e2e-user" \
+  --data-urlencode "user_match=exact" \
+  --data-urlencode "tenant_id=e2e-tenant" \
+  --data-urlencode "limit=20" >"${WORKDIR}/trace-search-by-user.json"
+
+TRACE_FILE="${WORKDIR}/trace-search-by-user.json" python3 - <<'PY'
+import json
+import os
+
+with open(os.environ["TRACE_FILE"], encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("total") != 1:
+    raise RuntimeError(f"expected one exact trace result: {payload}")
+item = payload["items"][0]
+if item.get("request_id") != "e2e-newapi-request-1" or item.get("external_user_id") != "anonymous-e2e-user":
+    raise RuntimeError(f"unexpected exact trace item: {item}")
+if item.get("metadata", {}).get("tenant_id") != "e2e-tenant":
+    raise RuntimeError(f"tenant search metadata missing: {item}")
+if payload.get("summary", {}).get("allowed_requests") != 1:
+    raise RuntimeError(f"unexpected trace summary: {payload}")
+if payload.get("has_more") is not False:
+    raise RuntimeError(f"unexpected pagination state: {payload}")
+PY
+
+curl --fail --silent --show-error --get \
+  "${BASE_URL}/api/admin/v1/traces" \
+  "${auth[@]}" \
+  --data-urlencode "from=${trace_from}" \
+  --data-urlencode "to=${trace_to}" \
+  --data-urlencode "q=newapi-e2e-1" \
+  --data-urlencode "limit=20" >"${WORKDIR}/trace-search-global.json"
+contains "${WORKDIR}/trace-search-global.json" '"newapi_request_id":"newapi-e2e-1"'
+
 if grep -Fq 'this field must be stripped' "${WORKDIR}/traces.json"; then
   fail "sensitive tracking metadata was persisted"
 fi
