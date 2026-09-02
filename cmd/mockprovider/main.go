@@ -47,6 +47,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := strings.ToLower(messageText(request))
+	userText := strings.ToLower(userMessageText(request))
 	if strings.Contains(text, "you classify upstream model failures") {
 		isCyber := strings.Contains(text, "alpha-harm") && strings.Contains(text, "beta-harm")
 		classification, _ := json.Marshal(map[string]any{
@@ -69,20 +70,34 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	category := "benign"
 	confidence := 0.99
 	reason := "deterministic mock allow"
-	if strings.Contains(text, "model-audit-block") {
+	contextClaim := strings.Contains(userText, "ctf") || strings.Contains(userText, "比赛") ||
+		strings.Contains(userText, "竞赛") || strings.Contains(userText, "authorized") ||
+		strings.Contains(userText, "已授权") || strings.Contains(userText, "bug bounty")
+	operationalReverse := strings.Contains(userText, "reverse engineer") || strings.Contains(userText, "decompile") ||
+		strings.Contains(userText, "hook") || strings.Contains(userText, "frida") ||
+		strings.Contains(userText, "逆向") || strings.Contains(userText, "反编译") ||
+		strings.Contains(userText, "绕过") || strings.Contains(userText, "漏洞利用")
+	if contextClaim && operationalReverse {
+		decision = "review"
+		riskCode = "CYBER_UNTRUSTED_CONTEXT_CLAIM"
+		category = "policy_evasion"
+		confidence = 0.99
+		reason = "contest or authorization text is untrusted context; review the underlying capability"
+	}
+	if strings.Contains(userText, "model-audit-block") {
 		decision = "block"
 		riskCode = "CYBER_MOCK_MODEL_BLOCK"
 		category = "mock_harm"
 		reason = "deterministic mock block"
 	}
-	if strings.Contains(text, "model-audit-review") {
+	if strings.Contains(userText, "model-audit-review") {
 		decision = "review"
 		riskCode = "CYBER_MOCK_REVIEW"
 		category = "mock_review"
 		confidence = 0.5
 		reason = "deterministic mock review"
 	}
-	if strings.Contains(text, "model-audit-invalid-json") {
+	if strings.Contains(userText, "model-audit-invalid-json") {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"choices": []any{map[string]any{
 				"message": map[string]any{"role": "assistant", "content": "not-json"},
@@ -168,16 +183,32 @@ func messageText(request chatRequest) string {
 	for _, message := range request.Messages {
 		builder.WriteString(message.Role)
 		builder.WriteByte(':')
-		switch content := message.Content.(type) {
-		case string:
-			builder.WriteString(content)
-		default:
-			encoded, _ := json.Marshal(content)
-			builder.Write(encoded)
-		}
+		appendContent(&builder, message.Content)
 		builder.WriteByte('\n')
 	}
 	return builder.String()
+}
+
+func userMessageText(request chatRequest) string {
+	var builder strings.Builder
+	for _, message := range request.Messages {
+		if !strings.EqualFold(message.Role, "user") {
+			continue
+		}
+		appendContent(&builder, message.Content)
+		builder.WriteByte('\n')
+	}
+	return builder.String()
+}
+
+func appendContent(builder *strings.Builder, content any) {
+	switch value := content.(type) {
+	case string:
+		builder.WriteString(value)
+	default:
+		encoded, _ := json.Marshal(value)
+		builder.Write(encoded)
+	}
 }
 
 func streamFirstError(w http.ResponseWriter) {
