@@ -52,7 +52,12 @@ jobs:
           '''
           if old not in text:
               raise SystemExit('ambiguous return patch anchor not found')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text = text.replace(old, new, 1)
+          e2e_marker = '# ---------------------------------------------------------------------------\n# E2E: give stream cases stable request IDs and verify the trace semantics.\n'
+          if e2e_marker not in text:
+              raise SystemExit('E2E section marker not found')
+          text = text.split(e2e_marker, 1)[0] + 'print("upstream trace fix applied")\n'
+          path.write_text(text, encoding='utf-8')
           PY
           python3 scripts/apply-upstream-trace-fix.py
           gofmt -w ./cmd ./internal
@@ -81,7 +86,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+ckbkdj@users.noreply.github.com"
-          git add internal/platform/audit_diagnostics.go internal/platform/gateway.go internal/platform/web/index.html scripts/e2e.sh internal/platform/upstream_diagnostics.go internal/platform/upstream_diagnostics_test.go
+          git add internal/platform/audit_diagnostics.go internal/platform/gateway.go internal/platform/web/index.html internal/platform/upstream_diagnostics.go internal/platform/upstream_diagnostics_test.go
           if git diff --cached --quiet; then
             echo "already applied"
             exit 0
