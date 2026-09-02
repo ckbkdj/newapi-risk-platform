@@ -1,4 +1,4 @@
-.PHONY: fmt test race vet build run docker-up docker-down
+.PHONY: fmt test race vet build run init-env deploy doctor docker-up docker-down
 
 fmt:
 	gofmt -w ./cmd ./internal
@@ -18,8 +18,18 @@ build:
 run:
 	go run ./cmd/riskd
 
-docker-up:
-	docker compose up -d --build
+init-env:
+	bash scripts/init-env.sh
+
+deploy:
+	bash scripts/deploy-local.sh
+
+doctor:
+	bash scripts/doctor.sh
+
+# Kept for compatibility, but unlike a bare `docker compose up`, this waits for
+# the HTTP readiness endpoint and prints startup logs on failure.
+docker-up: deploy
 
 docker-down:
 	docker compose down

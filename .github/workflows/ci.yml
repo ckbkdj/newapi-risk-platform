@@ -22,6 +22,28 @@ jobs:
         with:
           go-version: 1.23.x
           cache-dependency-path: go.sum
+      - name: Verify deployment scripts and generated environment
+        run: |
+          set -euo pipefail
+          bash -n scripts/init-env.sh scripts/deploy-local.sh scripts/doctor.sh scripts/e2e.sh
+          bash scripts/init-env.sh >/tmp/init-env-output.txt
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          values = {}
+          for line in Path('.env').read_text(encoding='utf-8').splitlines():
+              if not line or line.startswith('#') or '=' not in line:
+                  continue
+              key, value = line.split('=', 1)
+              values[key] = value
+          assert len(base64.b64decode(values['MASTER_KEY_B64'], validate=True)) == 32
+          assert len(values['JWT_SECRET'].encode()) >= 32
+          assert len(values['BOOTSTRAP_ADMIN_PASSWORD']) >= 14
+          assert values['POSTGRES_PASSWORD']
+          assert values['HTTP_PORT'] == '8080'
+          PY
+          rm -f .env
       - name: Verify module lock
         run: |
           go mod tidy
