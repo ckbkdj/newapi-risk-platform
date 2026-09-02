@@ -44,6 +44,7 @@ func (e *AuditEngine) getAuditProfile(ctx context.Context, id *int64) (AuditProf
 	if err != nil {
 		return AuditProfile{}, err
 	}
+	profile.SystemPrompt = ComposeMandatoryAuditSystemPrompt(profile.SystemPrompt)
 	state.mutex.Lock()
 	state.entries[cacheKey] = auditProfileCacheEntry{
 		profile:   profile,
