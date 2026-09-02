@@ -27,6 +27,28 @@ jobs:
       - name: Apply patch
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-upstream-trace-fix.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    if label == 'buffered client disconnect':
+                  count = text.count(old)
+                  if count != 2:
+                      raise SystemExit(f"{label}: expected two matches, found {count}")
+                  gateway.write_text(text.replace(old, new), encoding="utf-8")
+          '''
+          new = '''    if label == 'buffered client disconnect':
+                  marker = 'func (g *Gateway) proxySSE('
+                  before, suffix = text.split(marker, 1)
+                  count = suffix.count(old)
+                  if count != 2:
+                      raise SystemExit(f"{label}: expected two proxySSE matches, found {count}")
+                  gateway.write_text(before + marker + suffix.replace(old, new), encoding="utf-8")
+          '''
+          if old not in text:
+              raise SystemExit('client-disconnect patch anchor not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           python3 scripts/apply-upstream-trace-fix.py
           gofmt -w ./cmd ./internal
       - name: Validate
