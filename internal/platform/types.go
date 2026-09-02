@@ -104,24 +104,34 @@ type CyberRule struct {
 }
 
 type AuditDecision struct {
-	Decision   string  `json:"decision"`
-	RiskCode   string  `json:"risk_code,omitempty"`
-	Category   string  `json:"category,omitempty"`
-	Confidence float64 `json:"confidence"`
-	Reason     string  `json:"reason,omitempty"`
-	Source     string  `json:"source"`
-	RuleID     int64   `json:"rule_id,omitempty"`
+	Decision           string  `json:"decision"`
+	RiskCode           string  `json:"risk_code,omitempty"`
+	Category           string  `json:"category,omitempty"`
+	Confidence         float64 `json:"confidence"`
+	Reason             string  `json:"reason,omitempty"`
+	Source             string  `json:"source"`
+	RuleID             int64   `json:"rule_id,omitempty"`
+	Evidence           string  `json:"evidence,omitempty"`
+	EvidenceContext    string  `json:"evidence_context,omitempty"`
+	EvidenceVerified   bool    `json:"evidence_verified,omitempty"`
+	EvidenceMatchMode  string  `json:"evidence_match_mode,omitempty"`
+	EvidenceChunkIndex int     `json:"evidence_chunk_index,omitempty"`
+	EvidenceChunkCount int     `json:"evidence_chunk_count,omitempty"`
 }
 
 type AuditAttempt struct {
-	ProfileID   int64  `json:"profile_id"`
-	ProfileName string `json:"profile_name"`
-	Model       string `json:"model"`
-	Attempt     int    `json:"attempt"`
-	Success     bool   `json:"success"`
-	ErrorClass  string `json:"error_class,omitempty"`
-	HTTPStatus  int    `json:"http_status,omitempty"`
-	Reason      string `json:"reason,omitempty"`
+	ProfileID   int64   `json:"profile_id"`
+	ProfileName string  `json:"profile_name"`
+	Model       string  `json:"model"`
+	Attempt     int     `json:"attempt"`
+	Success     bool    `json:"success"`
+	Decision    string  `json:"decision,omitempty"`
+	RiskCode    string  `json:"risk_code,omitempty"`
+	Confidence  float64 `json:"confidence,omitempty"`
+	Evidence    string  `json:"evidence,omitempty"`
+	ErrorClass  string  `json:"error_class,omitempty"`
+	HTTPStatus  int     `json:"http_status,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
 }
 
 type AuditResult struct {

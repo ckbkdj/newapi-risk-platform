@@ -142,7 +142,7 @@ func (e *AuditEngine) callModelChunks(
 		)
 	}
 	if len(chunks) == 1 {
-		return e.callModelOnce(ctx, profile, decorateAuditChunk(chunks[0], 0, 1))
+		return e.callModelOnceWithEvidenceSource(ctx, profile, decorateAuditChunk(chunks[0], 0, 1), chunks[0])
 	}
 
 	workerCount := e.chunkConcurrency
@@ -171,10 +171,11 @@ func (e *AuditEngine) callModelChunks(
 					if !ok {
 						return
 					}
-					decision, err := e.callModelOnce(
+					decision, err := e.callModelOnceWithEvidenceSource(
 						workerContext,
 						profile,
 						decorateAuditChunk(chunks[index], index, len(chunks)),
+						chunks[index],
 					)
 					results <- auditChunkResult{index: index, decision: decision, err: err}
 				}
@@ -276,6 +277,10 @@ func decorateAuditChunk(text string, index int, total int) string {
 
 func decorateChunkDecision(decision AuditDecision, index int, total int) AuditDecision {
 	decision.Source = "model_chunked"
+	if decision.EvidenceVerified {
+		decision.EvidenceChunkIndex = index + 1
+		decision.EvidenceChunkCount = total
+	}
 	reason := strings.TrimSpace(decision.Reason)
 	if reason == "" {
 		reason = "chunk decision"

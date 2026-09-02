@@ -99,6 +99,11 @@ func (e *AuditEngine) callModelWithFailover(
 				Success:     err == nil,
 			}
 			if err == nil {
+				attemptRecord.Decision = decision.Decision
+				attemptRecord.RiskCode = decision.RiskCode
+				attemptRecord.Confidence = decision.Confidence
+				attemptRecord.Reason = decision.Reason
+				attemptRecord.Evidence = decision.Evidence
 				metadata.Attempts = append(metadata.Attempts, attemptRecord)
 				return decision, profile, metadata, nil
 			}
@@ -165,7 +170,8 @@ func auditErrorRetryableOnSameProfile(err error) bool {
 		"response_format",
 		"empty_response",
 		"invalid_json",
-		"invalid_decision":
+		"invalid_decision",
+		"invalid_evidence":
 		return true
 	default:
 		// Authentication, model/endpoint-not-found, generic 4xx, credential

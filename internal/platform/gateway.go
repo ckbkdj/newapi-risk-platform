@@ -286,6 +286,27 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if auditResult.Reason != "" {
 		trace.Metadata["audit_reason"] = truncateString(auditResult.Reason, auditDiagnosticTextLimit)
 	}
+	if strings.HasPrefix(auditResult.Source, "model") {
+		trace.Metadata["audit_model_decision"] = auditResult.Decision
+		trace.Metadata["audit_model_risk_code"] = auditResult.RiskCode
+		trace.Metadata["audit_model_confidence"] = auditResult.Confidence
+	}
+	if auditResult.EvidenceVerified {
+		trace.Metadata["audit_model_evidence"] = truncateString(auditResult.Evidence, 1200)
+		trace.Metadata["audit_model_evidence_context"] = truncateString(auditResult.EvidenceContext, 1600)
+		trace.Metadata["audit_model_evidence_verified"] = true
+		trace.Metadata["audit_model_evidence_match_mode"] = auditResult.EvidenceMatchMode
+		if auditResult.EvidenceChunkIndex > 0 {
+			trace.Metadata["audit_model_evidence_chunk_index"] = auditResult.EvidenceChunkIndex
+			trace.Metadata["audit_model_evidence_chunk_count"] = auditResult.EvidenceChunkCount
+		}
+		trace.Metadata["audit_trigger_input"] = truncateString(auditResult.Evidence, 1200)
+		trace.Metadata["audit_trigger_context"] = truncateString(auditResult.EvidenceContext, 1600)
+		trace.Metadata["audit_model_user_guidance"] = truncateString(auditModelUserGuidance(auditResult.Category), 1200)
+	} else if match := auditResult.RuleMatch; match != nil {
+		trace.Metadata["audit_trigger_input"] = truncateString(match.MatchedText, 1200)
+		trace.Metadata["audit_trigger_context"] = truncateString(match.Context, 1600)
+	}
 	if auditResult.ErrorClass != "" {
 		trace.Metadata["audit_error_class"] = auditResult.ErrorClass
 	}
@@ -345,6 +366,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		message := "request rejected by risk control"
 		if auditResult.RuleMatch != nil && strings.TrimSpace(auditResult.RuleMatch.UserGuidance) != "" {
 			message = auditResult.RuleMatch.UserGuidance
+		} else if auditResult.EvidenceVerified {
+			message = auditModelUserGuidance(auditResult.Category)
 		}
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, message)
 		return

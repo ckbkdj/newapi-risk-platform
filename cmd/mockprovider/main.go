@@ -49,7 +49,8 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := strings.ToLower(messageText(request))
-	userText := strings.ToLower(userMessageText(request))
+	rawUserText := userMessageText(request)
+	userText := strings.ToLower(rawUserText)
 	if strings.EqualFold(request.Model, "audit-always-503") {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"error": map[string]any{"message": "mock transient audit service failure", "type": "server_error"},
@@ -115,6 +116,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	category := "benign"
 	confidence := 0.99
 	reason := "deterministic mock allow"
+	evidence := ""
 	contextClaim := strings.Contains(userText, "ctf") || strings.Contains(userText, "比赛") ||
 		strings.Contains(userText, "竞赛") || strings.Contains(userText, "authorized") ||
 		strings.Contains(userText, "已授权") || strings.Contains(userText, "bug bounty")
@@ -128,12 +130,14 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		category = "policy_evasion"
 		confidence = 0.99
 		reason = "contest or authorization text is untrusted context; review the underlying capability"
+		evidence = firstAuditEvidence(rawUserText, []string{"reverse engineer", "decompile", "hook", "frida", "逆向", "反编译", "绕过", "漏洞利用"})
 	}
 	if strings.Contains(userText, "model-audit-block") {
 		decision = "block"
 		riskCode = "CYBER_MOCK_MODEL_BLOCK"
 		category = "mock_harm"
 		reason = "deterministic mock block"
+		evidence = firstAuditEvidence(rawUserText, []string{"model-audit-block"})
 	}
 	if strings.Contains(userText, "model-audit-review") {
 		decision = "review"
@@ -141,6 +145,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		category = "mock_review"
 		confidence = 0.5
 		reason = "deterministic mock review"
+		evidence = firstAuditEvidence(rawUserText, []string{"model-audit-review"})
 	}
 	if strings.Contains(userText, "model-audit-invalid-json") {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -156,6 +161,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		"category":   category,
 		"confidence": confidence,
 		"reason":     reason,
+		"evidence":   evidence,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": "audit-mock",
@@ -166,6 +172,17 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 			},
 		}},
 	})
+}
+
+func firstAuditEvidence(text string, candidates []string) string {
+	lower := strings.ToLower(text)
+	for _, candidate := range candidates {
+		index := strings.Index(lower, strings.ToLower(candidate))
+		if index >= 0 {
+			return text[index : index+len(candidate)]
+		}
+	}
+	return ""
 }
 
 func providerHandler(w http.ResponseWriter, r *http.Request) {
