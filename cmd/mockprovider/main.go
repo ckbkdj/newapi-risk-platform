@@ -50,6 +50,12 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	text := strings.ToLower(messageText(request))
 	userText := strings.ToLower(userMessageText(request))
+	if strings.EqualFold(request.Model, "audit-always-503") {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": map[string]any{"message": "mock transient audit service failure", "type": "server_error"},
+		})
+		return
+	}
 	if strings.Contains(strings.ToLower(request.Model), "qwen") {
 		enableThinking, ok := request.ChatTemplateKwargs["enable_thinking"].(bool)
 		preserveThinking, preserveOK := request.ChatTemplateKwargs["preserve_thinking"].(bool)
