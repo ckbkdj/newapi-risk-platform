@@ -74,7 +74,7 @@ services:
       - --max-num-batched-tokens
       - "65536"
       - --max-num-seqs
-      - "2"
+      - "1"
       - --enable-prefix-caching
       - --reasoning-parser
       - qwen3
@@ -82,9 +82,9 @@ services:
       - ${VLLM_API_KEY}
 ```
 
-如果启动日志提示 KV cache 不足，先把 `--max-num-seqs` 降为 `1`。仍不足时，再测试 `--kv-cache-dtype fp8`。专用审计实例不建议启用 MTP speculative decoding：审计输出只有约 100 tokens，decode 节省很小，而长上下文更需要显存。
+`--max-num-seqs 1` 是“保证单次请求尽量吃满 262K”的配置。确认 KV cache 仍有明显余量后，可改成 `2` 提高吞吐；不要直接使用 `8` 承载巨型上下文。需要商业并发时，优先增加审计实例副本。
 
-你原先的 `--max-num-seqs 8` 不适合把 262K 上下文吃满。它适合较短请求吞吐，不适合巨型请求。需要商业并发时，应增加审计实例副本，而不是让一个实例同时跑 8 条 262K 请求。
+如果启动日志提示 KV cache 不足，再测试 `--kv-cache-dtype fp8`。专用审计实例不建议启用 MTP speculative decoding：审计输出只有约 100 tokens，decode 节省很小，而长上下文更需要显存。
 
 ## 审计模型 Profile
 
