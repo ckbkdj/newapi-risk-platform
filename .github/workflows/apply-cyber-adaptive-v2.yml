@@ -1,4 +1,4 @@
-name: Apply cyber adaptive integration v2
+name: Apply cyber adaptive privacy hardening
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-cyber-adaptive-integration-v2
+  group: apply-cyber-adaptive-privacy-hardening
   cancel-in-progress: false
 
 jobs:
@@ -32,31 +32,21 @@ jobs:
           go-version: 1.23.x
           cache-dependency-path: go.sum
 
-      - name: Apply integration patch
+      - name: Apply privacy guard
         run: |
           set -euo pipefail
-          python3 scripts/apply-cyber-adaptive.py
           python3 - <<'PY'
           from pathlib import Path
 
-          gateway_path = Path('internal/platform/gateway.go')
-          gateway = gateway_path.read_text(encoding='utf-8')
-          broken = 'text := strings.Join(lines, "\n")'
-          fixed = 'text := strings.Join(lines, "\\n")'
-          if broken not in gateway and fixed not in gateway:
-              raise SystemExit('SSE evidence newline anchor not found')
-          gateway = gateway.replace(broken, fixed, 1)
-          gateway_path.write_text(gateway, encoding='utf-8')
-
-          adaptive_path = Path('internal/platform/adaptive_rules.go')
-          adaptive = adaptive_path.read_text(encoding='utf-8')
+          path = Path('internal/platform/adaptive_rules.go')
+          text = path.read_text(encoding='utf-8')
           old = '''\t\tif indicator == "" || len(indicator) > 80 || strings.ContainsAny(indicator, "\\r\\n") {\n\t\t\tcontinue\n\t\t}'''
           new = '''\t\tif indicator == "" || len(indicator) > 80 || strings.ContainsAny(indicator, "\\r\\n") || adaptiveIndicatorLooksSensitive(indicator) {\n\t\t\tcontinue\n\t\t}'''
-          if new not in adaptive:
-              if old not in adaptive:
+          if new not in text:
+              if old not in text:
                   raise SystemExit('adaptive indicator validation anchor not found')
-              adaptive = adaptive.replace(old, new, 1)
-          adaptive_path.write_text(adaptive, encoding='utf-8')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
           PY
 
       - name: Validate source
@@ -70,29 +60,16 @@ jobs:
           go vet ./...
           CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
           CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
-          POSTGRES_PASSWORD=ci-postgres-password-with-sufficient-length \
-          MASTER_KEY_B64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
-          JWT_SECRET=ci-jwt-secret-0123456789abcdef0123456789abcdef \
-          BOOTSTRAP_ADMIN_PASSWORD=ci-admin-password-with-sufficient-length \
-          docker compose config --quiet
 
-      - name: Commit applied integration
+      - name: Commit privacy hardening
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            internal/platform/audit.go \
-            internal/platform/adaptive_rules.go \
-            internal/platform/adaptive_indicator_guard.go \
-            internal/platform/adaptive_indicator_guard_test.go \
-            internal/platform/migrations/003_cyber_coverage_and_adaptive_learning.sql \
-            internal/platform/gateway.go \
-            cmd/mockprovider/main.go \
-            scripts/e2e.sh
+          git add internal/platform/adaptive_rules.go
           if git diff --cached --quiet; then
-            echo "Integration already applied."
+            echo "Privacy hardening already applied."
             exit 0
           fi
-          git commit -m "fix(cyber): keep adaptive learned rules privacy-safe"
+          git commit -m "fix(cyber): filter sensitive adaptive indicators"
           git push origin HEAD:feat/cyber-rule-expansion-adaptive-learning
