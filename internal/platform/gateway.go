@@ -260,6 +260,26 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trace.PromptHMAC = auditResult.PromptHMAC
 	trace.Metadata["audit_source"] = auditResult.Source
 	trace.Metadata["audit_category"] = auditResult.Category
+	if match := auditResult.RuleMatch; match != nil {
+		trace.Metadata["audit_rule_id"] = match.RuleID
+		trace.Metadata["audit_rule_position"] = match.RulePosition
+		trace.Metadata["audit_rule_code"] = match.RuleCode
+		trace.Metadata["audit_rule_name"] = match.RuleName
+		trace.Metadata["audit_rule_description"] = truncateString(match.RuleDescription, 1000)
+		trace.Metadata["audit_rule_category"] = match.Category
+		trace.Metadata["audit_rule_action"] = match.Action
+		trace.Metadata["audit_rule_priority"] = match.Priority
+		trace.Metadata["audit_rule_pattern_type"] = match.PatternType
+		trace.Metadata["audit_rule_pattern"] = truncateString(match.Pattern, 1600)
+		trace.Metadata["audit_rule_indicators"] = match.Indicators
+		trace.Metadata["audit_rule_match"] = truncateString(match.MatchedText, 1200)
+		trace.Metadata["audit_rule_context"] = truncateString(match.Context, 1600)
+		trace.Metadata["audit_user_guidance"] = truncateString(match.UserGuidance, 1200)
+		if match.Downgraded {
+			trace.Metadata["audit_rule_downgraded_to_review"] = true
+			trace.Metadata["audit_rule_downgrade_reason"] = truncateString(match.DowngradeReason, 1200)
+		}
+	}
 	if auditResult.Model != "" {
 		trace.Metadata["audit_model"] = auditResult.Model
 	}
@@ -322,7 +342,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if auditResult.Decision == DecisionBlock {
 		riskCode := firstNonEmpty(auditResult.RiskCode, "CYBER_POLICY_BLOCK")
 		finish(DecisionBlock, riskCode, g.cfg.ErrorHTTPStatus, 0, 0)
-		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, "request rejected by risk control")
+		message := "request rejected by risk control"
+		if auditResult.RuleMatch != nil && strings.TrimSpace(auditResult.RuleMatch.UserGuidance) != "" {
+			message = auditResult.RuleMatch.UserGuidance
+		}
+		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, message)
 		return
 	}
 

@@ -126,26 +126,27 @@ type AuditAttempt struct {
 
 type AuditResult struct {
 	AuditDecision
-	PromptHMAC               string         `json:"prompt_hmac"`
-	TextBytes                int            `json:"text_bytes"`
-	Latency                  time.Duration  `json:"-"`
-	Model                    string         `json:"model,omitempty"`
-	ErrorClass               string         `json:"error_class,omitempty"`
-	AuditHTTPStatus          int            `json:"audit_http_status,omitempty"`
-	AuditMode                string         `json:"audit_mode,omitempty"`
-	AuditChunkCount          int            `json:"audit_chunk_count,omitempty"`
-	AuditChunkBytes          int            `json:"audit_chunk_bytes,omitempty"`
-	AuditRequestedTokens     int            `json:"audit_requested_tokens,omitempty"`
-	AuditContextWindowTokens int            `json:"audit_context_window_tokens,omitempty"`
-	AuditRetryCount          int            `json:"audit_retry_count,omitempty"`
-	AuditProfileID           int64          `json:"audit_profile_id,omitempty"`
-	AuditProfileName         string         `json:"audit_profile_name,omitempty"`
-	AuditModelAttempts       int            `json:"audit_model_attempts,omitempty"`
-	AuditModelRetries        int            `json:"audit_model_retries,omitempty"`
-	AuditFallbackCount       int            `json:"audit_fallback_count,omitempty"`
-	AuditModelsTried         []string       `json:"audit_models_tried,omitempty"`
-	AuditTokensOverLimit     int            `json:"audit_tokens_over_limit,omitempty"`
-	AuditAttempts            []AuditAttempt `json:"audit_attempts,omitempty"`
+	PromptHMAC               string                `json:"prompt_hmac"`
+	TextBytes                int                   `json:"text_bytes"`
+	Latency                  time.Duration         `json:"-"`
+	Model                    string                `json:"model,omitempty"`
+	ErrorClass               string                `json:"error_class,omitempty"`
+	AuditHTTPStatus          int                   `json:"audit_http_status,omitempty"`
+	AuditMode                string                `json:"audit_mode,omitempty"`
+	AuditChunkCount          int                   `json:"audit_chunk_count,omitempty"`
+	AuditChunkBytes          int                   `json:"audit_chunk_bytes,omitempty"`
+	AuditRequestedTokens     int                   `json:"audit_requested_tokens,omitempty"`
+	AuditContextWindowTokens int                   `json:"audit_context_window_tokens,omitempty"`
+	AuditRetryCount          int                   `json:"audit_retry_count,omitempty"`
+	AuditProfileID           int64                 `json:"audit_profile_id,omitempty"`
+	AuditProfileName         string                `json:"audit_profile_name,omitempty"`
+	AuditModelAttempts       int                   `json:"audit_model_attempts,omitempty"`
+	AuditModelRetries        int                   `json:"audit_model_retries,omitempty"`
+	AuditFallbackCount       int                   `json:"audit_fallback_count,omitempty"`
+	AuditModelsTried         []string              `json:"audit_models_tried,omitempty"`
+	AuditTokensOverLimit     int                   `json:"audit_tokens_over_limit,omitempty"`
+	AuditAttempts            []AuditAttempt        `json:"audit_attempts,omitempty"`
+	RuleMatch                *RuleMatchDiagnostics `json:"rule_match,omitempty"`
 }
 
 type TraceEvent struct {
