@@ -480,6 +480,9 @@ if model_meta.get("audit_trigger_input") != "model-audit-block" or not model_met
     raise RuntimeError(f"generic trigger fields missing: {model_meta}")
 if not model_meta.get("audit_reason") or not model_meta.get("audit_model_user_guidance"):
     raise RuntimeError(f"model block reason/guidance missing: {model_meta}")
+model_attempts = model_meta.get("audit_attempts", [])
+if not model_attempts or model_attempts[-1].get("decision") != "block" or model_attempts[-1].get("evidence") != "model-audit-block":
+    raise RuntimeError(f"successful attempt decision/evidence missing: {model_attempts}")
 
 long_items = {item.get("request_id"): item for item in items if item.get("request_id") in {"e2e-long-safe", "e2e-long-block"}}
 if set(long_items) != {"e2e-long-safe", "e2e-long-block"}:

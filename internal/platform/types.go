@@ -120,14 +120,18 @@ type AuditDecision struct {
 }
 
 type AuditAttempt struct {
-	ProfileID   int64  `json:"profile_id"`
-	ProfileName string `json:"profile_name"`
-	Model       string `json:"model"`
-	Attempt     int    `json:"attempt"`
-	Success     bool   `json:"success"`
-	ErrorClass  string `json:"error_class,omitempty"`
-	HTTPStatus  int    `json:"http_status,omitempty"`
-	Reason      string `json:"reason,omitempty"`
+	ProfileID   int64   `json:"profile_id"`
+	ProfileName string  `json:"profile_name"`
+	Model       string  `json:"model"`
+	Attempt     int     `json:"attempt"`
+	Success     bool    `json:"success"`
+	Decision    string  `json:"decision,omitempty"`
+	RiskCode    string  `json:"risk_code,omitempty"`
+	Confidence  float64 `json:"confidence,omitempty"`
+	Evidence    string  `json:"evidence,omitempty"`
+	ErrorClass  string  `json:"error_class,omitempty"`
+	HTTPStatus  int     `json:"http_status,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
 }
 
 type AuditResult struct {

@@ -99,6 +99,11 @@ func (e *AuditEngine) callModelWithFailover(
 				Success:     err == nil,
 			}
 			if err == nil {
+				attemptRecord.Decision = decision.Decision
+				attemptRecord.RiskCode = decision.RiskCode
+				attemptRecord.Confidence = decision.Confidence
+				attemptRecord.Reason = decision.Reason
+				attemptRecord.Evidence = decision.Evidence
 				metadata.Attempts = append(metadata.Attempts, attemptRecord)
 				return decision, profile, metadata, nil
 			}
