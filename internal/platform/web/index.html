@@ -388,6 +388,7 @@
       }
       function traceReason(item) {
         const metadata=item.metadata||{};
+        if(item.decision!=='allow'&&metadata.error_reason)return String(metadata.error_reason);
         if(metadata.audit_reason)return String(metadata.audit_reason);
         if(metadata.error_reason)return String(metadata.error_reason);
         if(item.decision==='allow')return '正常放行';
@@ -446,7 +447,8 @@
           ['外部事件 ID',item.external_event_id||'-'], ['用户标识',item.external_user_id||'-'], ['租户标识',item.metadata?.tenant_id||'-'],
           ['来源',item.source||'-'], ['路由',item.route_slug||'-'], ['模型',item.model||'-'],
           ['接口',item.endpoint||'-'], ['决策',item.decision||'-'], ['风险码',item.risk_code||'-'],
-          ['问题原因',traceReason(item)], ['审计错误分类',item.metadata?.audit_error_class||'-'], ['审计模型 HTTP',item.metadata?.audit_http_status||'-'],
+          ['问题原因',traceReason(item)], ['最终失败阶段',item.metadata?.failure_stage||'-'], ['上游错误原因',item.metadata?.upstream_error_reason||'-'],
+          ['审计阶段',(item.metadata?.audit_attempts||[]).length?((item.metadata.audit_attempts[item.metadata.audit_attempts.length-1]?.success===true)?'成功':'失败'):'-'], ['审计错误分类',item.metadata?.audit_error_class||'-'], ['审计模型 HTTP',item.metadata?.audit_http_status||'-'],
           ['HTTP 状态',item.http_status||'-'], ['上游状态',item.upstream_status||'-'], ['总延迟',`${number(item.latency_ms)} ms`],
           ['审计延迟',`${number(item.audit_latency_ms)} ms`], ['请求字节',byteText(item.request_bytes)], ['响应字节',byteText(item.response_bytes)],
           ['请求体大小',item.metadata?.request_body_bytes?`${item.metadata.request_body_size_exact===true?'':'至少 '}${byteText(item.metadata.request_body_bytes)}`:'-'], ['平台请求体上限',byteText(item.metadata?.request_body_limit_bytes)], ['超出请求体上限',item.metadata?.request_body_over_limit_bytes?`${item.metadata.request_body_size_exact===true?'':'至少 '}${byteText(item.metadata.request_body_over_limit_bytes)}`:'-'], ['请求体大小是否精确',item.metadata?.request_body_limit_bytes?(item.metadata.request_body_size_exact===true?'是（Content-Length）':'否（安全下界）'):'-'],

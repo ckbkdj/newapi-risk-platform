@@ -337,7 +337,12 @@ func (s *Store) PromoteCyberRuleCandidate(ctx context.Context, candidate CyberRu
 		(code,name,description,category,pattern,pattern_type,action,priority,enabled)
 		VALUES($1,$2,$3,$4,$5,'regex',$6,1200,TRUE)
 		ON CONFLICT(code) DO UPDATE SET pattern=EXCLUDED.pattern,description=EXCLUDED.description,
-			category=EXCLUDED.category,action=EXCLUDED.action,enabled=TRUE,updated_at=now()
+			category=EXCLUDED.category,
+			action=CASE
+				WHEN cyber_rules.action='block' OR EXCLUDED.action='block' THEN 'block'
+				ELSE EXCLUDED.action
+			END,
+			enabled=TRUE,updated_at=now()
 		RETURNING `+columns,
 		candidate.ProposedCode,
 		"Adaptive: "+candidate.Category,
