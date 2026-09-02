@@ -85,20 +85,24 @@ if not values.get("BIND_ADDRESS", "").strip():
 # 262144 model tokens, so it is safe and necessary to migrate that exact old
 # default to 2 MiB.
 audit_defaults = {
-    "AUDIT_TEXT_MAX_BYTES": "2097152",
+    "AUDIT_TEXT_MAX_BYTES": "8388608",
     "AUDIT_OUTPUT_MAX_TOKENS": "128",
     "AUDIT_DISABLE_THINKING": "true",
     "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES": "131072",
     "AUDIT_LONG_CONTEXT_TIMEOUT": "120s",
-    "AUDIT_PROMPT_TRUNCATE_TOKENS": "260000",
+    "AUDIT_CONTEXT_TARGET_TOKENS": values.get("AUDIT_PROMPT_TRUNCATE_TOKENS", "260000"),
+    "AUDIT_FALLBACK_CHUNK_BYTES": "196608",
+    "AUDIT_CHUNK_OVERLAP_BYTES": "4096",
+    "AUDIT_CHUNK_CONCURRENCY": "2",
+    "AUDIT_MAX_CHUNKS": "64",
 }
 for key, default in audit_defaults.items():
     current = values.get(key, "").strip()
     should_set = not current
-    if key == "AUDIT_TEXT_MAX_BYTES" and current == "262144":
+    if key == "AUDIT_TEXT_MAX_BYTES" and current in {"262144", "2097152"}:
         should_set = True
         warnings.append(
-            "AUDIT_TEXT_MAX_BYTES was upgraded from the historical 256 KiB default to 2 MiB for Qwen3.8 long-context audit."
+            "AUDIT_TEXT_MAX_BYTES was upgraded to 8 MiB so the request layer can segment and audit the complete prompt."
         )
     if should_set:
         text = set_value(text, key, default)

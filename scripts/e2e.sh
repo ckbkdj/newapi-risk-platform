@@ -109,6 +109,30 @@ status="$(curl --silent --show-error -o "${WORKDIR}/allow.json" -w '%{http_code}
 assert_status 200 "${status}" "${WORKDIR}/allow.json"
 contains "${WORKDIR}/allow.json" 'mock provider success'
 
+python3 - "${WORKDIR}/long-safe.json" "${WORKDIR}/long-block.json" <<'PY'
+import json
+import sys
+safe = "safe-segment-" * 900
+blocked = ("safe-prefix-" * 450) + " model-audit-block " + ("safe-suffix-" * 450)
+for path, content in ((sys.argv[1], safe), (sys.argv[2], blocked)):
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"model": "normal", "messages": [{"role": "user", "content": content}]}, handle)
+PY
+
+status="$(curl --silent --show-error -o "${WORKDIR}/long-safe-response.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-Request-ID: e2e-long-safe' \
+  --data-binary @"${WORKDIR}/long-safe.json")"
+assert_status 200 "${status}" "${WORKDIR}/long-safe-response.json"
+contains "${WORKDIR}/long-safe-response.json" 'mock provider success'
+
+status="$(curl --silent --show-error -o "${WORKDIR}/long-block-response.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-Request-ID: e2e-long-block' \
+  --data-binary @"${WORKDIR}/long-block.json")"
+assert_status 555 "${status}" "${WORKDIR}/long-block-response.json"
+contains "${WORKDIR}/long-block-response.json" 'CYBER_MOCK_MODEL_BLOCK'
+
 
 for index in $(seq 1 10); do
   user_index=$(( (index - 1) % 3 + 1 ))
@@ -302,6 +326,17 @@ for item in errors:
         raise RuntimeError(f"audit error trace is missing readable reason: {item}")
 if not any(item.get("metadata", {}).get("audit_http_status") == 401 for item in errors):
     raise RuntimeError("audit HTTP status 401 was not persisted")
+long_items = {item.get("request_id"): item for item in items if item.get("request_id") in {"e2e-long-safe", "e2e-long-block"}}
+if set(long_items) != {"e2e-long-safe", "e2e-long-block"}:
+    raise RuntimeError(f"long-context traces missing: {set(long_items)}")
+for request_id, item in long_items.items():
+    metadata = item.get("metadata", {})
+    if metadata.get("audit_mode") != "chunked_after_context_limit":
+        raise RuntimeError(f"{request_id} did not use chunked audit: {metadata}")
+    if int(metadata.get("audit_chunk_count", 0)) < 2:
+        raise RuntimeError(f"{request_id} did not audit multiple chunks: {metadata}")
+    if int(metadata.get("audit_requested_tokens", 0)) <= int(metadata.get("audit_context_window_tokens", 0)):
+        raise RuntimeError(f"{request_id} lacks parsed context-limit counts: {metadata}")
 PY
 
 

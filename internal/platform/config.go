@@ -52,7 +52,11 @@ type Config struct {
 	AuditDisableThinking           bool
 	AuditLongContextThresholdBytes int
 	AuditLongContextTimeout        time.Duration
-	AuditPromptTruncateTokens      int
+	AuditContextTargetTokens       int
+	AuditFallbackChunkBytes        int
+	AuditChunkOverlapBytes         int
+	AuditChunkConcurrency          int
+	AuditMaxChunks                 int
 	SSELineMaxBytes                int
 	TraceQueueSize                 int
 	TraceBatchSize                 int
@@ -103,12 +107,16 @@ func LoadConfig() (Config, error) {
 		ErrorHTTPStatus:                envInt("ERROR_HTTP_STATUS", 555),
 		RequestMaxBytes:                int64(envInt("REQUEST_MAX_BYTES", 8*1024*1024)),
 		ResponseInspectMaxBytes:        int64(envInt("RESPONSE_INSPECT_MAX_BYTES", 2*1024*1024)),
-		AuditTextMaxBytes:              envInt("AUDIT_TEXT_MAX_BYTES", 2*1024*1024),
+		AuditTextMaxBytes:              envInt("AUDIT_TEXT_MAX_BYTES", 8*1024*1024),
 		AuditOutputMaxTokens:           envInt("AUDIT_OUTPUT_MAX_TOKENS", 128),
 		AuditDisableThinking:           envBool("AUDIT_DISABLE_THINKING", true),
 		AuditLongContextThresholdBytes: envInt("AUDIT_LONG_CONTEXT_THRESHOLD_BYTES", 128*1024),
 		AuditLongContextTimeout:        envDuration("AUDIT_LONG_CONTEXT_TIMEOUT", 120*time.Second),
-		AuditPromptTruncateTokens:      envInt("AUDIT_PROMPT_TRUNCATE_TOKENS", 260000),
+		AuditContextTargetTokens:       envInt("AUDIT_CONTEXT_TARGET_TOKENS", envInt("AUDIT_PROMPT_TRUNCATE_TOKENS", 260000)),
+		AuditFallbackChunkBytes:        envInt("AUDIT_FALLBACK_CHUNK_BYTES", 192*1024),
+		AuditChunkOverlapBytes:         envInt("AUDIT_CHUNK_OVERLAP_BYTES", 4096),
+		AuditChunkConcurrency:          envInt("AUDIT_CHUNK_CONCURRENCY", 2),
+		AuditMaxChunks:                 envInt("AUDIT_MAX_CHUNKS", 64),
 		SSELineMaxBytes:                envInt("SSE_LINE_MAX_BYTES", 1024*1024),
 		TraceQueueSize:                 envInt("TRACE_QUEUE_SIZE", 32768),
 		TraceBatchSize:                 envInt("TRACE_BATCH_SIZE", 256),
@@ -165,20 +173,32 @@ func (c Config) Validate() error {
 	if c.ResponseInspectMaxBytes < 64*1024 || c.ResponseInspectMaxBytes > 16*1024*1024 {
 		problems = append(problems, "RESPONSE_INSPECT_MAX_BYTES must be between 64 KiB and 16 MiB")
 	}
-	if c.AuditTextMaxBytes < 4096 || c.AuditTextMaxBytes > 2*1024*1024 {
-		problems = append(problems, "AUDIT_TEXT_MAX_BYTES must be between 4 KiB and 2 MiB")
+	if c.AuditTextMaxBytes < 4096 || c.AuditTextMaxBytes > 16*1024*1024 {
+		problems = append(problems, "AUDIT_TEXT_MAX_BYTES must be between 4 KiB and 16 MiB")
 	}
 	if c.AuditOutputMaxTokens < 32 || c.AuditOutputMaxTokens > 1024 {
 		problems = append(problems, "AUDIT_OUTPUT_MAX_TOKENS must be between 32 and 1024")
 	}
-	if c.AuditLongContextThresholdBytes < 4096 || c.AuditLongContextThresholdBytes > c.AuditTextMaxBytes {
-		problems = append(problems, "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES must be between 4 KiB and AUDIT_TEXT_MAX_BYTES")
+	if c.AuditLongContextThresholdBytes < 256 || c.AuditLongContextThresholdBytes > c.AuditTextMaxBytes {
+		problems = append(problems, "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES must be between 256 bytes and AUDIT_TEXT_MAX_BYTES")
 	}
 	if c.AuditLongContextTimeout < time.Second || c.AuditLongContextTimeout > 10*time.Minute {
 		problems = append(problems, "AUDIT_LONG_CONTEXT_TIMEOUT must be between 1s and 10m")
 	}
-	if c.AuditPromptTruncateTokens < 1024 || c.AuditPromptTruncateTokens > 1000000 {
-		problems = append(problems, "AUDIT_PROMPT_TRUNCATE_TOKENS must be between 1024 and 1000000")
+	if c.AuditContextTargetTokens < 1024 || c.AuditContextTargetTokens > 1000000 {
+		problems = append(problems, "AUDIT_CONTEXT_TARGET_TOKENS must be between 1024 and 1000000")
+	}
+	if c.AuditFallbackChunkBytes < 1024 || c.AuditFallbackChunkBytes > c.AuditTextMaxBytes {
+		problems = append(problems, "AUDIT_FALLBACK_CHUNK_BYTES must be between 1024 and AUDIT_TEXT_MAX_BYTES")
+	}
+	if c.AuditChunkOverlapBytes < 0 || c.AuditChunkOverlapBytes >= c.AuditFallbackChunkBytes/2 {
+		problems = append(problems, "AUDIT_CHUNK_OVERLAP_BYTES must be non-negative and less than half of AUDIT_FALLBACK_CHUNK_BYTES")
+	}
+	if c.AuditChunkConcurrency < 1 || c.AuditChunkConcurrency > 16 {
+		problems = append(problems, "AUDIT_CHUNK_CONCURRENCY must be between 1 and 16")
+	}
+	if c.AuditMaxChunks < 2 || c.AuditMaxChunks > 256 {
+		problems = append(problems, "AUDIT_MAX_CHUNKS must be between 2 and 256")
 	}
 	if c.SSELineMaxBytes < 64*1024 || c.SSELineMaxBytes > 8*1024*1024 {
 		problems = append(problems, "SSE_LINE_MAX_BYTES must be between 64 KiB and 8 MiB")

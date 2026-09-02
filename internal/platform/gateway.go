@@ -241,6 +241,24 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if auditResult.AuditHTTPStatus > 0 {
 		trace.Metadata["audit_http_status"] = auditResult.AuditHTTPStatus
 	}
+	if auditResult.AuditMode != "" {
+		trace.Metadata["audit_mode"] = auditResult.AuditMode
+	}
+	if auditResult.AuditChunkCount > 0 {
+		trace.Metadata["audit_chunk_count"] = auditResult.AuditChunkCount
+	}
+	if auditResult.AuditChunkBytes > 0 {
+		trace.Metadata["audit_chunk_bytes"] = auditResult.AuditChunkBytes
+	}
+	if auditResult.AuditRequestedTokens > 0 {
+		trace.Metadata["audit_requested_tokens"] = auditResult.AuditRequestedTokens
+	}
+	if auditResult.AuditContextWindowTokens > 0 {
+		trace.Metadata["audit_context_window_tokens"] = auditResult.AuditContextWindowTokens
+	}
+	if auditResult.AuditRetryCount > 0 {
+		trace.Metadata["audit_retry_count"] = auditResult.AuditRetryCount
+	}
 	auditDuration.WithLabelValues(slug).Observe(auditResult.Latency.Seconds())
 	if auditResult.Decision == DecisionBlock {
 		riskCode := firstNonEmpty(auditResult.RiskCode, "CYBER_POLICY_BLOCK")

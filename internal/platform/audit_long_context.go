@@ -80,12 +80,12 @@ func (e *AuditEngine) callModel(
 			return AuditDecision{}, metadata, chunkErr
 		}
 		lastContextError = chunkErr
-		if chunkBytes <= 4096 {
+		if chunkBytes <= 1024 {
 			break
 		}
 		chunkBytes /= 2
-		if chunkBytes < 4096 {
-			chunkBytes = 4096
+		if chunkBytes < 1024 {
+			chunkBytes = 1024
 		}
 	}
 
@@ -116,8 +116,8 @@ func (e *AuditEngine) initialAuditChunkBytes(
 		ratio := float64(targetTokens) / float64(requestedTokens)
 		chunkBytes = int(float64(textBytes) * ratio * 0.90)
 	}
-	if chunkBytes < 4096 {
-		chunkBytes = 4096
+	if chunkBytes < 1024 {
+		chunkBytes = 1024
 	}
 	if chunkBytes >= textBytes {
 		chunkBytes = textBytes / 2
@@ -201,8 +201,10 @@ func (e *AuditEngine) callModelChunks(
 	var strongestReview *auditChunkResult
 	var firstError error
 	allowConfidence := 1.0
+	completed := 0
 
 	for result := range results {
+		completed++
 		if result.err != nil {
 			if firstBlock == nil && firstError == nil {
 				firstError = result.err
@@ -247,6 +249,9 @@ func (e *AuditEngine) callModelChunks(
 	}
 	if strongestReview != nil {
 		return decorateChunkDecision(strongestReview.decision, strongestReview.index, len(chunks)), nil
+	}
+	if completed < len(chunks) {
+		return AuditDecision{}, newAuditModelCallError("connection", 0, "chunked audit was canceled before every chunk completed", ctx.Err())
 	}
 	return AuditDecision{
 		Decision:   DecisionAllow,

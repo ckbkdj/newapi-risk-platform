@@ -8,9 +8,9 @@ import (
 
 func TestInitialAuditChunkBytesUsesContextRatio(t *testing.T) {
 	engine := &AuditEngine{
-		outputMaxTokens:   128,
+		outputMaxTokens:     128,
 		contextTargetTokens: 260000,
-		fallbackChunkBytes: 192 * 1024,
+		fallbackChunkBytes:  192 * 1024,
 	}
 	got := engine.initialAuditChunkBytes(1_000_000, 400_000, 262_144)
 	if got < 550_000 || got > 620_000 {

@@ -47,7 +47,11 @@ type AuditEngine struct {
 	disableThinking           bool
 	longContextThresholdBytes int
 	longContextTimeout        time.Duration
-	promptTruncateTokens      int
+	contextTargetTokens       int
+	fallbackChunkBytes        int
+	chunkOverlapBytes         int
+	chunkConcurrency          int
+	maxAuditChunks            int
 	refreshInterval           time.Duration
 	log                       *slog.Logger
 	rules                     atomic.Value
@@ -78,7 +82,11 @@ func NewAuditEngine(
 		disableThinking:           cfg.AuditDisableThinking,
 		longContextThresholdBytes: cfg.AuditLongContextThresholdBytes,
 		longContextTimeout:        cfg.AuditLongContextTimeout,
-		promptTruncateTokens:      cfg.AuditPromptTruncateTokens,
+		contextTargetTokens:       cfg.AuditContextTargetTokens,
+		fallbackChunkBytes:        cfg.AuditFallbackChunkBytes,
+		chunkOverlapBytes:         cfg.AuditChunkOverlapBytes,
+		chunkConcurrency:          cfg.AuditChunkConcurrency,
+		maxAuditChunks:            cfg.AuditMaxChunks,
 		refreshInterval:           cfg.RulesRefreshInterval,
 		log:                       log,
 		adaptiveQueue:             make(chan adaptiveFailureSample, adaptiveLearningQueueSize),
@@ -271,16 +279,26 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		return result
 	}
 
-	decision, err := e.callModel(ctx, profile, text)
+	decision, callMetadata, err := e.callModel(ctx, profile, text)
 	result.Model = profile.Model
+	result.AuditMode = callMetadata.Mode
+	result.AuditChunkCount = callMetadata.ChunkCount
+	result.AuditChunkBytes = callMetadata.ChunkBytes
+	result.AuditRequestedTokens = callMetadata.RequestedTokens
+	result.AuditContextWindowTokens = callMetadata.ContextWindowTokens
+	result.AuditRetryCount = callMetadata.RetryCount
 	if err != nil {
 		errorClass, auditHTTPStatus, reason := auditModelErrorDetails(err)
 		result.ErrorClass = errorClass
 		result.AuditHTTPStatus = auditHTTPStatus
+		riskCode := "AUDIT_MODEL_ERROR"
+		if errorClass == "context_length" || errorClass == "input_too_large" {
+			riskCode = "AUDIT_CONTEXT_TOO_LARGE"
+		}
 		if route.FailClosed || profile.FailClosed {
 			result.AuditDecision = AuditDecision{
 				Decision:   DecisionBlock,
-				RiskCode:   "AUDIT_MODEL_ERROR",
+				RiskCode:   riskCode,
 				Category:   "audit_infrastructure",
 				Confidence: 1,
 				Reason:     reason,
@@ -326,7 +344,7 @@ type modelAuditResponse struct {
 	Reason     string  `json:"reason"`
 }
 
-func (e *AuditEngine) callModel(
+func (e *AuditEngine) callModelOnce(
 	ctx context.Context,
 	profile AuditProfile,
 	text string,
@@ -335,24 +353,19 @@ func (e *AuditEngine) callModel(
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
 	}
-	systemPrompt := strings.TrimSpace(profile.SystemPrompt)
-	if systemPrompt == "" {
-		systemPrompt = DefaultAuditSystemPrompt
-	}
-	systemPrompt = appendFastAuditDirective(systemPrompt)
 	payload := map[string]any{
 		"model":       profile.Model,
 		"temperature": 0,
 		"max_tokens":  e.outputMaxTokens,
-		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": e.auditUserContent(profile, text)},
-		},
+		"messages":    e.auditMessages(profile, text),
 	}
 	if len(profile.Extra) > 0 {
 		var extra map[string]any
 		if json.Unmarshal(profile.Extra, &extra) == nil {
 			for key, value := range extra {
+				if isInternalAuditExtraKey(key) {
+					continue
+				}
 				switch key {
 				case "model", "messages", "stream":
 					continue
