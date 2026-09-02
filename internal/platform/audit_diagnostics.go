@@ -317,10 +317,20 @@ func balancedJSONObjects(value string) []string {
 
 func traceFailureReason(riskCode string, upstreamStatus int, metadata map[string]any) string {
 	if metadata != nil {
-		if reason, ok := metadata["audit_reason"].(string); ok && strings.TrimSpace(reason) != "" {
+		// Explicit stage-specific diagnostics always win. REQUEST_TOO_LARGE and
+		// body-read paths may populate this before finish() runs.
+		if reason, ok := metadata["error_reason"].(string); ok && strings.TrimSpace(reason) != "" {
 			return truncateString(reason, auditDiagnosticTextLimit)
 		}
-		if reason, ok := metadata["error_reason"].(string); ok && strings.TrimSpace(reason) != "" {
+		// An audit reason describes only the audit stage. A benign audit result
+		// must never become the final error reason when the real failure happens
+		// later in the upstream/SSE path.
+		if strings.HasPrefix(riskCode, "AUDIT_") || strings.HasPrefix(riskCode, "CYBER_") {
+			if reason, ok := metadata["audit_reason"].(string); ok && strings.TrimSpace(reason) != "" {
+				return truncateString(reason, auditDiagnosticTextLimit)
+			}
+		}
+		if reason, ok := metadata["upstream_error_reason"].(string); ok && strings.TrimSpace(reason) != "" {
 			return truncateString(reason, auditDiagnosticTextLimit)
 		}
 	}
@@ -359,7 +369,13 @@ func traceFailureReason(riskCode string, upstreamStatus int, metadata map[string
 		}
 		return "真实上游模型返回错误"
 	case "UPSTREAM_STREAM_ERROR":
-		return "真实上游流式响应中断或返回错误事件"
+		return "真实上游流式响应返回错误事件"
+	case "UPSTREAM_STREAM_INTERRUPTED":
+		return "真实上游流式连接在完成前中断"
+	case "UPSTREAM_READ_ERROR":
+		return "读取真实上游响应失败"
+	case "CLIENT_DISCONNECT":
+		return "客户端在响应传输完成前断开连接"
 	}
 	if strings.HasPrefix(riskCode, "CYBER_") {
 		return "请求命中 Cyber 风控规则或语义审计"
