@@ -25,7 +25,10 @@ security-control evasion, data exfiltration, destructive impact, malicious suppl
 AI/agent systems such as jailbreaks tied to harmful actions, prompt/RAG/tool poisoning, agent credential theft,
 agent-driven exfiltration, model theft, or AI resource attacks. Review ambiguous reconnaissance, exploit,
 reverse-shell, container/Kubernetes, prompt-injection, and agent-tool requests rather than hard-blocking solely
-on keywords. Allow benign development, defensive security, incident response, detection/remediation, education,
+on keywords. Credential self-service such as checking a leaked secret, locating the requester's own key, rotating,
+revoking, redacting, recovering, or securely storing the requester's own credentials is benign unless the actual
+outcome requests access to another person's credentials; a bare ownership claim alone is not proof and ambiguous
+credential-access requests should be reviewed. Allow benign development, defensive security, incident response, detection/remediation, education,
 CTF or sandbox work, authorized testing, and high-level discussion unless the requested outcome supplies harmful
 operational capability against real systems or victims. Do not reveal chain-of-thought and do not emit <think>
 blocks, Markdown, or explanatory prose. Return the final compact JSON object immediately. Keep reason under 120
@@ -194,42 +197,49 @@ func ValidateCyberRule(rule CyberRule) error {
 	return nil
 }
 
-func (e *AuditEngine) matchRules(text string) *AuditDecision {
+func (e *AuditEngine) matchRules(text string) (*AuditDecision, *RuleMatchDiagnostics) {
 	rules, _ := e.rules.Load().([]compiledRule)
 	lowerText := strings.ToLower(text)
 	var review *AuditDecision
-	for _, rule := range rules {
-		matched := false
-		switch rule.PatternType {
-		case "regex":
-			matched = rule.regularExpression != nil && rule.regularExpression.MatchString(text)
-		case "contains":
-			matched = strings.Contains(lowerText, rule.lowerPattern)
-		case "exact":
-			matched = strings.EqualFold(strings.TrimSpace(text), rule.lowerPattern)
-		}
+	var reviewDiagnostics *RuleMatchDiagnostics
+	for index, rule := range rules {
+		evidence, matched := matchCyberRuleEvidence(rule, text, lowerText)
 		if !matched {
 			continue
 		}
+		diagnostics := buildRuleMatchDiagnostics(rule, index+1, text, evidence)
+		action := rule.Action
+		reason := fmt.Sprintf("matched cyber rule #%d (%s)", rule.ID, rule.Code)
+		if len(diagnostics.Indicators) > 0 {
+			reason += ": " + strings.Join(diagnostics.Indicators, ", ")
+		}
+		if downgrade, downgradeReason := shouldReviewCredentialSelfService(rule.CyberRule, text); downgrade {
+			action = DecisionReview
+			diagnostics.Downgraded = true
+			diagnostics.DowngradeReason = downgradeReason
+			reason = fmt.Sprintf("matched cyber rule #%d (%s), but credential self-service context requires semantic review", rule.ID, rule.Code)
+		}
 		decision := AuditDecision{
-			Decision:   rule.Action,
+			Decision:   action,
 			RiskCode:   rule.Code,
 			Category:   rule.Category,
 			Confidence: 1,
-			Reason:     "matched configured cyber rule",
+			Reason:     reason,
 			Source:     "rule",
 			RuleID:     rule.ID,
 		}
-		if rule.Action == DecisionReview {
+		if action == DecisionReview {
 			if review == nil {
 				copyOfDecision := decision
+				copyOfDiagnostics := diagnostics
 				review = &copyOfDecision
+				reviewDiagnostics = &copyOfDiagnostics
 			}
 			continue
 		}
-		return &decision
+		return &decision, &diagnostics
 	}
-	return review
+	return review, reviewDiagnostics
 }
 
 func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (result AuditResult) {
@@ -251,7 +261,8 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		return result
 	}
 
-	matched := e.matchRules(text)
+	matched, ruleMatch := e.matchRules(text)
+	result.RuleMatch = ruleMatch
 	if matched != nil && (matched.Decision == DecisionBlock || matched.Decision == DecisionAllow) {
 		result.AuditDecision = *matched
 		return result
