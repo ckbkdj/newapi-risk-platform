@@ -258,6 +258,34 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if auditResult.AuditRetryCount > 0 {
 		trace.Metadata["audit_retry_count"] = auditResult.AuditRetryCount
+		trace.Metadata["audit_chunk_retry_count"] = auditResult.AuditRetryCount
+	}
+	if auditResult.AuditRequestedTokens > 0 {
+		trace.Metadata["audit_input_tokens"] = auditResult.AuditRequestedTokens
+	}
+	if auditResult.AuditTokensOverLimit > 0 {
+		trace.Metadata["audit_tokens_over_limit"] = auditResult.AuditTokensOverLimit
+	}
+	if auditResult.AuditProfileID > 0 {
+		trace.Metadata["audit_profile_id"] = auditResult.AuditProfileID
+	}
+	if auditResult.AuditProfileName != "" {
+		trace.Metadata["audit_profile_name"] = auditResult.AuditProfileName
+	}
+	if auditResult.AuditModelAttempts > 0 {
+		trace.Metadata["audit_model_attempts"] = auditResult.AuditModelAttempts
+	}
+	if auditResult.AuditModelRetries > 0 {
+		trace.Metadata["audit_model_retries"] = auditResult.AuditModelRetries
+	}
+	if auditResult.AuditFallbackCount > 0 {
+		trace.Metadata["audit_fallback_count"] = auditResult.AuditFallbackCount
+	}
+	if len(auditResult.AuditModelsTried) > 0 {
+		trace.Metadata["audit_models_tried"] = auditResult.AuditModelsTried
+	}
+	if len(auditResult.AuditAttempts) > 0 {
+		trace.Metadata["audit_attempts"] = auditResult.AuditAttempts
 	}
 	auditDuration.WithLabelValues(slug).Observe(auditResult.Latency.Seconds())
 	if auditResult.Decision == DecisionBlock {

@@ -297,7 +297,7 @@ func (s *Store) DeleteRoute(ctx context.Context, id int64) error {
 }
 
 const profileColumns = `id,name,endpoint,model,system_prompt,timeout_ms,block_threshold,enabled,
-	fail_closed,is_default,extra,api_key_ciphertext,created_at,updated_at`
+	fail_closed,is_default,retry_count,fallback_profile_ids,extra,api_key_ciphertext,created_at,updated_at`
 
 func scanProfile(row rowScanner) (AuditProfile, error) {
 	var profile AuditProfile
@@ -305,7 +305,8 @@ func scanProfile(row rowScanner) (AuditProfile, error) {
 	err := row.Scan(
 		&profile.ID, &profile.Name, &profile.Endpoint, &profile.Model, &profile.SystemPrompt,
 		&profile.TimeoutMS, &profile.BlockThreshold, &profile.Enabled, &profile.FailClosed,
-		&profile.IsDefault, &extra, &profile.APIKeyCiphertext, &profile.CreatedAt, &profile.UpdatedAt,
+		&profile.IsDefault, &profile.RetryCount, &profile.FallbackProfileIDs, &extra,
+		&profile.APIKeyCiphertext, &profile.CreatedAt, &profile.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AuditProfile{}, ErrNotFound
@@ -348,6 +349,9 @@ func (s *Store) SaveAuditProfile(ctx context.Context, input AuditProfileInput, s
 	if len(input.Extra) == 0 {
 		input.Extra = json.RawMessage(`{}`)
 	}
+	if input.FallbackProfileIDs == nil {
+		input.FallbackProfileIDs = []int64{}
+	}
 	if !json.Valid(input.Extra) {
 		return AuditProfile{}, errors.New("extra must be valid JSON")
 	}
@@ -382,17 +386,20 @@ func (s *Store) SaveAuditProfile(ctx context.Context, input AuditProfileInput, s
 	if input.ID == 0 {
 		profile, err = scanProfile(transaction.QueryRow(ctx, `INSERT INTO audit_profiles
 			(name,endpoint,model,api_key_ciphertext,system_prompt,timeout_ms,block_threshold,
-			enabled,fail_closed,is_default,extra)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING `+profileColumns,
+			enabled,fail_closed,is_default,retry_count,fallback_profile_ids,extra)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING `+profileColumns,
 			input.Name, input.Endpoint, input.Model, ciphertext, input.SystemPrompt, input.TimeoutMS,
-			input.BlockThreshold, input.Enabled, input.FailClosed, input.IsDefault, input.Extra))
+			input.BlockThreshold, input.Enabled, input.FailClosed, input.IsDefault, input.RetryCount,
+			input.FallbackProfileIDs, input.Extra))
 	} else {
 		profile, err = scanProfile(transaction.QueryRow(ctx, `UPDATE audit_profiles SET name=$2,
 			endpoint=$3,model=$4,api_key_ciphertext=$5,system_prompt=$6,timeout_ms=$7,
-			block_threshold=$8,enabled=$9,fail_closed=$10,is_default=$11,extra=$12,updated_at=now()
+			block_threshold=$8,enabled=$9,fail_closed=$10,is_default=$11,retry_count=$12,
+			fallback_profile_ids=$13,extra=$14,updated_at=now()
 			WHERE id=$1 RETURNING `+profileColumns,
 			input.ID, input.Name, input.Endpoint, input.Model, ciphertext, input.SystemPrompt, input.TimeoutMS,
-			input.BlockThreshold, input.Enabled, input.FailClosed, input.IsDefault, input.Extra))
+			input.BlockThreshold, input.Enabled, input.FailClosed, input.IsDefault, input.RetryCount,
+			input.FallbackProfileIDs, input.Extra))
 	}
 	if err != nil {
 		return AuditProfile{}, err
@@ -404,6 +411,8 @@ func (s *Store) SaveAuditProfile(ctx context.Context, input AuditProfileInput, s
 }
 
 func (s *Store) DeleteAuditProfile(ctx context.Context, id int64) error {
+	_, _ = s.pool.Exec(ctx, `UPDATE audit_profiles SET fallback_profile_ids=array_remove(fallback_profile_ids,$1),updated_at=now()
+		WHERE $1=ANY(fallback_profile_ids)`, id)
 	command, err := s.pool.Exec(ctx,
 		"DELETE FROM audit_profiles WHERE id=$1 AND is_default=FALSE", id)
 	if err != nil {

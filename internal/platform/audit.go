@@ -279,14 +279,25 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		return result
 	}
 
-	decision, callMetadata, err := e.callModel(ctx, profile, text)
-	result.Model = profile.Model
+	decision, usedProfile, failoverMetadata, err := e.callModelWithFailover(ctx, profile, text)
+	callMetadata := failoverMetadata.CallMetadata
+	result.Model = usedProfile.Model
+	result.AuditProfileID = usedProfile.ID
+	result.AuditProfileName = usedProfile.Name
 	result.AuditMode = callMetadata.Mode
 	result.AuditChunkCount = callMetadata.ChunkCount
 	result.AuditChunkBytes = callMetadata.ChunkBytes
 	result.AuditRequestedTokens = callMetadata.RequestedTokens
 	result.AuditContextWindowTokens = callMetadata.ContextWindowTokens
 	result.AuditRetryCount = callMetadata.RetryCount
+	result.AuditModelAttempts = failoverMetadata.AttemptCount
+	result.AuditModelRetries = failoverMetadata.ModelRetryCount
+	result.AuditFallbackCount = failoverMetadata.FallbackCount
+	result.AuditAttempts = append([]AuditAttempt(nil), failoverMetadata.Attempts...)
+	result.AuditModelsTried = auditAttemptModelNames(failoverMetadata.Attempts)
+	if result.AuditRequestedTokens > result.AuditContextWindowTokens && result.AuditContextWindowTokens > 0 {
+		result.AuditTokensOverLimit = result.AuditRequestedTokens - result.AuditContextWindowTokens
+	}
 	if err != nil {
 		errorClass, auditHTTPStatus, reason := auditModelErrorDetails(err)
 		result.ErrorClass = errorClass
@@ -315,13 +326,13 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		}
 		return result
 	}
-	if decision.Decision == DecisionBlock && decision.Confidence < profile.BlockThreshold {
+	if decision.Decision == DecisionBlock && decision.Confidence < usedProfile.BlockThreshold {
 		decision.Decision = DecisionReview
 		if decision.RiskCode == "" {
 			decision.RiskCode = "AUDIT_LOW_CONFIDENCE"
 		}
 	}
-	if decision.Decision == DecisionReview && (route.FailClosed || profile.FailClosed) {
+	if decision.Decision == DecisionReview && (route.FailClosed || usedProfile.FailClosed) {
 		decision.Decision = DecisionBlock
 		if decision.RiskCode == "" {
 			decision.RiskCode = "AUDIT_REVIEW_REQUIRED"

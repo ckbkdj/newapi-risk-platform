@@ -199,6 +199,14 @@ func (s *HTTPService) adminSaveAuditProfile(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusBadRequest, "invalid_profile", "audit timeout is invalid")
 		return
 	}
+	if input.RetryCount < 0 || input.RetryCount > maxAuditRetryCount {
+		writeAPIError(w, http.StatusBadRequest, "invalid_profile", "audit retry count must be between 0 and 5")
+		return
+	}
+	if err := s.store.ValidateAuditFallbackProfiles(r.Context(), input.ID, input.FallbackProfileIDs); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_fallback_chain", err.Error())
+		return
+	}
 	if input.BlockThreshold < 0 || input.BlockThreshold > 1 || len(input.SystemPrompt) > 64*1024 || len(input.Extra) > 32*1024 {
 		writeAPIError(w, http.StatusBadRequest, "invalid_profile", "threshold, prompt, or extra configuration is invalid")
 		return
@@ -211,8 +219,10 @@ func (s *HTTPService) adminSaveAuditProfile(w http.ResponseWriter, r *http.Reque
 	}
 	s.audit.InvalidateProfiles()
 	s.auditAdmin(r, "save", "audit_profile", strconv.FormatInt(profile.ID, 10), map[string]any{
-		"name":  profile.Name,
-		"model": profile.Model,
+		"name":              profile.Name,
+		"model":             profile.Model,
+		"retry_count":       profile.RetryCount,
+		"fallback_profiles": profile.FallbackProfileIDs,
 	})
 	writeJSON(w, http.StatusOK, profile)
 }

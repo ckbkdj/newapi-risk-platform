@@ -205,6 +205,51 @@ status="$(curl --silent --show-error -o "${WORKDIR}/audit-invalid.json" -w '%{ht
 assert_status 555 "${status}" "${WORKDIR}/audit-invalid.json"
 contains "${WORKDIR}/audit-invalid.json" 'AUDIT_MODEL_ERROR'
 
+# Build a 3-model ordered audit chain. The primary retries twice, then the first
+# fallback retries once, then the final Qwen audit model succeeds.
+create_profile() {
+  local name="$1" model="$2" retry_count="$3" fallbacks_json="$4" output="$5"
+  local payload
+  payload="$(python3 - <<PY
+import json
+print(json.dumps({
+  "id": 0, "name": ${name@Q}, "endpoint": "http://mock-provider:18081/audit/v1",
+  "model": ${model@Q}, "api_key": "", "system_prompt": "", "timeout_ms": 5000,
+  "block_threshold": 0.65, "retry_count": int(${retry_count}),
+  "fallback_profile_ids": json.loads(${fallbacks_json@Q}),
+  "enabled": True, "fail_closed": True, "is_default": False, "extra": {}
+}, separators=(",", ":")))
+PY
+)"
+  curl --fail --silent --show-error "${BASE_URL}/api/admin/v1/audit-profiles" "${auth[@]}" -H 'Content-Type: application/json' --data-binary "${payload}" >"${output}"
+}
+
+create_profile "E2E final audit" "qwen3.8-audit-mock" 0 '[]' "${WORKDIR}/profile-final.json"
+FINAL_AUDIT_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["id"])' "${WORKDIR}/profile-final.json")"
+create_profile "E2E middle failing audit" "audit-always-503" 1 '[]' "${WORKDIR}/profile-middle.json"
+MIDDLE_AUDIT_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["id"])' "${WORKDIR}/profile-middle.json")"
+create_profile "E2E primary failing audit" "audit-always-503" 2 "[${MIDDLE_AUDIT_ID},${FINAL_AUDIT_ID}]" "${WORKDIR}/profile-primary.json"
+PRIMARY_AUDIT_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["id"])' "${WORKDIR}/profile-primary.json")"
+
+FAILOVER_KEY='e2e-failover-route-key-with-sufficient-randomness'
+failover_route_payload="$(python3 - <<PY
+import json
+print(json.dumps({
+  "id":0,"slug":"mock-failover","name":"E2E audit failover route","base_url":"http://mock-provider:18081",
+  "provider":"generic","auth_mode":"none","secret_header":"","upstream_secret":"","inbound_key":"${FAILOVER_KEY}",
+  "audit_profile_id":int("${PRIMARY_AUDIT_ID}"),"enabled":True,"fail_closed":True,"request_timeout_ms":10000,
+  "max_concurrency":50,"rate_limit_rps":1000,"rate_limit_burst":1000
+}, separators=(",", ":")))
+PY
+)"
+curl --fail --silent --show-error "${BASE_URL}/api/admin/v1/routes" "${auth[@]}" -H 'Content-Type: application/json' --data-binary "${failover_route_payload}" >"${WORKDIR}/failover-route.json"
+status="$(curl --silent --show-error -o "${WORKDIR}/failover-response.json" -w '%{http_code}' \
+  "${BASE_URL}/gateway/mock-failover/v1/chat/completions" \
+  -H "Authorization: Bearer ${FAILOVER_KEY}" -H 'Content-Type: application/json' -H 'X-Request-ID: e2e-audit-failover' \
+  --data-binary '{"model":"normal","messages":[{"role":"user","content":"safe failover request"}]}')"
+assert_status 200 "${status}" "${WORKDIR}/failover-response.json"
+contains "${WORKDIR}/failover-response.json" 'mock provider success'
+
 status="$(curl --silent --show-error -o "${WORKDIR}/upstream-http.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
   --data-binary '{"model":"upstream-http-error","messages":[{"role":"user","content":"safe request"}]}')"
@@ -298,7 +343,8 @@ for _ in $(seq 1 40); do
     "${auth[@]}" >"${WORKDIR}/traces.json"
   if grep -Fq 'CYBER_MALWARE_CREATION' "${WORKDIR}/traces.json" && \
      grep -Fq 'UPSTREAM_MODEL_ERROR' "${WORKDIR}/traces.json" && \
-     grep -Fq 'e2e-newapi-request-1' "${WORKDIR}/traces.json"; then
+     grep -Fq 'e2e-newapi-request-1' "${WORKDIR}/traces.json" && \
+     grep -Fq 'e2e-audit-failover' "${WORKDIR}/traces.json"; then
     trace_ok=1
     break
   fi
@@ -337,6 +383,26 @@ for request_id, item in long_items.items():
         raise RuntimeError(f"{request_id} did not audit multiple chunks: {metadata}")
     if int(metadata.get("audit_requested_tokens", 0)) <= int(metadata.get("audit_context_window_tokens", 0)):
         raise RuntimeError(f"{request_id} lacks parsed context-limit counts: {metadata}")
+    if int(metadata.get("audit_input_tokens", 0)) != int(metadata.get("audit_requested_tokens", 0)):
+        raise RuntimeError(f"{request_id} user-facing input token count missing: {metadata}")
+    if int(metadata.get("audit_tokens_over_limit", 0)) != int(metadata.get("audit_requested_tokens", 0)) - int(metadata.get("audit_context_window_tokens", 0)):
+        raise RuntimeError(f"{request_id} over-limit token count is wrong: {metadata}")
+failover = next((item for item in items if item.get("request_id") == "e2e-audit-failover"), None)
+if not failover:
+    raise RuntimeError("audit failover trace missing")
+fm = failover.get("metadata", {})
+if int(fm.get("audit_model_attempts", 0)) != 6:
+    raise RuntimeError(f"expected six model calls (3 primary + 2 middle + 1 final): {fm}")
+if int(fm.get("audit_model_retries", 0)) != 3:
+    raise RuntimeError(f"expected three same-model retries: {fm}")
+if int(fm.get("audit_fallback_count", 0)) != 2:
+    raise RuntimeError(f"expected two ordered fallback switches: {fm}")
+models = fm.get("audit_models_tried", [])
+if models != ["audit-always-503", "qwen3.8-audit-mock"]:
+    raise RuntimeError(f"unexpected model chain: {models}")
+attempts = fm.get("audit_attempts", [])
+if len(attempts) != 6 or not attempts[-1].get("success"):
+    raise RuntimeError(f"attempt diagnostics missing: {attempts}")
 PY
 
 
