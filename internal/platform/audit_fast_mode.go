@@ -12,6 +12,8 @@ const fastAuditDirective = `Mandatory audit output mode:
 - Do not use Markdown or explanatory prose.
 - Return one compact policy JSON object immediately.
 - Keep the reason field under 120 characters.
+- For block or review, evidence is mandatory: copy one exact contiguous quote from the request, under 80 characters, with no ellipsis or paraphrase.
+- For allow, evidence must be an empty string.
 - When a long request is split, classify only the supplied chunk and never assume other chunks are safe.`
 
 const fastAuditUserSuffix = `

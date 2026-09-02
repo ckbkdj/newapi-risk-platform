@@ -227,6 +227,7 @@ contains "${WORKDIR}/own-secret-self-service.json" 'mock provider success'
 
 status="$(curl --silent --show-error -o "${WORKDIR}/model-block.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-Request-ID: e2e-model-block-evidence' \
   --data-binary '{"model":"normal","messages":[{"role":"user","content":"model-audit-block"}]}')"
 assert_status 555 "${status}" "${WORKDIR}/model-block.json"
 contains "${WORKDIR}/model-block.json" 'CYBER_MOCK_MODEL_BLOCK'
@@ -394,6 +395,7 @@ for _ in $(seq 1 40); do
      grep -Fq 'e2e-own-secret-self-service' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-late' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-normal' "${WORKDIR}/traces.json" && \
+     grep -Fq 'e2e-model-block-evidence' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-audit-failover' "${WORKDIR}/traces.json"; then
     trace_ok=1
     break
@@ -460,6 +462,25 @@ if not sm.get("audit_rule_downgrade_reason") or not sm.get("audit_user_guidance"
 if self_service.get("decision") != "allow" or int(self_service.get("http_status", 0)) != 200:
     raise RuntimeError(f"own-secret request should be allowed after model review: {self_service}")
 
+model_block = next((item for item in items if item.get("request_id") == "e2e-model-block-evidence"), None)
+if not model_block:
+    raise RuntimeError("semantic model block trace is missing")
+model_meta = model_block.get("metadata", {})
+if model_block.get("decision") != "block" or model_block.get("risk_code") != "CYBER_MOCK_MODEL_BLOCK":
+    raise RuntimeError(f"unexpected semantic model block: {model_block}")
+if model_meta.get("audit_source") != "model" or model_meta.get("audit_model_decision") != "block":
+    raise RuntimeError(f"model decision diagnostics missing: {model_meta}")
+if model_meta.get("audit_model_evidence") != "model-audit-block":
+    raise RuntimeError(f"exact model evidence missing: {model_meta}")
+if model_meta.get("audit_model_evidence_verified") is not True:
+    raise RuntimeError(f"model evidence was not verified: {model_meta}")
+if "⟦model-audit-block⟧" not in str(model_meta.get("audit_model_evidence_context", "")):
+    raise RuntimeError(f"model evidence context missing: {model_meta}")
+if model_meta.get("audit_trigger_input") != "model-audit-block" or not model_meta.get("audit_trigger_context"):
+    raise RuntimeError(f"generic trigger fields missing: {model_meta}")
+if not model_meta.get("audit_reason") or not model_meta.get("audit_model_user_guidance"):
+    raise RuntimeError(f"model block reason/guidance missing: {model_meta}")
+
 long_items = {item.get("request_id"): item for item in items if item.get("request_id") in {"e2e-long-safe", "e2e-long-block"}}
 if set(long_items) != {"e2e-long-safe", "e2e-long-block"}:
     raise RuntimeError(f"long-context traces missing: {set(long_items)}")
@@ -475,6 +496,11 @@ for request_id, item in long_items.items():
         raise RuntimeError(f"{request_id} user-facing input token count missing: {metadata}")
     if int(metadata.get("audit_tokens_over_limit", 0)) != int(metadata.get("audit_requested_tokens", 0)) - int(metadata.get("audit_context_window_tokens", 0)):
         raise RuntimeError(f"{request_id} over-limit token count is wrong: {metadata}")
+long_block_meta = long_items["e2e-long-block"].get("metadata", {})
+if long_block_meta.get("audit_model_evidence") != "model-audit-block" or long_block_meta.get("audit_model_evidence_verified") is not True:
+    raise RuntimeError(f"chunked model block evidence missing: {long_block_meta}")
+if int(long_block_meta.get("audit_model_evidence_chunk_index", 0)) < 1 or int(long_block_meta.get("audit_model_evidence_chunk_count", 0)) < 2:
+    raise RuntimeError(f"chunked model evidence location missing: {long_block_meta}")
 failover = next((item for item in items if item.get("request_id") == "e2e-audit-failover"), None)
 if not failover:
     raise RuntimeError("audit failover trace missing")

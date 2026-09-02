@@ -165,7 +165,8 @@ func auditErrorRetryableOnSameProfile(err error) bool {
 		"response_format",
 		"empty_response",
 		"invalid_json",
-		"invalid_decision":
+		"invalid_decision",
+		"invalid_evidence":
 		return true
 	default:
 		// Authentication, model/endpoint-not-found, generic 4xx, credential

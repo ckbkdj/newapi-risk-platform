@@ -31,9 +31,10 @@ outcome requests access to another person's credentials; a bare ownership claim 
 credential-access requests should be reviewed. Allow benign development, defensive security, incident response, detection/remediation, education,
 CTF or sandbox work, authorized testing, and high-level discussion unless the requested outcome supplies harmful
 operational capability against real systems or victims. Do not reveal chain-of-thought and do not emit <think>
-blocks, Markdown, or explanatory prose. Return the final compact JSON object immediately. Keep reason under 120
-characters:
-{"decision":"allow|block|review","risk_code":"CYBER_* or empty","category":"...","confidence":0.0,"reason":"brief"}`
+blocks, Markdown, or explanatory prose. For block or review, evidence is mandatory and must be one exact contiguous
+quote copied from the supplied request text, without ellipsis or paraphrase; keep it under 80 characters. For allow,
+evidence must be empty. Return the final compact JSON object immediately. Keep reason under 120 characters:
+{"decision":"allow|block|review","risk_code":"CYBER_* or empty","category":"...","confidence":0.0,"reason":"brief","evidence":"exact request quote or empty"}`
 
 type compiledRule struct {
 	CyberRule
@@ -364,12 +365,22 @@ type modelAuditResponse struct {
 	Category   string  `json:"category"`
 	Confidence float64 `json:"confidence"`
 	Reason     string  `json:"reason"`
+	Evidence   string  `json:"evidence"`
 }
 
 func (e *AuditEngine) callModelOnce(
 	ctx context.Context,
 	profile AuditProfile,
 	text string,
+) (AuditDecision, error) {
+	return e.callModelOnceWithEvidenceSource(ctx, profile, text, text)
+}
+
+func (e *AuditEngine) callModelOnceWithEvidenceSource(
+	ctx context.Context,
+	profile AuditProfile,
+	text string,
+	evidenceSource string,
 ) (AuditDecision, error) {
 	endpoint := strings.TrimRight(profile.Endpoint, "/")
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
@@ -444,14 +455,16 @@ func (e *AuditEngine) callModelOnce(
 	if err != nil {
 		return AuditDecision{}, err
 	}
-	return AuditDecision{
+	decision := AuditDecision{
 		Decision:   modelResult.Decision,
 		RiskCode:   strings.TrimSpace(modelResult.RiskCode),
 		Category:   strings.TrimSpace(modelResult.Category),
 		Confidence: modelResult.Confidence,
 		Reason:     modelResult.Reason,
 		Source:     "model",
-	}, nil
+		Evidence:   modelResult.Evidence,
+	}
+	return validateAuditDecisionEvidence(decision, evidenceSource)
 }
 
 func extractChatCompletionContent(body []byte) (string, error) {

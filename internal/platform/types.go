@@ -104,13 +104,19 @@ type CyberRule struct {
 }
 
 type AuditDecision struct {
-	Decision   string  `json:"decision"`
-	RiskCode   string  `json:"risk_code,omitempty"`
-	Category   string  `json:"category,omitempty"`
-	Confidence float64 `json:"confidence"`
-	Reason     string  `json:"reason,omitempty"`
-	Source     string  `json:"source"`
-	RuleID     int64   `json:"rule_id,omitempty"`
+	Decision           string  `json:"decision"`
+	RiskCode           string  `json:"risk_code,omitempty"`
+	Category           string  `json:"category,omitempty"`
+	Confidence         float64 `json:"confidence"`
+	Reason             string  `json:"reason,omitempty"`
+	Source             string  `json:"source"`
+	RuleID             int64   `json:"rule_id,omitempty"`
+	Evidence           string  `json:"evidence,omitempty"`
+	EvidenceContext    string  `json:"evidence_context,omitempty"`
+	EvidenceVerified   bool    `json:"evidence_verified,omitempty"`
+	EvidenceMatchMode  string  `json:"evidence_match_mode,omitempty"`
+	EvidenceChunkIndex int     `json:"evidence_chunk_index,omitempty"`
+	EvidenceChunkCount int     `json:"evidence_chunk_count,omitempty"`
 }
 
 type AuditAttempt struct {
