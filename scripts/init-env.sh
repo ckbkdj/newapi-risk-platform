@@ -83,7 +83,7 @@ if not values.get("BIND_ADDRESS", "").strip():
 # Keep existing operator overrides, but add every new long-context/fast-audit
 # setting to old .env files. The historical 262144 value meant 256 KiB, not
 # 262144 model tokens, so it is safe and necessary to migrate that exact old
-# default to 2 MiB.
+# default to 8 MiB so the request layer can segment the complete input.
 audit_defaults = {
     "AUDIT_TEXT_MAX_BYTES": "8388608",
     "AUDIT_OUTPUT_MAX_TOKENS": "128",

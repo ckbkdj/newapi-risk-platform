@@ -56,6 +56,9 @@ func (e *AuditEngine) callModel(
 
 	for retry := 0; retry < auditChunkRetryLimit; retry++ {
 		chunks := splitAuditTextByBytes(text, chunkBytes, e.chunkOverlapBytes)
+		metadata.ChunkCount = len(chunks)
+		metadata.ChunkBytes = chunkBytes
+		metadata.RetryCount = retry + 1
 		if len(chunks) > e.maxAuditChunks {
 			return AuditDecision{}, metadata, newAuditModelCallError(
 				"input_too_large",
@@ -69,9 +72,6 @@ func (e *AuditEngine) callModel(
 			)
 		}
 
-		metadata.ChunkCount = len(chunks)
-		metadata.ChunkBytes = chunkBytes
-		metadata.RetryCount = retry + 1
 		decision, chunkErr := e.callModelChunks(ctx, profile, chunks)
 		if chunkErr == nil {
 			return decision, metadata, nil
@@ -247,11 +247,14 @@ func (e *AuditEngine) callModelChunks(
 	if firstError != nil {
 		return AuditDecision{}, firstError
 	}
-	if strongestReview != nil {
-		return decorateChunkDecision(strongestReview.decision, strongestReview.index, len(chunks)), nil
-	}
+	// Never return review/allow until every chunk has produced a decision.
+	// A client disconnect or deadline must not turn a partially audited request
+	// into a result that a fail-open route could forward.
 	if completed < len(chunks) {
 		return AuditDecision{}, newAuditModelCallError("connection", 0, "chunked audit was canceled before every chunk completed", ctx.Err())
+	}
+	if strongestReview != nil {
+		return decorateChunkDecision(strongestReview.decision, strongestReview.index, len(chunks)), nil
 	}
 	return AuditDecision{
 		Decision:   DecisionAllow,
