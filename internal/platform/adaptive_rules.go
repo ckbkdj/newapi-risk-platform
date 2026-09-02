@@ -589,7 +589,7 @@ func validateAdaptiveIndicators(requestText string, raw []string) []string {
 	result := make([]string, 0, 4)
 	for _, indicator := range raw {
 		indicator = strings.TrimSpace(strings.ToValidUTF8(indicator, ""))
-		if indicator == "" || len(indicator) > 80 || strings.ContainsAny(indicator, "\r\n") {
+		if indicator == "" || len(indicator) > 80 || strings.ContainsAny(indicator, "\r\n") || adaptiveIndicatorLooksSensitive(indicator) {
 			continue
 		}
 		if strings.Contains(strings.ToUpper(indicator), "ROLE=") {
