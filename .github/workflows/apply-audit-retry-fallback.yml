@@ -1,0 +1,73 @@
+name: Apply audit retry fallback integration
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/audit-retry-fallback-chain
+    paths:
+      - .github/workflows/apply-audit-retry-fallback.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/audit-retry-fallback-chain
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+      - name: Apply integration patch
+        run: |
+          set -euo pipefail
+          python3 scripts/apply-audit-retry-fallback.py
+          gofmt -w ./cmd ./internal
+      - name: Validate
+        run: |
+          set -euo pipefail
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          bash -n scripts/e2e.sh scripts/deploy-local.sh scripts/init-env.sh scripts/doctor.sh
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('internal/platform/web/index.html').read_text(encoding='utf-8')
+          scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.S | re.I)
+          if not scripts:
+              raise SystemExit('embedded admin script not found')
+          Path('/tmp/admin.js').write_text('\n'.join(scripts), encoding='utf-8')
+          PY
+          node --check /tmp/admin.js
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
+      - name: Commit integration
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+ckbkdj@users.noreply.github.com"
+          git add \
+            cmd/mockprovider/main.go \
+            internal/platform/types.go \
+            internal/platform/store.go \
+            internal/platform/audit.go \
+            internal/platform/admin.go \
+            internal/platform/gateway.go \
+            internal/platform/web/index.html \
+            scripts/e2e.sh
+          if git diff --cached --quiet; then
+            echo "Integration already applied"
+            exit 0
+          fi
+          git commit -m "feat(audit): add configurable retries and ordered fallback models"
+          git push origin HEAD:feat/audit-retry-fallback-chain
