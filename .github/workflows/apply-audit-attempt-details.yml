@@ -7,6 +7,7 @@ on:
       - fix/audit-model-block-evidence
     paths:
       - .github/workflows/apply-audit-attempt-details.yml
+      - scripts/apply-audit-attempt-details.py
 
 permissions:
   contents: write
@@ -38,6 +39,8 @@ jobs:
           import re
           html=Path('internal/platform/web/index.html').read_text(encoding='utf-8')
           scripts=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.S|re.I)
+          if not scripts:
+              raise SystemExit('embedded admin script not found')
           Path('/tmp/admin.js').write_text('\n'.join(scripts),encoding='utf-8')
           PY
           node --check /tmp/admin.js
@@ -46,6 +49,10 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+ckbkdj@users.noreply.github.com"
-          git add internal/platform/types.go internal/platform/audit_failover.go internal/platform/web/index.html scripts/e2e.sh docs/audit-block-evidence.md
+          git add internal/platform/types.go internal/platform/audit_failover.go internal/platform/web/index.html scripts/e2e.sh
+          if git diff --cached --quiet; then
+            echo "attempt diagnostics already applied"
+            exit 0
+          fi
           git commit -m "feat(trace): include decision evidence in audit attempt history"
           git push origin HEAD:fix/audit-model-block-evidence
