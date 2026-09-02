@@ -80,6 +80,29 @@ text = set_value(text, "HTTP_PORT", str(port))
 if not values.get("BIND_ADDRESS", "").strip():
     text = set_value(text, "BIND_ADDRESS", "0.0.0.0")
 
+# Keep existing operator overrides, but add every new long-context/fast-audit
+# setting to old .env files. The historical 262144 value meant 256 KiB, not
+# 262144 model tokens, so it is safe and necessary to migrate that exact old
+# default to 2 MiB.
+audit_defaults = {
+    "AUDIT_TEXT_MAX_BYTES": "2097152",
+    "AUDIT_OUTPUT_MAX_TOKENS": "128",
+    "AUDIT_DISABLE_THINKING": "true",
+    "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES": "131072",
+    "AUDIT_LONG_CONTEXT_TIMEOUT": "120s",
+    "AUDIT_PROMPT_TRUNCATE_TOKENS": "260000",
+}
+for key, default in audit_defaults.items():
+    current = values.get(key, "").strip()
+    should_set = not current
+    if key == "AUDIT_TEXT_MAX_BYTES" and current == "262144":
+        should_set = True
+        warnings.append(
+            "AUDIT_TEXT_MAX_BYTES was upgraded from the historical 256 KiB default to 2 MiB for Qwen3.8 long-context audit."
+        )
+    if should_set:
+        text = set_value(text, key, default)
+
 force_new_postgres = os.environ.get("FORCE_NEW_POSTGRES_PASSWORD", "").lower() in {"1", "true", "yes"}
 postgres_password = values.get("POSTGRES_PASSWORD", "")
 if force_new_postgres or not postgres_password:
