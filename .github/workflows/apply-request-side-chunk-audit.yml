@@ -1,0 +1,82 @@
+name: Apply request-side chunk audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/qwen38-long-context-fast-audit
+    paths:
+      - .github/workflows/apply-request-side-chunk-audit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/qwen38-long-context-fast-audit
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+      - name: Apply request-side patch
+        run: |
+          set -euo pipefail
+          python3 scripts/apply-request-side-chunk-audit.py
+          gofmt -w ./cmd ./internal
+      - name: Validate final source
+        run: |
+          set -euo pipefail
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          bash -n scripts/e2e.sh scripts/deploy-local.sh scripts/init-env.sh scripts/doctor.sh
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('internal/platform/web/index.html').read_text(encoding='utf-8')
+          scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.S | re.I)
+          if not scripts:
+              raise SystemExit('embedded admin script not found')
+          Path('/tmp/newapi-risk-admin.js').write_text('\n'.join(scripts), encoding='utf-8')
+          PY
+          node --check /tmp/newapi-risk-admin.js
+      - name: Commit request-side implementation
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+ckbkdj@users.noreply.github.com"
+          git add \
+            .env.example \
+            .github/workflows/ci.yml \
+            cmd/mockprovider/main.go \
+            docker-compose.yml \
+            docker-compose.test.yml \
+            docs/qwen38-fast-audit.md \
+            internal/platform/audit.go \
+            internal/platform/audit_diagnostics.go \
+            internal/platform/audit_fast_mode.go \
+            internal/platform/audit_fast_mode_test.go \
+            internal/platform/audit_long_context.go \
+            internal/platform/audit_long_context_test.go \
+            internal/platform/config.go \
+            internal/platform/gateway.go \
+            internal/platform/types.go \
+            scripts/e2e.sh \
+            scripts/init-env.sh
+          if git diff --cached --quiet; then
+            echo "Request-side implementation already applied."
+            exit 0
+          fi
+          git commit -m "fix(audit): chunk complete requests after context-limit errors"
+          git push origin HEAD:fix/qwen38-long-context-fast-audit
