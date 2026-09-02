@@ -260,13 +260,16 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	decision, err := e.callModel(ctx, profile, text)
 	result.Model = profile.Model
 	if err != nil {
+		errorClass, auditHTTPStatus, reason := auditModelErrorDetails(err)
+		result.ErrorClass = errorClass
+		result.AuditHTTPStatus = auditHTTPStatus
 		if route.FailClosed || profile.FailClosed {
 			result.AuditDecision = AuditDecision{
 				Decision:   DecisionBlock,
 				RiskCode:   "AUDIT_MODEL_ERROR",
 				Category:   "audit_infrastructure",
 				Confidence: 1,
-				Reason:     err.Error(),
+				Reason:     reason,
 				Source:     "platform",
 			}
 		} else if matched != nil {
@@ -274,6 +277,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		} else {
 			result.AuditDecision = AuditDecision{
 				Decision: DecisionAllow,
+				Reason:   reason,
 				Source:   "fail_open",
 			}
 		}
@@ -345,7 +349,7 @@ func (e *AuditEngine) callModel(
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return AuditDecision{}, err
+		return AuditDecision{}, newAuditModelCallError("request_encode", 0, "encode audit model request", err)
 	}
 	timeout := time.Duration(profile.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
@@ -360,13 +364,13 @@ func (e *AuditEngine) callModel(
 		bytes.NewReader(encoded),
 	)
 	if err != nil {
-		return AuditDecision{}, err
+		return AuditDecision{}, newAuditModelCallError("request_build", 0, "build audit model request", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	if len(profile.APIKeyCiphertext) > 0 {
 		key, err := e.security.Decrypt("audit-profile-api-key-v1", profile.APIKeyCiphertext)
 		if err != nil {
-			return AuditDecision{}, fmt.Errorf("decrypt audit API key: %w", err)
+			return AuditDecision{}, newAuditModelCallError("credential_decrypt", 0, "decrypt audit API key", err)
 		}
 		if len(key) > 0 {
 			request.Header.Set("Authorization", "Bearer "+string(key))
@@ -374,46 +378,23 @@ func (e *AuditEngine) callModel(
 	}
 	response, err := e.client.Do(request)
 	if err != nil {
-		return AuditDecision{}, fmt.Errorf("audit model request failed: %w", err)
+		return AuditDecision{}, classifyAuditTransportError(err)
 	}
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1024*1024))
 	if err != nil {
-		return AuditDecision{}, fmt.Errorf("read audit model response: %w", err)
+		return AuditDecision{}, newAuditModelCallError("response_read", 0, "read audit model response", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return AuditDecision{}, fmt.Errorf("audit model returned HTTP %d", response.StatusCode)
+		return AuditDecision{}, auditHTTPStatusError(response.StatusCode, responseBody)
 	}
 	content, err := extractChatCompletionContent(responseBody)
 	if err != nil {
+		return AuditDecision{}, newAuditModelCallError("response_format", 0, err.Error(), nil)
+	}
+	modelResult, err := parseAuditModelResponseContent(content)
+	if err != nil {
 		return AuditDecision{}, err
-	}
-	content = strings.TrimSpace(content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
-	var modelResult modelAuditResponse
-	if err := json.Unmarshal([]byte(content), &modelResult); err != nil {
-		return AuditDecision{}, fmt.Errorf("audit model did not return valid JSON: %w", err)
-	}
-	modelResult.Decision = strings.ToLower(strings.TrimSpace(modelResult.Decision))
-	switch modelResult.Decision {
-	case DecisionAllow, DecisionBlock, DecisionReview:
-	default:
-		return AuditDecision{}, fmt.Errorf(
-			"audit model returned invalid decision %q",
-			modelResult.Decision,
-		)
-	}
-	if modelResult.Confidence < 0 {
-		modelResult.Confidence = 0
-	}
-	if modelResult.Confidence > 1 {
-		modelResult.Confidence = 1
-	}
-	if len(modelResult.Reason) > 500 {
-		modelResult.Reason = modelResult.Reason[:500]
 	}
 	return AuditDecision{
 		Decision:   modelResult.Decision,
@@ -426,8 +407,13 @@ func (e *AuditEngine) callModel(
 }
 
 func extractChatCompletionContent(body []byte) (string, error) {
+	var direct modelAuditResponse
+	if json.Unmarshal(body, &direct) == nil && strings.TrimSpace(direct.Decision) != "" {
+		return string(body), nil
+	}
 	var envelope struct {
 		Choices []struct {
+			Text    json.RawMessage `json:"text"`
 			Message struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
@@ -439,21 +425,31 @@ func extractChatCompletionContent(body []byte) (string, error) {
 	if len(envelope.Choices) == 0 {
 		return "", errors.New("audit model response has no choices")
 	}
-	var text string
-	if json.Unmarshal(envelope.Choices[0].Message.Content, &text) == nil {
+	decodeText := func(raw json.RawMessage) string {
+		if len(raw) == 0 || string(raw) == "null" {
+			return ""
+		}
+		var text string
+		if json.Unmarshal(raw, &text) == nil {
+			return text
+		}
+		var parts []map[string]any
+		if json.Unmarshal(raw, &parts) == nil {
+			var builder strings.Builder
+			for _, part := range parts {
+				if value, ok := part["text"].(string); ok {
+					builder.WriteString(value)
+				}
+			}
+			return builder.String()
+		}
+		return ""
+	}
+	if text := decodeText(envelope.Choices[0].Message.Content); strings.TrimSpace(text) != "" {
 		return text, nil
 	}
-	var parts []map[string]any
-	if json.Unmarshal(envelope.Choices[0].Message.Content, &parts) == nil {
-		var builder strings.Builder
-		for _, part := range parts {
-			if value, ok := part["text"].(string); ok {
-				builder.WriteString(value)
-			}
-		}
-		if builder.Len() > 0 {
-			return builder.String(), nil
-		}
+	if text := decodeText(envelope.Choices[0].Text); strings.TrimSpace(text) != "" {
+		return text, nil
 	}
 	return "", errors.New("audit model response content is not text")
 }

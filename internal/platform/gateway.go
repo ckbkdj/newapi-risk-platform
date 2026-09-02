@@ -173,6 +173,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		trace.UpstreamStatus = upstreamStatus
 		trace.ResponseBytes = responseBytes
 		trace.LatencyMS = time.Since(started).Milliseconds()
+		if riskCode != "" {
+			trace.Metadata["error_reason"] = traceFailureReason(riskCode, upstreamStatus, trace.Metadata)
+		}
 		g.traces.Submit(trace)
 		gatewayRequests.WithLabelValues(slug, decision).Inc()
 		gatewayDuration.WithLabelValues(slug).Observe(time.Since(started).Seconds())
@@ -228,6 +231,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trace.Metadata["audit_category"] = auditResult.Category
 	if auditResult.Model != "" {
 		trace.Metadata["audit_model"] = auditResult.Model
+	}
+	if auditResult.Reason != "" {
+		trace.Metadata["audit_reason"] = truncateString(auditResult.Reason, auditDiagnosticTextLimit)
+	}
+	if auditResult.ErrorClass != "" {
+		trace.Metadata["audit_error_class"] = auditResult.ErrorClass
+	}
+	if auditResult.AuditHTTPStatus > 0 {
+		trace.Metadata["audit_http_status"] = auditResult.AuditHTTPStatus
 	}
 	auditDuration.WithLabelValues(slug).Observe(auditResult.Latency.Seconds())
 	if auditResult.Decision == DecisionBlock {

@@ -306,6 +306,9 @@ func buildTraceSearchWhere(filter TraceSearchFilter) (string, []any) {
 			"risk_code",
 			"source",
 			"COALESCE(metadata ->> 'tenant_id','')",
+			"COALESCE(metadata ->> 'error_reason','')",
+			"COALESCE(metadata ->> 'audit_reason','')",
+			"COALESCE(metadata ->> 'audit_error_class','')",
 		}
 		matches := make([]string, 0, len(columns))
 		for _, column := range columns {
