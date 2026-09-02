@@ -65,6 +65,22 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if strings.Contains(text, "model-audit-http-401") {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": map[string]any{"message": "mock audit API key rejected", "type": "authentication_error"},
+		})
+		return
+	}
+	if strings.Contains(text, "model-audit-thinking-json") {
+		content := "<think>checking policy context before the final answer</think>\n```json\n{\"decision\":\"allow\",\"risk_code\":\"\",\"category\":\"benign\",\"confidence\":0.99,\"reason\":\"reasoning wrapper accepted\"}\n```"
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "audit-thinking-mock",
+			"choices": []any{map[string]any{
+				"message": map[string]any{"role": "assistant", "content": content},
+			}},
+		})
+		return
+	}
 	decision := "allow"
 	riskCode := ""
 	category := "benign"

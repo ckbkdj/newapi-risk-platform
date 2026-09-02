@@ -1,0 +1,77 @@
+package platform
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
+
+func TestParseAuditModelResponseContentAcceptsReasoningWrappedJSON(t *testing.T) {
+	content := `<think>I should classify the request carefully. The final answer must be JSON.</think>
+Here is the result:
+` + "```json\n" + `{"decision":"allow","risk_code":"","category":"benign","confidence":0.99,"reason":"normal request"}` + "\n```"
+	result, err := parseAuditModelResponseContent(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != DecisionAllow || result.Category != "benign" || result.Confidence != 0.99 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestParseAuditModelResponseContentPrefersFinalPolicyJSON(t *testing.T) {
+	content := `thinking example {"decision":"review","confidence":0.1} final {"decision":"block","risk_code":"CYBER_TEST","category":"test","confidence":0.999,"reason":"final"}`
+	result, err := parseAuditModelResponseContent(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != DecisionBlock || result.RiskCode != "CYBER_TEST" {
+		t.Fatalf("unexpected final result: %+v", result)
+	}
+}
+
+func TestParseAuditModelResponseContentRejectsInvalidDecision(t *testing.T) {
+	_, err := parseAuditModelResponseContent(`{"decision":"maybe","confidence":0.8}`)
+	if err == nil {
+		t.Fatal("expected invalid decision error")
+	}
+	class, _, _ := auditModelErrorDetails(err)
+	if class != "invalid_decision" {
+		t.Fatalf("unexpected error class: %s", class)
+	}
+}
+
+func TestAuditHTTPStatusErrorIncludesSanitizedProviderMessage(t *testing.T) {
+	err := auditHTTPStatusError(401, []byte(`{"error":{"message":"invalid api_key=super-secret-value"}}`))
+	class, status, reason := auditModelErrorDetails(err)
+	if class != "authentication" || status != 401 {
+		t.Fatalf("unexpected details: class=%s status=%d reason=%s", class, status, reason)
+	}
+	if strings.Contains(reason, "super-secret-value") || !strings.Contains(reason, "[REDACTED]") {
+		t.Fatalf("diagnostic was not sanitized: %s", reason)
+	}
+}
+
+func TestClassifyAuditTransportErrorTimeout(t *testing.T) {
+	class, _, reason := auditModelErrorDetails(classifyAuditTransportError(context.DeadlineExceeded))
+	if class != "timeout" || !strings.Contains(reason, "timed out") {
+		t.Fatalf("unexpected timeout details: class=%s reason=%s", class, reason)
+	}
+}
+
+func TestAuditModelCallErrorUnwrap(t *testing.T) {
+	cause := errors.New("dial failed")
+	err := newAuditModelCallError("connection", 0, "audit model connection failed", cause)
+	if !errors.Is(err, cause) {
+		t.Fatal("wrapped cause is not discoverable")
+	}
+}
+
+func TestTraceFailureReasonPrefersAuditDiagnostic(t *testing.T) {
+	metadata := map[string]any{"audit_reason": "audit model returned HTTP 404: model not found"}
+	reason := traceFailureReason("AUDIT_MODEL_ERROR", 0, metadata)
+	if reason != metadata["audit_reason"] {
+		t.Fatalf("unexpected reason: %s", reason)
+	}
+}

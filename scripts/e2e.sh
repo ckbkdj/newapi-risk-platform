@@ -163,6 +163,18 @@ status="$(curl --silent --show-error -o "${WORKDIR}/model-block.json" -w '%{http
 assert_status 555 "${status}" "${WORKDIR}/model-block.json"
 contains "${WORKDIR}/model-block.json" 'CYBER_MOCK_MODEL_BLOCK'
 
+status="$(curl --silent --show-error -o "${WORKDIR}/audit-thinking.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  --data-binary '{"model":"normal","messages":[{"role":"user","content":"model-audit-thinking-json"}]}')"
+assert_status 200 "${status}" "${WORKDIR}/audit-thinking.json"
+contains "${WORKDIR}/audit-thinking.json" 'mock provider success'
+
+status="$(curl --silent --show-error -o "${WORKDIR}/audit-http-401.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  --data-binary '{"model":"normal","messages":[{"role":"user","content":"model-audit-http-401"}]}')"
+assert_status 555 "${status}" "${WORKDIR}/audit-http-401.json"
+contains "${WORKDIR}/audit-http-401.json" 'AUDIT_MODEL_ERROR'
+
 status="$(curl --silent --show-error -o "${WORKDIR}/audit-invalid.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
   --data-binary '{"model":"normal","messages":[{"role":"user","content":"model-audit-invalid-json"}]}')"
@@ -269,6 +281,28 @@ for _ in $(seq 1 40); do
   sleep 0.25
 done
 [[ "${trace_ok}" == 1 ]] || fail "expected gateway and New API traces were not persisted"
+
+TRACE_FILE="${WORKDIR}/traces.json" python3 - <<'PY'
+import json
+import os
+
+with open(os.environ["TRACE_FILE"], encoding="utf-8") as handle:
+    items = json.load(handle).get("items", [])
+errors = [item for item in items if item.get("risk_code") == "AUDIT_MODEL_ERROR"]
+if not errors:
+    raise RuntimeError("AUDIT_MODEL_ERROR trace is missing")
+classes = {item.get("metadata", {}).get("audit_error_class") for item in errors}
+if "invalid_json" not in classes:
+    raise RuntimeError(f"invalid_json audit diagnostic missing: {classes}")
+if "authentication" not in classes:
+    raise RuntimeError(f"authentication audit diagnostic missing: {classes}")
+for item in errors:
+    metadata = item.get("metadata", {})
+    if not metadata.get("audit_reason") or not metadata.get("error_reason"):
+        raise RuntimeError(f"audit error trace is missing readable reason: {item}")
+if not any(item.get("metadata", {}).get("audit_http_status") == 401 for item in errors):
+    raise RuntimeError("audit HTTP status 401 was not persisted")
+PY
 
 
 trace_from="$(date -u -d '10 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')"
