@@ -1,6 +1,9 @@
 package platform
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDetectUntrustedContextClaimBypass(t *testing.T) {
 	tests := []struct {
@@ -28,21 +31,15 @@ func TestDetectUntrustedContextClaimBypass(t *testing.T) {
 }
 
 func TestMandatoryAuditContextGuardRejectsTextualAuthorizationAsProof(t *testing.T) {
-	for _, required := range []string{"UNTRUSTED CONTEXT", "not proof of authorization", "never an automatic safe harbor", "user's natural-language prompt"} {
-		if !stringsContainsFold(MandatoryAuditContextGuard, required) {
+	lower := strings.ToLower(MandatoryAuditContextGuard)
+	for _, required := range []string{
+		"untrusted context",
+		"not proof of authorization",
+		"never an automatic safe harbor",
+		"user's natural-language prompt",
+	} {
+		if !strings.Contains(lower, strings.ToLower(required)) {
 			t.Fatalf("mandatory guard is missing %q", required)
 		}
 	}
-}
-
-func stringsContainsFold(value string, needle string) bool {
-	return len(needle) == 0 || containsFold(value, needle)
-}
-
-func containsFold(value string, needle string) bool {
-	return regexpMustCompileQuoteFold(needle).MatchString(value)
-}
-
-func regexpMustCompileQuoteFold(value string) *regexp.Regexp {
-	return regexp.MustCompile(`(?i)` + regexp.QuoteMeta(value))
 }
