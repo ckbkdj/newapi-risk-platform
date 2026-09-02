@@ -1,16 +1,16 @@
 package platform
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestApplyFastAuditDefaultsForQwen38(t *testing.T) {
+func TestApplyFastAuditDefaultsForQwen(t *testing.T) {
 	engine := &AuditEngine{
-		outputMaxTokens:      128,
-		disableThinking:      true,
-		promptTruncateTokens: 260000,
+		outputMaxTokens: 128,
+		disableThinking: true,
 	}
 	payload := map[string]any{
 		"max_tokens": 9999,
@@ -37,28 +37,36 @@ func TestApplyFastAuditDefaultsForQwen38(t *testing.T) {
 	if got := arguments["custom"]; got != "kept" {
 		t.Fatalf("custom template arg = %#v, want kept", got)
 	}
-	if got := payload["truncate_prompt_tokens"]; got != 260000 {
-		t.Fatalf("truncate_prompt_tokens = %#v, want 260000", got)
+	if _, ok := payload["truncate_prompt_tokens"]; ok {
+		t.Fatal("request must not silently truncate prompt tokens")
 	}
-	if got := payload["truncation_side"]; got != "left" {
-		t.Fatalf("truncation_side = %#v, want left", got)
+	if _, ok := payload["truncation_side"]; ok {
+		t.Fatal("request must not silently truncate either side")
+	}
+}
+
+func TestQwenAliasCanEnableFastModeWithoutLeakingInternalExtra(t *testing.T) {
+	extra, _ := json.Marshal(map[string]any{"_risk_qwen_fast_mode": true})
+	profile := AuditProfile{Model: "audit-fast", Extra: extra}
+	engine := &AuditEngine{outputMaxTokens: 128, disableThinking: true}
+	payload := map[string]any{}
+	engine.applyFastAuditDefaults(profile, payload)
+	arguments, ok := payload["chat_template_kwargs"].(map[string]any)
+	if !ok || arguments["enable_thinking"] != false {
+		t.Fatalf("Qwen alias did not enable no-thinking: %#v", payload)
+	}
+	if !isInternalAuditExtraKey("_risk_qwen_fast_mode") {
+		t.Fatal("internal audit extra key was not recognized")
 	}
 }
 
 func TestApplyFastAuditDefaultsDoesNotLeakQwenFieldsToOtherModels(t *testing.T) {
-	engine := &AuditEngine{
-		outputMaxTokens:      128,
-		disableThinking:      true,
-		promptTruncateTokens: 260000,
-	}
+	engine := &AuditEngine{outputMaxTokens: 128, disableThinking: true}
 	payload := map[string]any{}
 	engine.applyFastAuditDefaults(AuditProfile{Model: "gpt-4.1-mini"}, payload)
 
 	if _, ok := payload["chat_template_kwargs"]; ok {
 		t.Fatal("non-Qwen model received chat_template_kwargs")
-	}
-	if _, ok := payload["truncate_prompt_tokens"]; ok {
-		t.Fatal("non-Qwen model received truncate_prompt_tokens")
 	}
 	if got := payload["max_tokens"]; got != 128 {
 		t.Fatalf("max_tokens = %#v, want 128", got)
