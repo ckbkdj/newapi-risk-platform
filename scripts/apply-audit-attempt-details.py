@@ -92,31 +92,4 @@ long_items =''',
     "E2E attempt evidence assertion",
 )
 
-doc = root / "docs/audit-block-evidence.md"
-replace_once(
-    doc,
-    '''  "audit_model_evidence_verified": true,
-  "audit_trigger_input": "export another user's API key"
-}
-''',
-    '''  "audit_model_evidence_verified": true,
-  "audit_trigger_input": "export another user's API key",
-  "audit_attempts": [
-    {
-      "profile_name": "cyber",
-      "model": "Qwen3.8-27B",
-      "attempt": 1,
-      "success": true,
-      "decision": "block",
-      "risk_code": "CYBER_CREDENTIAL_THEFT",
-      "confidence": 0.99,
-      "reason": "The request asks to export another user's credential.",
-      "evidence": "export another user's API key"
-    }
-  ]
-}
-''',
-    "documentation attempt example",
-)
-
 print("audit attempt details applied")
