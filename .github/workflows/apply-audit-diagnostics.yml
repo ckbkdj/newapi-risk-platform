@@ -1,0 +1,74 @@
+name: Apply audit diagnostics integration
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/audit-diagnostics-request-list
+    paths:
+      - .github/workflows/apply-audit-diagnostics.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/audit-diagnostics-request-list
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+      - name: Apply source patch
+        run: |
+          set -euo pipefail
+          python3 scripts/apply-audit-diagnostics.py
+          gofmt -w ./cmd ./internal
+      - name: Validate source
+        run: |
+          set -euo pipefail
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          bash -n scripts/e2e.sh scripts/deploy-local.sh scripts/init-env.sh scripts/doctor.sh
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('internal/platform/web/index.html').read_text(encoding='utf-8')
+          scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.S | re.I)
+          if not scripts:
+              raise SystemExit('embedded admin script not found')
+          Path('/tmp/newapi-risk-admin.js').write_text('\n'.join(scripts), encoding='utf-8')
+          PY
+          node --check /tmp/newapi-risk-admin.js
+      - name: Commit integration
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            internal/platform/types.go \
+            internal/platform/audit.go \
+            internal/platform/gateway.go \
+            internal/platform/trace_search.go \
+            internal/platform/web/index.html \
+            cmd/mockprovider/main.go \
+            scripts/e2e.sh \
+            internal/platform/audit_diagnostics.go \
+            internal/platform/audit_diagnostics_test.go
+          if git diff --cached --quiet; then
+            echo "Integration already applied."
+            exit 0
+          fi
+          git commit -m "fix(audit): persist diagnostics and improve model compatibility"
+          git push origin HEAD:fix/audit-diagnostics-request-list
