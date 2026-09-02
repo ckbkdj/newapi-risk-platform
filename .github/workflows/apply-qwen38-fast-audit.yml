@@ -29,7 +29,7 @@ jobs:
       - name: Apply source patch
         run: |
           set -euo pipefail
-          python3 scripts/apply-qwen38-fast-audit.py
+          python3 scripts/fix-qwen38-fast-audit-followup.py
           gofmt -w ./cmd ./internal
       - name: Validate source
         run: |
@@ -57,16 +57,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+ckbkdj@users.noreply.github.com"
           git add \
-            .env.example \
-            docker-compose.yml \
             docs/qwen38-fast-audit.md \
-            internal/platform/config.go \
-            internal/platform/audit.go \
-            internal/platform/audit_fast_mode.go \
-            internal/platform/audit_fast_mode_test.go
+            internal/platform/audit.go
           if git diff --cached --quiet; then
-            echo "Integration already applied."
+            echo "Follow-up already applied."
             exit 0
           fi
-          git commit -m "fix(audit): enable Qwen3.8 long-context no-thinking mode"
+          git commit -m "fix(audit): let long-context requests use profile timeout"
           git push origin HEAD:fix/qwen38-long-context-fast-audit
