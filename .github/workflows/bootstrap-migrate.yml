@@ -22,4 +22,27 @@ jobs:
           fetch-depth: 0
 
       - name: Migrate and validate standalone project
-        run: bash .github/bootstrap-migrate-v2.sh
+        run: |
+          set -euo pipefail
+          cp .github/bootstrap-migrate-v2.sh /tmp/migrate-source.sh
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/migrate-source.sh')
+          text = path.read_text(encoding='utf-8')
+
+          copy_start = text.index('mkdir -p .github/workflows')
+          copy_end = text.index("\n\npython3 - <<'PY'", copy_start)
+          text = text[:copy_start] + text[copy_end + 2:]
+
+          workflow_start = text.index('workflow_specs = (')
+          workflow_end = text.index('readme = Path("README.md")', workflow_start)
+          text = text[:workflow_start] + text[workflow_end:]
+
+          delete_start = text.index('rm -f \\\n  .github/workflows/bootstrap-migrate.yml')
+          delete_end = text.index('\n\ngofmt -w', delete_start)
+          text = text[:delete_start] + 'rm -f .github/bootstrap-migrate.sh' + text[delete_end:]
+
+          path.write_text(text, encoding='utf-8')
+          PY
+          bash /tmp/migrate-source.sh
