@@ -27,8 +27,10 @@ jobs:
       - name: Apply patch
         run: |
           set -euo pipefail
+          python3 scripts/prepare-request-size-patch.py
           python3 scripts/apply-request-size-diagnostics.py
           python3 scripts/apply-request-size-followup.py
+          python3 scripts/apply-request-size-ui-current.py
           gofmt -w ./cmd ./internal
       - name: Validate
         run: |
@@ -40,8 +42,8 @@ jobs:
           go vet ./...
           CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
           CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
-          docker compose config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
+          POSTGRES_PASSWORD=test-password MASTER_KEY_B64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= JWT_SECRET=0123456789abcdef0123456789abcdef BOOTSTRAP_ADMIN_PASSWORD=0123456789abcdef docker compose config --quiet
+          POSTGRES_PASSWORD=test-password MASTER_KEY_B64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= JWT_SECRET=0123456789abcdef0123456789abcdef BOOTSTRAP_ADMIN_PASSWORD=0123456789abcdef docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
           python3 - <<'PY'
           from pathlib import Path
           import re
