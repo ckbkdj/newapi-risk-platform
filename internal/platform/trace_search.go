@@ -13,51 +13,51 @@ import (
 )
 
 const (
-	defaultTraceSearchLimit = 200
-	maximumTraceSearchLimit = 1000
+	defaultTraceSearchLimit  = 200
+	maximumTraceSearchLimit  = 1000
 	maximumTraceSearchOffset = 1000000
 	maximumTraceSearchWindow = 366 * 24 * time.Hour
 )
 
 type TraceSearchFilter struct {
-	Query            string
-	RequestID        string
-	NewAPIRequestID  string
-	ExternalEventID  string
-	Source           string
-	RouteSlug        string
-	UserID           string
-	UserMatch        string
-	TenantID         string
-	Model            string
-	Endpoint         string
-	Decision         string
-	RiskCode         string
-	HTTPStatus       *int
-	UpstreamStatus   *int
-	From             time.Time
-	To               time.Time
-	Limit            int
-	Offset           int
+	Query           string
+	RequestID       string
+	NewAPIRequestID string
+	ExternalEventID string
+	Source          string
+	RouteSlug       string
+	UserID          string
+	UserMatch       string
+	TenantID        string
+	Model           string
+	Endpoint        string
+	Decision        string
+	RiskCode        string
+	HTTPStatus      *int
+	UpstreamStatus  *int
+	From            time.Time
+	To              time.Time
+	Limit           int
+	Offset          int
 }
 
 type TraceSearchSummary struct {
-	AllowedRequests int64   `json:"allowed_requests"`
-	BlockedRequests int64   `json:"blocked_requests"`
-	ErrorRequests   int64   `json:"error_requests"`
-	ReviewRequests  int64   `json:"review_requests"`
+	AllowedRequests  int64   `json:"allowed_requests"`
+	BlockedRequests  int64   `json:"blocked_requests"`
+	ErrorRequests    int64   `json:"error_requests"`
+	ReviewRequests   int64   `json:"review_requests"`
 	AverageLatencyMS float64 `json:"average_latency_ms"`
 }
 
 type TraceSearchResponse struct {
-	Items    []TraceEvent       `json:"items"`
-	Total    int64              `json:"total"`
-	Limit    int                `json:"limit"`
-	Offset   int                `json:"offset"`
-	HasMore  bool               `json:"has_more"`
-	From     time.Time          `json:"from"`
-	To       time.Time          `json:"to"`
-	Summary  TraceSearchSummary `json:"summary"`
+	Items   []TraceEvent       `json:"items"`
+	Total   int64              `json:"total"`
+	Limit   int                `json:"limit"`
+	Offset  int                `json:"offset"`
+	HasMore bool               `json:"has_more"`
+	From    time.Time          `json:"from"`
+	To      time.Time          `json:"to"`
+	Summary TraceSearchSummary `json:"summary"`
 }
 
 func (s *HTTPService) adminSearchTraces(w http.ResponseWriter, r *http.Request) {
