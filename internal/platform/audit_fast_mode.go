@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -10,7 +11,8 @@ const fastAuditDirective = `Mandatory audit output mode:
 - Do not reveal chain-of-thought or emit <think> blocks.
 - Do not use Markdown or explanatory prose.
 - Return one compact policy JSON object immediately.
-- Keep the reason field under 120 characters.`
+- Keep the reason field under 120 characters.
+- When a long request is split, classify only the supplied chunk and never assume other chunks are safe.`
 
 const fastAuditUserSuffix = `
 
@@ -29,8 +31,19 @@ func appendFastAuditDirective(systemPrompt string) string {
 	return systemPrompt + "\n\n" + fastAuditDirective
 }
 
+func (e *AuditEngine) auditMessages(profile AuditProfile, text string) []map[string]string {
+	systemPrompt := strings.TrimSpace(profile.SystemPrompt)
+	if systemPrompt == "" {
+		systemPrompt = DefaultAuditSystemPrompt
+	}
+	return []map[string]string{
+		{"role": "system", "content": appendFastAuditDirective(systemPrompt)},
+		{"role": "user", "content": e.auditUserContent(profile, text)},
+	}
+}
+
 func (e *AuditEngine) auditUserContent(profile AuditProfile, text string) string {
-	if !e.disableThinking || !isQwenModel(profile.Model) {
+	if !e.qwenFastModeEnabled(profile) {
 		return text
 	}
 	return text + fastAuditUserSuffix
@@ -40,12 +53,12 @@ func (e *AuditEngine) applyFastAuditDefaults(profile AuditProfile, payload map[s
 	if payload == nil {
 		return
 	}
-	// Audit responses are deliberately tiny. Force an upper bound after merging
-	// profile.extra so a custom profile cannot accidentally spend the entire
-	// context window on verbose reasoning.
+	// Audit responses are deliberately tiny. Force the bound after merging
+	// profile.extra so a profile cannot accidentally spend the output budget on
+	// verbose reasoning.
 	payload["max_tokens"] = e.outputMaxTokens
 
-	if !e.disableThinking || !isQwenModel(profile.Model) {
+	if !e.qwenFastModeEnabled(profile) {
 		return
 	}
 
@@ -55,18 +68,40 @@ func (e *AuditEngine) applyFastAuditDefaults(profile AuditProfile, payload map[s
 			templateArguments[key] = value
 		}
 	}
-	// Qwen3.8 thinks by default. These are the hard vLLM/Qwen switches; the
-	// /no_think suffix is only a compatibility fallback for older templates.
+	// Qwen3.8 thinks by default. These are the hard vLLM/Qwen template
+	// switches; /no_think remains a compatibility fallback.
 	templateArguments["enable_thinking"] = false
 	templateArguments["preserve_thinking"] = false
 	payload["chat_template_kwargs"] = templateArguments
+}
 
-	if isQwen38Model(profile.Model) && e.promptTruncateTokens > 0 {
-		// Qwen3.8's 262,144-token context includes prompt and output. Reserving
-		// roughly 2K tokens prevents a full prompt from consuming the output room.
-		payload["truncate_prompt_tokens"] = e.promptTruncateTokens
-		payload["truncation_side"] = "left"
+func (e *AuditEngine) qwenFastModeEnabled(profile AuditProfile) bool {
+	if !e.disableThinking {
+		return false
 	}
+	if isQwenModel(profile.Model) {
+		return true
+	}
+	// A locally served Qwen model is sometimes aliased to another name. The
+	// platform-only Extra key enables the same request behavior without sending
+	// that key to the model endpoint.
+	value, ok := auditProfileExtra(profile)["_risk_qwen_fast_mode"].(bool)
+	return ok && value
+}
+
+func auditProfileExtra(profile AuditProfile) map[string]any {
+	if len(profile.Extra) == 0 {
+		return nil
+	}
+	var extra map[string]any
+	if json.Unmarshal(profile.Extra, &extra) != nil {
+		return nil
+	}
+	return extra
+}
+
+func isInternalAuditExtraKey(key string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "_risk_")
 }
 
 func (e *AuditEngine) auditRequestTimeout(profile AuditProfile, textBytes int) time.Duration {
@@ -81,13 +116,7 @@ func (e *AuditEngine) auditRequestTimeout(profile AuditProfile, textBytes int) t
 }
 
 func isQwenModel(model string) bool {
-	normalized := normalizeAuditModelName(model)
-	return strings.Contains(normalized, "qwen")
-}
-
-func isQwen38Model(model string) bool {
-	normalized := normalizeAuditModelName(model)
-	return strings.Contains(normalized, "qwen38")
+	return strings.Contains(normalizeAuditModelName(model), "qwen")
 }
 
 func normalizeAuditModelName(model string) string {
