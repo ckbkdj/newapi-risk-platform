@@ -90,7 +90,7 @@ audit_defaults = {
     "AUDIT_DISABLE_THINKING": "true",
     "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES": "131072",
     "AUDIT_LONG_CONTEXT_TIMEOUT": "120s",
-    "AUDIT_CONTEXT_TARGET_TOKENS": values.get("AUDIT_PROMPT_TRUNCATE_TOKENS", "260000"),
+    "AUDIT_CONTEXT_TARGET_TOKENS": "0",
     "AUDIT_FALLBACK_CHUNK_BYTES": "196608",
     "AUDIT_CHUNK_OVERLAP_BYTES": "4096",
     "AUDIT_CHUNK_CONCURRENCY": "2",
@@ -103,6 +103,11 @@ for key, default in audit_defaults.items():
         should_set = True
         warnings.append(
             "AUDIT_TEXT_MAX_BYTES was upgraded to 8 MiB so the request layer can segment and audit the complete prompt."
+        )
+    if key == "AUDIT_CONTEXT_TARGET_TOKENS" and current == "260000":
+        should_set = True
+        warnings.append(
+            "AUDIT_CONTEXT_TARGET_TOKENS was changed from the historical fixed 260000 value to 0 (automatic model-derived sizing)."
         )
     if should_set:
         text = set_value(text, key, default)

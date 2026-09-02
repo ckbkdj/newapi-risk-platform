@@ -103,6 +103,21 @@ PY
 gateway="${BASE_URL}/gateway/mock-main/v1/chat/completions"
 gateway_auth=(-H "Authorization: Bearer ${ROUTE_KEY}" -H 'Content-Type: application/json')
 
+python3 - "${WORKDIR}/too-large.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({"model":"normal","messages":[{"role":"user","content":"x" * 70000}]}, handle)
+PY
+status="$(curl --silent --show-error -D "${WORKDIR}/too-large.headers" -o "${WORKDIR}/too-large-response.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-Request-ID: e2e-request-too-large' \
+  --data-binary @"${WORKDIR}/too-large.json")"
+assert_status 555 "${status}" "${WORKDIR}/too-large-response.json"
+contains "${WORKDIR}/too-large-response.json" 'REQUEST_TOO_LARGE'
+contains "${WORKDIR}/too-large.headers" 'X-Risk-Request-Limit-Bytes: 65536'
+contains "${WORKDIR}/too-large.headers" 'X-Risk-Request-Size-Exact: true'
+
 status="$(curl --silent --show-error -o "${WORKDIR}/allow.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
   --data-binary '{"model":"normal","messages":[{"role":"user","content":"Explain defensive application logging."}]}')"
@@ -372,6 +387,19 @@ for item in errors:
         raise RuntimeError(f"audit error trace is missing readable reason: {item}")
 if not any(item.get("metadata", {}).get("audit_http_status") == 401 for item in errors):
     raise RuntimeError("audit HTTP status 401 was not persisted")
+too_large = next((item for item in items if item.get("request_id") == "e2e-request-too-large"), None)
+if not too_large:
+    raise RuntimeError("REQUEST_TOO_LARGE trace is missing")
+metadata = too_large.get("metadata", {})
+if int(too_large.get("request_bytes", 0)) <= 65536:
+    raise RuntimeError(f"oversized request bytes were not persisted: {too_large}")
+if int(metadata.get("request_body_limit_bytes", 0)) != 65536:
+    raise RuntimeError(f"oversized request limit missing: {metadata}")
+if int(metadata.get("request_body_over_limit_bytes", 0)) <= 0:
+    raise RuntimeError(f"oversized request overage missing: {metadata}")
+if metadata.get("request_body_size_exact") is not True:
+    raise RuntimeError(f"Content-Length request should have exact size: {metadata}")
+
 long_items = {item.get("request_id"): item for item in items if item.get("request_id") in {"e2e-long-safe", "e2e-long-block"}}
 if set(long_items) != {"e2e-long-safe", "e2e-long-block"}:
     raise RuntimeError(f"long-context traces missing: {set(long_items)}")

@@ -334,7 +334,9 @@ func traceFailureReason(riskCode string, upstreamStatus int, metadata map[string
 	case "GATEWAY_OVERLOADED":
 		return "网关全局并发已满"
 	case "REQUEST_TOO_LARGE":
-		return "请求体超过网关限制"
+		return "请求体超过网关字节安全上限；查看请求体大小、平台上限和超出量"
+	case "REQUEST_READ_ERROR":
+		return "网关读取请求体失败"
 	case "AUDIT_MODEL_UNAVAILABLE":
 		return "没有可用的审计模型"
 	case "AUDIT_MODEL_ERROR":

@@ -214,11 +214,42 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If Content-Length is present we know the exact size before reading. This
+	// avoids buffering an oversized body and lets the trace show the real value.
+	if r.ContentLength > g.cfg.RequestMaxBytes {
+		reason := markRequestTooLarge(&trace, r.ContentLength, g.cfg.RequestMaxBytes, true)
+		w.Header().Set("X-Risk-Request-Bytes", fmt.Sprintf("%d", trace.RequestBytes))
+		w.Header().Set("X-Risk-Request-Limit-Bytes", fmt.Sprintf("%d", g.cfg.RequestMaxBytes))
+		w.Header().Set("X-Risk-Request-Size-Exact", "true")
+		finish("error", "REQUEST_TOO_LARGE", g.cfg.ErrorHTTPStatus, 0, 0)
+		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "REQUEST_TOO_LARGE", reason)
+		return
+	}
+
 	bodyReader := http.MaxBytesReader(w, r.Body, g.cfg.RequestMaxBytes)
 	body, err := io.ReadAll(bodyReader)
 	if err != nil {
-		finish("error", "REQUEST_TOO_LARGE", g.cfg.ErrorHTTPStatus, 0, 0)
-		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "REQUEST_TOO_LARGE", "request body exceeds the configured limit")
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			// Chunked/unknown-length requests cannot be read to EOF without
+			// defeating the DoS limit. Record the strongest safe lower bound.
+			observed := g.cfg.RequestMaxBytes + 1
+			if int64(len(body)) > observed {
+				observed = int64(len(body))
+			}
+			reason := markRequestTooLarge(&trace, observed, g.cfg.RequestMaxBytes, false)
+			w.Header().Set("X-Risk-Request-Bytes", fmt.Sprintf("%d", trace.RequestBytes))
+			w.Header().Set("X-Risk-Request-Limit-Bytes", fmt.Sprintf("%d", g.cfg.RequestMaxBytes))
+			w.Header().Set("X-Risk-Request-Size-Exact", "false")
+			finish("error", "REQUEST_TOO_LARGE", g.cfg.ErrorHTTPStatus, 0, 0)
+			writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "REQUEST_TOO_LARGE", reason)
+			return
+		}
+		trace.RequestBytes = int64(len(body))
+		trace.Metadata["error_class"] = "request_body_read"
+		trace.Metadata["error_reason"] = truncateString("failed to read request body: "+err.Error(), auditDiagnosticTextLimit)
+		finish("error", "REQUEST_READ_ERROR", g.cfg.ErrorHTTPStatus, 0, 0)
+		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "REQUEST_READ_ERROR", "gateway could not read the request body")
 		return
 	}
 	trace.RequestBytes = int64(len(body))
@@ -376,6 +407,33 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	finish(DecisionAllow, "", status, response.StatusCode, bytesWritten)
+}
+
+func markRequestTooLarge(trace *TraceEvent, requestBytes int64, limitBytes int64, exact bool) string {
+	if limitBytes < 1 {
+		limitBytes = 1
+	}
+	if requestBytes <= limitBytes {
+		requestBytes = limitBytes + 1
+	}
+	overBytes := requestBytes - limitBytes
+	trace.RequestBytes = requestBytes
+	trace.Metadata["error_class"] = "request_body_too_large"
+	trace.Metadata["request_body_bytes"] = requestBytes
+	trace.Metadata["request_body_limit_bytes"] = limitBytes
+	trace.Metadata["request_body_over_limit_bytes"] = overBytes
+	trace.Metadata["request_body_size_exact"] = exact
+
+	qualifier := ""
+	if !exact {
+		qualifier = "at least "
+	}
+	reason := fmt.Sprintf(
+		"request body is %s%d bytes; gateway limit is %d bytes; over limit by %s%d bytes",
+		qualifier, requestBytes, limitBytes, qualifier, overBytes,
+	)
+	trace.Metadata["error_reason"] = reason
+	return reason
 }
 
 func (g *Gateway) buildUpstreamRequest(

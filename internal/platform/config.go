@@ -112,7 +112,7 @@ func LoadConfig() (Config, error) {
 		AuditDisableThinking:           envBool("AUDIT_DISABLE_THINKING", true),
 		AuditLongContextThresholdBytes: envInt("AUDIT_LONG_CONTEXT_THRESHOLD_BYTES", 128*1024),
 		AuditLongContextTimeout:        envDuration("AUDIT_LONG_CONTEXT_TIMEOUT", 120*time.Second),
-		AuditContextTargetTokens:       envInt("AUDIT_CONTEXT_TARGET_TOKENS", envInt("AUDIT_PROMPT_TRUNCATE_TOKENS", 260000)),
+		AuditContextTargetTokens:       envInt("AUDIT_CONTEXT_TARGET_TOKENS", 0),
 		AuditFallbackChunkBytes:        envInt("AUDIT_FALLBACK_CHUNK_BYTES", 192*1024),
 		AuditChunkOverlapBytes:         envInt("AUDIT_CHUNK_OVERLAP_BYTES", 4096),
 		AuditChunkConcurrency:          envInt("AUDIT_CHUNK_CONCURRENCY", 2),
@@ -185,8 +185,8 @@ func (c Config) Validate() error {
 	if c.AuditLongContextTimeout < time.Second || c.AuditLongContextTimeout > 10*time.Minute {
 		problems = append(problems, "AUDIT_LONG_CONTEXT_TIMEOUT must be between 1s and 10m")
 	}
-	if c.AuditContextTargetTokens < 1024 || c.AuditContextTargetTokens > 1000000 {
-		problems = append(problems, "AUDIT_CONTEXT_TARGET_TOKENS must be between 1024 and 1000000")
+	if c.AuditContextTargetTokens != 0 && (c.AuditContextTargetTokens < 1024 || c.AuditContextTargetTokens > 1000000) {
+		problems = append(problems, "AUDIT_CONTEXT_TARGET_TOKENS must be 0 for automatic model-derived sizing or between 1024 and 1000000")
 	}
 	if c.AuditFallbackChunkBytes < 1024 || c.AuditFallbackChunkBytes > c.AuditTextMaxBytes {
 		problems = append(problems, "AUDIT_FALLBACK_CHUNK_BYTES must be between 1024 and AUDIT_TEXT_MAX_BYTES")

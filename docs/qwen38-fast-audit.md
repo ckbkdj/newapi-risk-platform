@@ -2,7 +2,7 @@
 
 这次只修改风控平台调用审计模型的请求方式，不要求修改 Qwen3.8 / vLLM 的部署参数。
 
-Qwen3.8 的 262,144 tokens 是系统提示词、用户内容、聊天模板和模型输出的总窗口，不是 262,144 个纯输入 token。平台把目标 prompt 容量设为 260,000 tokens，并把输出压到 128 tokens。
+Qwen3.8/vLLM 的上下文上限由模型服务自己的 `--max-model-len` 决定。平台默认 `AUDIT_CONTEXT_TARGET_TOKENS=0`，不再固定卡 260K；只有模型真实返回 context-length 错误后，平台才读取模型报告的 maximum/requested tokens 并动态分段。审计输出仍压到 128 tokens。
 
 ## 正常请求路径
 
@@ -67,7 +67,7 @@ AUDIT_OUTPUT_MAX_TOKENS=128
 AUDIT_DISABLE_THINKING=true
 AUDIT_LONG_CONTEXT_THRESHOLD_BYTES=131072
 AUDIT_LONG_CONTEXT_TIMEOUT=120s
-AUDIT_CONTEXT_TARGET_TOKENS=260000
+AUDIT_CONTEXT_TARGET_TOKENS=0  # 自动，以模型真实上下文错误为准
 AUDIT_FALLBACK_CHUNK_BYTES=196608
 AUDIT_CHUNK_OVERLAP_BYTES=4096
 AUDIT_CHUNK_CONCURRENCY=2
