@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	adaptiveLearningQueueSize = 512
-	adaptiveRequestTextLimit  = 32 * 1024
+	adaptiveLearningQueueSize  = 512
+	adaptiveRequestTextLimit   = 32 * 1024
 	adaptiveProviderErrorLimit = 8 * 1024
 )
 
@@ -55,14 +55,14 @@ type CyberRuleCandidate struct {
 }
 
 type adaptiveFailureSample struct {
-	RequestID           string
-	RouteSlug           string
-	AuditProfileID      *int64
-	RequestText         string
-	ProviderError       string
-	ProviderErrorClass  string
-	UpstreamStatus      int
-	UserDigest          string
+	RequestID          string
+	RouteSlug          string
+	AuditProfileID     *int64
+	RequestText        string
+	ProviderError      string
+	ProviderErrorClass string
+	UpstreamStatus     int
+	UserDigest         string
 }
 
 type adaptiveModelResult struct {
@@ -74,26 +74,26 @@ type adaptiveModelResult struct {
 }
 
 var adaptiveCategoryAllowlist = map[string]struct{}{
-	"credential_access": {},
-	"phishing": {},
-	"malware": {},
-	"command_and_control": {},
-	"persistence": {},
+	"credential_access":    {},
+	"phishing":             {},
+	"malware":              {},
+	"command_and_control":  {},
+	"persistence":          {},
 	"privilege_escalation": {},
-	"defense_evasion": {},
-	"execution": {},
-	"reconnaissance": {},
-	"lateral_movement": {},
-	"exfiltration": {},
-	"impact": {},
-	"supply_chain": {},
-	"ai_defense_evasion": {},
-	"ai_execution": {},
-	"ai_persistence": {},
+	"defense_evasion":      {},
+	"execution":            {},
+	"reconnaissance":       {},
+	"lateral_movement":     {},
+	"exfiltration":         {},
+	"impact":               {},
+	"supply_chain":         {},
+	"ai_defense_evasion":   {},
+	"ai_execution":         {},
+	"ai_persistence":       {},
 	"ai_credential_access": {},
-	"ai_exfiltration": {},
-	"ai_supply_chain": {},
-	"ai_impact": {},
+	"ai_exfiltration":      {},
+	"ai_supply_chain":      {},
+	"ai_impact":            {},
 }
 
 var adaptiveSecretPatterns = []*regexp.Regexp{
@@ -486,7 +486,7 @@ func (e *AuditEngine) processAdaptiveFailure(ctx context.Context, sample adaptiv
 		return
 	}
 	policy = e.AdaptivePolicy()
-	if !policy.AutoPromote || candidate.Status == "promoted" || candidate.Status == "rejected" {
+	if !policy.AutoPromote || candidate.Status == "rejected" {
 		return
 	}
 	if candidate.Confidence < policy.MinConfidence || candidate.EvidenceCount < policy.MinEvidence || candidate.DistinctUsers < policy.MinDistinctUsers {

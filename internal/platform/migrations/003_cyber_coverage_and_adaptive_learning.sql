@@ -37,10 +37,10 @@ CREATE TABLE IF NOT EXISTS cyber_rule_candidate_users (
 INSERT INTO settings (key,value) VALUES
     ('cyber_adaptive_learning_enabled','true'::jsonb),
     ('cyber_adaptive_auto_promote','true'::jsonb),
-    ('cyber_adaptive_min_confidence','0.985'::jsonb),
+    ('cyber_adaptive_min_confidence','0.99'::jsonb),
     ('cyber_adaptive_min_evidence','3'::jsonb),
     ('cyber_adaptive_min_distinct_users','2'::jsonb),
-    ('cyber_adaptive_auto_block','false'::jsonb)
+    ('cyber_adaptive_auto_block','true'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 -- statement-breakpoint
 INSERT INTO cyber_rules

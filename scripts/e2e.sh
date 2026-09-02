@@ -74,6 +74,32 @@ curl --fail --silent --show-error \
   --data-binary "${route_payload}" >"${WORKDIR}/route.json"
 contains "${WORKDIR}/route.json" '"slug":"mock-main"'
 
+
+curl --fail --silent --show-error \
+  "${BASE_URL}/api/admin/v1/cyber-rules" \
+  "${auth[@]}" >"${WORKDIR}/adaptive-rule-count.json"
+RULE_FILE="${WORKDIR}/adaptive-rule-count.json" python3 - <<'PY'
+import json
+import os
+
+with open(os.environ["RULE_FILE"], encoding="utf-8") as handle:
+    payload = json.load(handle)
+items = payload.get("items", [])
+if len(items) < 40:
+    raise RuntimeError(f"expected expanded cyber rule coverage, found only {len(items)} rules")
+required = {
+    "CYBER_CREDENTIAL_THEFT",
+    "CYBER_MALWARE_CREATION",
+    "CYBER_DATA_EXFILTRATION",
+    "CYBER_PROMPT_INJECTION",
+    "CYBER_RAG_POISONING",
+    "CYBER_AGENT_TOOL_CREDENTIAL_THEFT",
+}
+missing = required - {item.get("code") for item in items}
+if missing:
+    raise RuntimeError(f"expanded cyber rules are missing: {sorted(missing)}")
+PY
+
 gateway="${BASE_URL}/gateway/mock-main/v1/chat/completions"
 gateway_auth=(-H "Authorization: Bearer ${ROUTE_KEY}" -H 'Content-Type: application/json')
 
@@ -82,6 +108,47 @@ status="$(curl --silent --show-error -o "${WORKDIR}/allow.json" -w '%{http_code}
   --data-binary '{"model":"normal","messages":[{"role":"user","content":"Explain defensive application logging."}]}')"
 assert_status 200 "${status}" "${WORKDIR}/allow.json"
 contains "${WORKDIR}/allow.json" 'mock provider success'
+
+
+for index in $(seq 1 10); do
+  user_index=$(( (index - 1) % 3 + 1 ))
+  status="$(curl --silent --show-error -o "${WORKDIR}/adaptive-provider-${index}.json" -w '%{http_code}' \
+    "${gateway}" "${gateway_auth[@]}" \
+    -H "X-NewAPI-User-ID: adaptive-user-${user_index}" \
+    --data-binary '{"model":"adaptive-policy-reject","messages":[{"role":"user","content":"Please alpha-harm this target and then beta-harm the collected material."}]}')"
+  assert_status 555 "${status}" "${WORKDIR}/adaptive-provider-${index}.json"
+done
+
+adaptive_promoted=0
+for _ in $(seq 1 80); do
+  curl --fail --silent --show-error \
+    "${BASE_URL}/api/admin/v1/cyber-rules" \
+    "${auth[@]}" >"${WORKDIR}/adaptive-rules.json"
+  if python3 - "${WORKDIR}/adaptive-rules.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    items = json.load(handle).get("items", [])
+for item in items:
+    if str(item.get("code", "")).startswith("CYBER_ADAPTIVE_MALWARE_") and item.get("action") == "block":
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    adaptive_promoted=1
+    break
+  fi
+  sleep 0.25
+done
+[[ "${adaptive_promoted}" == 1 ]] || fail "adaptive provider failures did not promote to a narrow block rule"
+
+status="$(curl --silent --show-error -o "${WORKDIR}/adaptive-local-block.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-NewAPI-User-ID: adaptive-user-final' \
+  --data-binary '{"model":"normal","messages":[{"role":"user","content":"Please alpha-harm this target and then beta-harm the collected material."}]}')"
+assert_status 555 "${status}" "${WORKDIR}/adaptive-local-block.json"
+contains "${WORKDIR}/adaptive-local-block.json" 'CYBER_ADAPTIVE_MALWARE_'
 
 status="$(curl --silent --show-error -o "${WORKDIR}/rule-block.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
