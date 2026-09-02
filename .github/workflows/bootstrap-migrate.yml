@@ -22,4 +22,4 @@ jobs:
           fetch-depth: 0
 
       - name: Migrate and validate standalone project
-        run: bash .github/bootstrap-migrate.sh
+        run: bash .github/bootstrap-migrate-v2.sh
