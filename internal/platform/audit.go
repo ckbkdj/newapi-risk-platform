@@ -66,7 +66,9 @@ func NewAuditEngine(
 		security: security,
 		client: &http.Client{
 			Transport: NewSafeTransport(cfg.AllowPrivateUpstreams, cfg.UpstreamTLSMinVersion),
-			Timeout:   30 * time.Second,
+			// Per-request contexts enforce the profile or long-context timeout.
+			// A fixed client timeout would cancel 262K prefills before they finish.
+			Timeout: 0,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return errors.New("audit endpoint redirects are disabled")
 			},
