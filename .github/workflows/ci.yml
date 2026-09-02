@@ -42,6 +42,46 @@ jobs:
           assert len(values['BOOTSTRAP_ADMIN_PASSWORD']) >= 14
           assert values['POSTGRES_PASSWORD']
           assert values['HTTP_PORT'] == '8080'
+          assert values['AUDIT_TEXT_MAX_BYTES'] == '2097152'
+          assert values['AUDIT_OUTPUT_MAX_TOKENS'] == '128'
+          assert values['AUDIT_DISABLE_THINKING'] == 'true'
+          assert values['AUDIT_LONG_CONTEXT_THRESHOLD_BYTES'] == '131072'
+          assert values['AUDIT_LONG_CONTEXT_TIMEOUT'] == '120s'
+          assert values['AUDIT_PROMPT_TRUNCATE_TOKENS'] == '260000'
+
+          # Reproduce an old deployment: the old byte cap was 262144 and the
+          # new Qwen fast-mode variables did not exist yet.
+          removed = {
+              'AUDIT_OUTPUT_MAX_TOKENS',
+              'AUDIT_DISABLE_THINKING',
+              'AUDIT_LONG_CONTEXT_THRESHOLD_BYTES',
+              'AUDIT_LONG_CONTEXT_TIMEOUT',
+              'AUDIT_PROMPT_TRUNCATE_TOKENS',
+          }
+          migrated = []
+          for line in Path('.env').read_text(encoding='utf-8').splitlines():
+              key = line.split('=', 1)[0] if '=' in line else ''
+              if key in removed:
+                  continue
+              if key == 'AUDIT_TEXT_MAX_BYTES':
+                  line = 'AUDIT_TEXT_MAX_BYTES=262144'
+              migrated.append(line)
+          Path('.env').write_text('\n'.join(migrated) + '\n', encoding='utf-8')
+          PY
+          bash scripts/init-env.sh >/tmp/init-env-migration-output.txt
+          python3 - <<'PY'
+          from pathlib import Path
+
+          values = {}
+          for line in Path('.env').read_text(encoding='utf-8').splitlines():
+              if line and not line.startswith('#') and '=' in line:
+                  key, value = line.split('=', 1)
+                  values[key] = value
+          assert values['AUDIT_TEXT_MAX_BYTES'] == '2097152'
+          assert values['AUDIT_OUTPUT_MAX_TOKENS'] == '128'
+          assert values['AUDIT_DISABLE_THINKING'] == 'true'
+          assert values['AUDIT_LONG_CONTEXT_TIMEOUT'] == '120s'
+          assert values['AUDIT_PROMPT_TRUNCATE_TOKENS'] == '260000'
           PY
           rm -f .env
       - name: Verify module lock
