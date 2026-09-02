@@ -9,8 +9,8 @@ import (
 
 const (
 	maxAuditFallbackProfiles = 8
-	maxAuditRetryCount        = 5
-	maxAuditTotalAttempts     = 24
+	maxAuditRetryCount       = 5
+	maxAuditTotalAttempts    = 24
 )
 
 type auditFailoverMetadata struct {
