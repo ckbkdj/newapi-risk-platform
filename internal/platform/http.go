@@ -91,7 +91,7 @@ func (s *HTTPService) Handler() http.Handler {
 		admin.With(s.requireRole("operator")).Post("/api/admin/v1/cyber-rules", s.adminSaveCyberRule)
 		admin.With(s.requireRole("admin")).Delete("/api/admin/v1/cyber-rules/{id}", s.adminDeleteCyberRule)
 		admin.With(s.requireRole("operator")).Post("/api/admin/v1/audit/dry-run", s.adminAuditDryRun)
-		admin.Get("/api/admin/v1/traces", s.adminListTraces)
+		admin.Get("/api/admin/v1/traces", s.adminSearchTraces)
 		admin.Get("/api/admin/v1/settings", s.adminGetSettings)
 		admin.With(s.requireRole("admin")).Put("/api/admin/v1/settings/storage", s.adminSaveStorageSettings)
 		admin.Get("/api/admin/v1/tracking-clients", s.adminListTrackingClients)

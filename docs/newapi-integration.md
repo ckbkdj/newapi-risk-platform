@@ -346,3 +346,28 @@ RiskTraceReporter
 ```
 
 追踪上报失败不应阻塞用户模型响应，但必须有本地指标、告警和重放机制。
+
+
+## Web 可视化追踪查询
+
+要让管理台按用户查到一次请求，New API 至少需要在代理请求中附带：
+
+```http
+X-NewAPI-User-ID: 18492
+X-NewAPI-Request-ID: req-newapi-01J...
+```
+
+也可以在签名追踪事件中上报：
+
+```json
+{
+  "request_id": "req-gateway-01J...",
+  "newapi_request_id": "req-newapi-01J...",
+  "external_user_id": "18492",
+  "metadata": {
+    "tenant_id": "tenant-a"
+  }
+}
+```
+
+随后在 Web 管理台进入“请求追踪”，选择时间范围并使用用户、租户、请求 ID、模型、路由、状态码或风险码组合查询。用户精确匹配走数据库索引；“包含”模式只建议在较小时间范围内排障使用。

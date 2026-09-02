@@ -30,6 +30,19 @@ jobs:
         run: |
           gofmt -w ./cmd ./internal
           git diff --exit-code
+      - name: Verify embedded admin JavaScript syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          html = Path("internal/platform/web/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, flags=re.S | re.I)
+          if not scripts:
+              raise SystemExit("embedded admin script not found")
+          Path("/tmp/newapi-risk-admin.js").write_text("\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/newapi-risk-admin.js
       - name: Unit tests with race detector
         run: go test -race -count=1 ./...
       - name: Go vet
