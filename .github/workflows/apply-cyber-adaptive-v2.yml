@@ -38,14 +38,25 @@ jobs:
           python3 scripts/apply-cyber-adaptive.py
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('internal/platform/gateway.go')
-          text = path.read_text(encoding='utf-8')
+
+          gateway_path = Path('internal/platform/gateway.go')
+          gateway = gateway_path.read_text(encoding='utf-8')
           broken = 'text := strings.Join(lines, "\n")'
           fixed = 'text := strings.Join(lines, "\\n")'
-          if broken not in text and fixed not in text:
+          if broken not in gateway and fixed not in gateway:
               raise SystemExit('SSE evidence newline anchor not found')
-          text = text.replace(broken, fixed, 1)
-          path.write_text(text, encoding='utf-8')
+          gateway = gateway.replace(broken, fixed, 1)
+          gateway_path.write_text(gateway, encoding='utf-8')
+
+          adaptive_path = Path('internal/platform/adaptive_rules.go')
+          adaptive = adaptive_path.read_text(encoding='utf-8')
+          old = '''\t\tif indicator == "" || len(indicator) > 80 || strings.ContainsAny(indicator, "\\r\\n") {\n\t\t\tcontinue\n\t\t}'''
+          new = '''\t\tif indicator == "" || len(indicator) > 80 || strings.ContainsAny(indicator, "\\r\\n") || adaptiveIndicatorLooksSensitive(indicator) {\n\t\t\tcontinue\n\t\t}'''
+          if new not in adaptive:
+              if old not in adaptive:
+                  raise SystemExit('adaptive indicator validation anchor not found')
+              adaptive = adaptive.replace(old, new, 1)
+          adaptive_path.write_text(adaptive, encoding='utf-8')
           PY
 
       - name: Validate source
@@ -73,6 +84,8 @@ jobs:
           git add \
             internal/platform/audit.go \
             internal/platform/adaptive_rules.go \
+            internal/platform/adaptive_indicator_guard.go \
+            internal/platform/adaptive_indicator_guard_test.go \
             internal/platform/migrations/003_cyber_coverage_and_adaptive_learning.sql \
             internal/platform/gateway.go \
             cmd/mockprovider/main.go \
@@ -81,5 +94,5 @@ jobs:
             echo "Integration already applied."
             exit 0
           fi
-          git commit -m "feat(cyber): integrate adaptive provider-failure learning [cyber-adaptive-applied]"
+          git commit -m "fix(cyber): keep adaptive learned rules privacy-safe"
           git push origin HEAD:feat/cyber-rule-expansion-adaptive-learning
