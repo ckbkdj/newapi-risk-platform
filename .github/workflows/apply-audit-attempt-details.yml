@@ -1,0 +1,51 @@
+name: Apply audit attempt diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/audit-model-block-evidence
+    paths:
+      - .github/workflows/apply-audit-attempt-details.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/audit-model-block-evidence
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+      - name: Apply and validate
+        run: |
+          set -euo pipefail
+          python3 scripts/apply-audit-attempt-details.py
+          gofmt -w ./cmd ./internal
+          bash -n scripts/e2e.sh
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html=Path('internal/platform/web/index.html').read_text(encoding='utf-8')
+          scripts=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.S|re.I)
+          Path('/tmp/admin.js').write_text('\n'.join(scripts),encoding='utf-8')
+          PY
+          node --check /tmp/admin.js
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+ckbkdj@users.noreply.github.com"
+          git add internal/platform/types.go internal/platform/audit_failover.go internal/platform/web/index.html scripts/e2e.sh docs/audit-block-evidence.md
+          git commit -m "feat(trace): include decision evidence in audit attempt history"
+          git push origin HEAD:fix/audit-model-block-evidence
