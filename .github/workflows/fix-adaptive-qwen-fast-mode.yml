@@ -1,0 +1,42 @@
+name: Fix adaptive Qwen fast mode
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/qwen38-long-context-fast-audit
+    paths:
+      - .github/workflows/fix-adaptive-qwen-fast-mode.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/qwen38-long-context-fast-audit
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+      - name: Apply and validate
+        run: |
+          set -euo pipefail
+          python3 scripts/fix-adaptive-qwen-fast-mode.py
+          gofmt -w internal/platform/adaptive_rules.go
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+ckbkdj@users.noreply.github.com"
+          git add internal/platform/adaptive_rules.go
+          git commit -m "fix(audit): apply Qwen no-thinking to adaptive analysis"
+          git push origin HEAD:fix/qwen38-long-context-fast-audit
