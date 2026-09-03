@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/apply-precision-first-engineering-audit.yml
       - scripts/apply-precision-first-engineering-audit.py
+      - scripts/run-precision-first-engineering-audit.py
 
 permissions:
   contents: write
@@ -28,7 +29,7 @@ jobs:
       - name: Apply integration
         run: |
           set -euo pipefail
-          python3 scripts/apply-precision-first-engineering-audit.py
+          python3 scripts/run-precision-first-engineering-audit.py
           gofmt -w ./cmd ./internal
       - name: Validate
         run: |
