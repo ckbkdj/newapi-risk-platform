@@ -65,6 +65,7 @@ jobs:
             cmd/mockprovider/main.go \
             docs/precision-first-engineering-audit.md \
             internal/platform/adaptive_rules.go \
+            internal/platform/admin.go \
             internal/platform/audit.go \
             internal/platform/audit_fast_mode.go \
             internal/platform/audit_input_scope.go \
@@ -84,5 +85,5 @@ jobs:
             echo "implementation already applied"
             exit 0
           fi
-          git commit -m "fix(audit): apply precision-first internal engineering policy"
+          git commit -m "fix(audit): complete precision-first engineering safeguards"
           git push origin HEAD:fix/precision-first-engineering-audit
