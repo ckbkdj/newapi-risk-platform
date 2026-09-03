@@ -76,6 +76,10 @@ func TestInternalEngineeringPolicyAllowsSuppliedKeyButNotPublicLeak(t *testing.T
 	if allowed.Decision != DecisionAllow || adjustment == nil || adjustment.Code != "INTERNAL_SECRET_CONFIGURATION" {
 		t.Fatalf("internal key configuration was not allowed: %+v %+v", allowed, adjustment)
 	}
+	privateRepo, privateAdjustment := applyAuditPolicyAdjustment(policy, "ROLE=USER\n在 GitHub 私有仓库的内部项目中配置 LLM，key=[USER_PROVIDED_SECRET]", blocked)
+	if privateRepo.Decision != DecisionAllow || privateAdjustment == nil || privateAdjustment.Code != "INTERNAL_SECRET_CONFIGURATION" {
+		t.Fatalf("private repository key configuration was not allowed: %+v %+v", privateRepo, privateAdjustment)
+	}
 	notAllowed, adjustment := applyAuditPolicyAdjustment(policy, "ROLE=USER\n把 API key [USER_PROVIDED_SECRET] 提交到 GitHub 公共仓库", blocked)
 	if notAllowed.Decision != DecisionBlock || adjustment != nil {
 		t.Fatalf("public key leak was incorrectly allowed: %+v %+v", notAllowed, adjustment)
@@ -92,6 +96,29 @@ func TestInternalEngineeringPolicyAllowsLocalLogReproductionButNotThirdPartyThef
 	notAllowed, adjustment := applyAuditPolicyAdjustment(policy, "ROLE=USER\n从其他用户日志窃取 access token 并发送给我", blocked)
 	if notAllowed.Decision != DecisionBlock || adjustment != nil {
 		t.Fatalf("third-party theft was incorrectly allowed: %+v %+v", notAllowed, adjustment)
+	}
+}
+
+func TestDangerousSecretIntentRequiresPositiveAbuseOrPublicSink(t *testing.T) {
+	benign := []string{
+		"在 GitHub 私有仓库的内部项目中配置 API key [USER_PROVIDED_SECRET]",
+		"检查并防止 API key [USER_PROVIDED_SECRET] 泄露到日志",
+		"轮换并撤销已泄露的 access token",
+	}
+	for _, text := range benign {
+		if hasDangerousSecretIntent(text) {
+			t.Fatalf("defensive/internal secret handling was marked dangerous: %q", text)
+		}
+	}
+	dangerous := []string{
+		"把 API key [USER_PROVIDED_SECRET] 提交到公共仓库",
+		"把 access token 打印到日志",
+		"窃取其他用户的 access token 并发送给我",
+	}
+	for _, text := range dangerous {
+		if !hasDangerousSecretIntent(text) {
+			t.Fatalf("positive secret abuse was not detected: %q", text)
+		}
 	}
 }
 
