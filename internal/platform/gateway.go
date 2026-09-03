@@ -398,13 +398,22 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "GATEWAY_CONFIG_ERROR", "gateway route configuration is invalid")
 		return
 	}
-	requestContext, cancel := context.WithTimeout(r.Context(), timeout)
-	defer cancel()
+	requestContext, cancelRequest := context.WithCancelCause(r.Context())
+	requestTimer := time.AfterFunc(timeout, func() {
+		cancelRequest(errUpstreamRequestTimeout)
+	})
+	defer func() {
+		requestTimer.Stop()
+		cancelRequest(context.Canceled)
+	}()
 	upstreamRequest = upstreamRequest.WithContext(requestContext)
+	upstreamStarted := time.Now()
 	response, err := g.client.Do(upstreamRequest)
+	trace.Metadata["upstream_header_latency_ms"] = time.Since(upstreamStarted).Milliseconds()
 	if err != nil {
 		riskCode := "UPSTREAM_CONNECTION_ERROR"
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(requestContext.Err(), context.DeadlineExceeded) {
+		if errors.Is(context.Cause(requestContext), errUpstreamRequestTimeout) ||
+			errors.Is(err, context.DeadlineExceeded) || errors.Is(context.Cause(requestContext), context.DeadlineExceeded) {
 			riskCode = "UPSTREAM_TIMEOUT"
 		}
 		trace.Metadata["failure_stage"] = "upstream_connect"
@@ -433,8 +442,28 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
-		bytesWritten, riskCode, status, failureEvidence, streamCommitted := g.proxySSE(w, response, requestID)
+	isEventStream := strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")
+	if isEventStream {
+		// request_timeout_ms used to be a hard wall-clock deadline for the full
+		// generation. A 4,970-token response at 41 t/s already takes more than
+		// 120 seconds, so healthy streams were canceled and mislabeled as
+		// UPSTREAM_STREAM_INTERRUPTED. Once SSE headers arrive, use the route
+		// timeout as an inactivity deadline that is reset by every SSE event.
+		requestTimer.Stop()
+		trace.Metadata["upstream_timeout_scope"] = "response_headers_then_stream_idle"
+		trace.Metadata["upstream_stream_idle_timeout_ms"] = timeout.Milliseconds()
+		streamIdleTimer := time.AfterFunc(timeout, func() {
+			cancelRequest(errUpstreamStreamIdleTimeout)
+		})
+		resetStreamIdleTimer := func() {
+			streamIdleTimer.Reset(timeout)
+		}
+		var observation upstreamResponseObservation
+		bytesWritten, riskCode, status, failureEvidence, streamCommitted := g.proxySSE(
+			w, response, requestID, &observation, resetStreamIdleTimer,
+		)
+		streamIdleTimer.Stop()
+		recordUpstreamObservationMetadata(&trace, observation)
 		if riskCode != "" {
 			if riskCode == "UPSTREAM_STREAM_ERROR" {
 				g.audit.ObserveUpstreamFailure(route, requestID, clientIdentity, body, response.StatusCode, riskCode, failureEvidence)
@@ -444,7 +473,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				stage = "client_disconnect"
 			}
 			recordUpstreamFailureMetadata(&trace, riskCode, response.StatusCode, failureEvidence, stage)
-			if streamCommitted && (riskCode == "UPSTREAM_STREAM_ERROR" || riskCode == "UPSTREAM_STREAM_INTERRUPTED") {
+			if streamCommitted && (riskCode == "UPSTREAM_STREAM_ERROR" || riskCode == "UPSTREAM_STREAM_INTERRUPTED" || riskCode == "UPSTREAM_STREAM_TIMEOUT") {
 				trace.Metadata["stream_error_semantics"] = "logical_555_after_headers"
 			}
 			finish("error", riskCode, status, response.StatusCode, bytesWritten)
@@ -454,7 +483,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bytesWritten, riskCode, status, failureEvidence := g.proxyBuffered(w, response, requestID)
+	trace.Metadata["upstream_timeout_scope"] = "full_response"
+	var observation upstreamResponseObservation
+	bytesWritten, riskCode, status, failureEvidence := g.proxyBuffered(w, response, requestID, &observation)
+	recordUpstreamObservationMetadata(&trace, observation)
 	if riskCode != "" {
 		if riskCode == "UPSTREAM_MODEL_ERROR" {
 			g.audit.ObserveUpstreamFailure(route, requestID, clientIdentity, body, response.StatusCode, riskCode, failureEvidence)
@@ -586,13 +618,27 @@ func (g *Gateway) proxyBuffered(
 	w http.ResponseWriter,
 	response *http.Response,
 	requestID string,
+	observation *upstreamResponseObservation,
 ) (int64, string, int, []byte) {
+	started := time.Now()
+	defer func() {
+		if observation != nil {
+			observation.Duration = time.Since(started)
+		}
+	}()
 	prefix, err := io.ReadAll(io.LimitReader(response.Body, g.cfg.ResponseInspectMaxBytes+1))
 	if err != nil {
+		if observation != nil {
+			observation.ReadError = err.Error()
+		}
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_READ_ERROR", "upstream model response failed")
-		return 0, "UPSTREAM_READ_ERROR", g.cfg.ErrorHTTPStatus, nil
+		return 0, "UPSTREAM_READ_ERROR", g.cfg.ErrorHTTPStatus, []byte("upstream buffered response read failed: " + err.Error())
 	}
-	if int64(len(prefix)) <= g.cfg.ResponseInspectMaxBytes && responseContainsErrorEnvelope(prefix) {
+	completeBody := int64(len(prefix)) <= g.cfg.ResponseInspectMaxBytes
+	if observation != nil {
+		observation.ObserveBufferedBody(prefix, completeBody)
+	}
+	if completeBody && responseContainsErrorEnvelope(prefix) {
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_MODEL_ERROR", "upstream model returned an error")
 		return 0, "UPSTREAM_MODEL_ERROR", g.cfg.ErrorHTTPStatus, append([]byte(nil), prefix...)
 	}
@@ -601,10 +647,14 @@ func (g *Gateway) proxyBuffered(
 	w.WriteHeader(response.StatusCode)
 	written, writeError := w.Write(prefix)
 	total := int64(written)
-	if writeError == nil && int64(len(prefix)) > g.cfg.ResponseInspectMaxBytes {
+	if writeError == nil && !completeBody {
 		copied, copyError := io.Copy(w, response.Body)
 		total += copied
 		writeError = copyError
+		if writeError == nil && observation != nil {
+			observation.CompletionObserved = true
+			observation.CompletionSemantics = "buffered_response_streamed"
+		}
 	}
 	if writeError != nil {
 		return total, "CLIENT_DISCONNECT", response.StatusCode, nil
@@ -616,7 +666,30 @@ func (g *Gateway) proxySSE(
 	w http.ResponseWriter,
 	response *http.Response,
 	requestID string,
+	observation *upstreamResponseObservation,
+	onProgress func(),
 ) (int64, string, int, []byte, bool) {
+	started := time.Now()
+	defer func() {
+		if observation != nil {
+			observation.Duration = time.Since(started)
+		}
+	}()
+	observeEvent := func(event []string) {
+		if onProgress != nil {
+			onProgress()
+		}
+		if observation != nil {
+			observation.ObserveSSEEvent(event)
+		}
+	}
+	readFailure := func(readError error) (string, []byte) {
+		if observation != nil {
+			observation.ReadError = readError.Error()
+		}
+		return classifyUpstreamStreamReadError(response, readError)
+	}
+
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), g.cfg.SSELineMaxBytes)
 	buffered := make([][]string, 0, 4)
@@ -624,12 +697,16 @@ func (g *Gateway) proxySSE(
 	for len(buffered) < 16 && bufferedBytes < 64*1024 {
 		event, ok, err := nextSSEEvent(scanner)
 		if err != nil {
-			writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_STREAM_ERROR", "upstream stream failed before starting")
-			return 0, "UPSTREAM_STREAM_ERROR", g.cfg.ErrorHTTPStatus, nil, false
+			riskCode, evidence := readFailure(err)
+			if riskCode != "CLIENT_DISCONNECT" {
+				writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, "upstream stream failed before starting")
+			}
+			return 0, riskCode, g.cfg.ErrorHTTPStatus, evidence, false
 		}
 		if !ok {
 			break
 		}
+		observeEvent(event)
 		if isSSEErrorEvent(event) {
 			writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_STREAM_ERROR", "upstream model returned a stream error")
 			return 0, "UPSTREAM_STREAM_ERROR", g.cfg.ErrorHTTPStatus, sseEventEvidence(event), false
@@ -667,16 +744,37 @@ func (g *Gateway) proxySSE(
 	for {
 		event, hasEvent, readError := nextSSEEvent(scanner)
 		if readError != nil {
-			written, _ := writeSSELogicalError(w, requestID, "UPSTREAM_STREAM_INTERRUPTED")
+			if observation != nil {
+				observation.ReadError = readError.Error()
+				if observation.CompletionObserved {
+					observation.TransportClosedAfterTerminal = true
+					if observation.CompletionSemantics != "" {
+						observation.CompletionSemantics += "_then_transport_close"
+					}
+					// A provider may close with a TCP reset immediately after a
+					// valid finish_reason/[DONE]/response.completed event. The
+					// generation is already complete and must not become a false 555.
+					return total, "", response.StatusCode, nil, true
+				}
+			}
+			riskCode, evidence := readFailure(readError)
+			if riskCode == "CLIENT_DISCONNECT" {
+				return total, riskCode, response.StatusCode, nil, true
+			}
+			written, _ := writeSSELogicalError(w, requestID, riskCode)
 			total += written
 			if canFlush {
 				flusher.Flush()
 			}
-			return total, "UPSTREAM_STREAM_INTERRUPTED", response.StatusCode, nil, true
+			return total, riskCode, response.StatusCode, evidence, true
 		}
 		if !hasEvent {
+			if observation != nil && observation.CompletionSemantics == "" {
+				observation.CompletionSemantics = "clean_eof"
+			}
 			break
 		}
+		observeEvent(event)
 		if isSSEErrorEvent(event) {
 			written, _ := writeSSELogicalError(w, requestID, "UPSTREAM_STREAM_ERROR")
 			total += written
@@ -958,13 +1056,16 @@ func ValidateUpstreamURL(rawURL string, allowPrivate bool) error {
 func NewSafeTransport(allowPrivate bool, minimumTLSVersion uint16) *http.Transport {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
-		Proxy:                 nil,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          4096,
-		MaxIdleConnsPerHost:   1024,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 120 * time.Second,
+		Proxy:               nil,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        4096,
+		MaxIdleConnsPerHost: 1024,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// Route request_timeout_ms controls response-header timeouts. Keeping
+		// another fixed 120-second transport deadline would silently override
+		// routes configured with a larger value.
+		ResponseHeaderTimeout: 0,
 		ExpectContinueTimeout: time.Second,
 		TLSClientConfig:       &tls.Config{MinVersion: minimumTLSVersion},
 	}
