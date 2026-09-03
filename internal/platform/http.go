@@ -356,9 +356,15 @@ func (s *HTTPService) ingestTrackingEvents(w http.ResponseWriter, r *http.Reques
 			decision = "unknown"
 		}
 		metadata := sanitizeMetadata(event.Metadata)
+		timeline := deriveTrackingTimeline(event, now)
 		if !event.OccurredAt.IsZero() {
 			metadata["occurred_at"] = event.OccurredAt.UTC().Format(time.RFC3339Nano)
 		}
+		metadata["tracking_started_at"] = timeline.StartedAt.Format(time.RFC3339Nano)
+		metadata["tracking_completed_at"] = timeline.CompletedAt.Format(time.RFC3339Nano)
+		metadata["tracking_ingested_at"] = timeline.IngestedAt.Format(time.RFC3339Nano)
+		metadata["tracking_time_source"] = timeline.Source
+		metadata["tracking_clock_offset_ms"] = timeline.ClockOffset.Milliseconds()
 		externalEventID := truncateString(firstNonEmpty(event.EventID, requestID), 200)
 		queued := s.traces.Submit(TraceEvent{
 			RequestID:       requestID,
@@ -379,7 +385,12 @@ func (s *HTTPService) ingestTrackingEvents(w http.ResponseWriter, r *http.Reques
 			ResponseBytes:   event.ResponseBytes,
 			PromptHMAC:      truncateString(event.PromptHMAC, 128),
 			Metadata:        metadata,
-			CreatedAt:       now,
+			StartedAt:       timeline.StartedAt,
+			CompletedAt:     timeline.CompletedAt,
+			IngestedAt:      timeline.IngestedAt,
+			// Keep the partition key at ingestion time; visible/searchable time
+			// uses completed_at by default and remains aligned with NewAPI.
+			CreatedAt: now,
 		})
 		if queued {
 			accepted++

@@ -112,6 +112,26 @@ for key, default in audit_defaults.items():
     if should_set:
         text = set_value(text, key, default)
 
+# The historical 8 MiB REQUEST_MAX_BYTES was a fixed ingress rejection point.
+# Migrate that exact old default to automatic actual-size admission. Explicit
+# operator limits other than the old default are preserved.
+request_defaults = {
+    "REQUEST_MAX_BYTES": "0",
+    "REQUEST_HARD_MAX_BYTES": "67108864",
+    "REQUEST_LARGE_BODY_THRESHOLD_BYTES": "8388608",
+    "REQUEST_LARGE_BODY_MAX_CONCURRENCY": "4",
+}
+for key, default in request_defaults.items():
+    current = values.get(key, "").strip()
+    should_set = not current
+    if key == "REQUEST_MAX_BYTES" and current == "8388608":
+        should_set = True
+        warnings.append(
+            "REQUEST_MAX_BYTES was changed from the historical fixed 8 MiB limit to 0 (automatic actual-size admission up to REQUEST_HARD_MAX_BYTES)."
+        )
+    if should_set:
+        text = set_value(text, key, default)
+
 force_new_postgres = os.environ.get("FORCE_NEW_POSTGRES_PASSWORD", "").lower() in {"1", "true", "yes"}
 postgres_password = values.get("POSTGRES_PASSWORD", "")
 if force_new_postgres or not postgres_password:

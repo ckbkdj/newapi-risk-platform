@@ -172,6 +172,13 @@ status="$(curl --silent --show-error -o "${WORKDIR}/allow.json" -w '%{http_code}
 assert_status 200 "${status}" "${WORKDIR}/allow.json"
 contains "${WORKDIR}/allow.json" 'mock provider success'
 
+status="$(curl --silent --show-error -o "${WORKDIR}/system-context-allow.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-Request-ID: e2e-system-context-allow' \
+  --data-binary '{"model":"normal","messages":[{"role":"system","content":"Do not use resolution hacks. Create a node_modules symlink or Windows junction pointing to the loader-provided node_modules directory. model-audit-block"},{"role":"developer","content":"Patch and rerun the .mjs builder."},{"role":"user","content":"Fix this normal project build using the provided dependencies and run tests."}]}')"
+assert_status 200 "${status}" "${WORKDIR}/system-context-allow.json"
+contains "${WORKDIR}/system-context-allow.json" 'mock provider success'
+
 python3 - "${WORKDIR}/long-safe.json" "${WORKDIR}/long-block.json" <<'PY'
 import json
 import sys
@@ -444,6 +451,7 @@ for _ in $(seq 1 40); do
      grep -Fq 'e2e-own-secret-self-service' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-late' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-normal' "${WORKDIR}/traces.json" && \
+     grep -Fq 'e2e-system-context-allow' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-slow-usage' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-buffered-usage' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-model-block-evidence' "${WORKDIR}/traces.json" && \
@@ -597,12 +605,28 @@ if late_meta.get("audit_reason") == late_meta.get("error_reason"):
 if late_meta.get("stream_error_semantics") != "logical_555_after_headers":
     raise RuntimeError(f"late-stream logical 555 semantics missing: {late_meta}")
 
+system_context = next((item for item in items if item.get("request_id") == "e2e-system-context-allow"), None)
+if not system_context:
+    raise RuntimeError("system-context allow trace is missing")
+scm = system_context.get("metadata", {})
+if system_context.get("decision") != "allow" or int(system_context.get("http_status", 0)) != 200:
+    raise RuntimeError(f"normal coding-agent system prompt was not allowed: {system_context}")
+if scm.get("audit_input_scope") != "end_user_intent_only":
+    raise RuntimeError(f"role-aware audit scope missing: {scm}")
+if int(scm.get("audit_ignored_context_bytes", 0)) <= 0:
+    raise RuntimeError(f"ignored system/developer context was not diagnosed: {scm}")
+
 stream_normal = next((item for item in items if item.get("request_id") == "e2e-stream-normal"), None)
 if not stream_normal:
     raise RuntimeError("normal-stream trace missing")
 normal_meta = stream_normal.get("metadata", {})
 if stream_normal.get("decision") != "allow" or int(stream_normal.get("http_status", 0)) != 200:
     raise RuntimeError(f"normal stream should remain allowed: {stream_normal}")
+for key in ("started_at", "completed_at", "ingested_at"):
+    if not stream_normal.get(key):
+        raise RuntimeError(f"normal stream timeline field {key} missing: {stream_normal}")
+if stream_normal["completed_at"] < stream_normal["started_at"]:
+    raise RuntimeError(f"normal stream completion precedes start: {stream_normal}")
 for key in ("error_reason", "failure_stage", "stream_error_semantics", "upstream_error_reason"):
     if normal_meta.get(key):
         raise RuntimeError(f"normal stream was polluted with {key}: {normal_meta}")

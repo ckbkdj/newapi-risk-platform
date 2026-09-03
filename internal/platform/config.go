@@ -46,6 +46,9 @@ type Config struct {
 	RetentionDays                  int
 	ErrorHTTPStatus                int
 	RequestMaxBytes                int64
+	RequestHardMaxBytes            int64
+	LargeRequestThresholdBytes     int64
+	LargeRequestMaxConcurrency     int
 	ResponseInspectMaxBytes        int64
 	AuditTextMaxBytes              int
 	AuditOutputMaxTokens           int
@@ -105,7 +108,10 @@ func LoadConfig() (Config, error) {
 		DefaultAuditBlockThreshold:     envFloat("AUDIT_DEFAULT_BLOCK_THRESHOLD", 0.65),
 		RetentionDays:                  envInt("POSTGRES_RETENTION_DAYS", 7),
 		ErrorHTTPStatus:                envInt("ERROR_HTTP_STATUS", 555),
-		RequestMaxBytes:                int64(envInt("REQUEST_MAX_BYTES", 8*1024*1024)),
+		RequestMaxBytes:                int64(envInt("REQUEST_MAX_BYTES", 0)),
+		RequestHardMaxBytes:            int64(envInt("REQUEST_HARD_MAX_BYTES", 64*1024*1024)),
+		LargeRequestThresholdBytes:     int64(envInt("REQUEST_LARGE_BODY_THRESHOLD_BYTES", 8*1024*1024)),
+		LargeRequestMaxConcurrency:     envInt("REQUEST_LARGE_BODY_MAX_CONCURRENCY", 4),
 		ResponseInspectMaxBytes:        int64(envInt("RESPONSE_INSPECT_MAX_BYTES", 2*1024*1024)),
 		AuditTextMaxBytes:              envInt("AUDIT_TEXT_MAX_BYTES", 8*1024*1024),
 		AuditOutputMaxTokens:           envInt("AUDIT_OUTPUT_MAX_TOKENS", 128),
@@ -167,8 +173,17 @@ func (c Config) Validate() error {
 	if c.PostgresMaxConns < 2 || c.PostgresMaxConns > 1000 || c.PostgresMinConns < 0 || c.PostgresMinConns > c.PostgresMaxConns {
 		problems = append(problems, "PostgreSQL connection pool settings are invalid")
 	}
-	if c.RequestMaxBytes < 1024 || c.RequestMaxBytes > 64*1024*1024 {
-		problems = append(problems, "REQUEST_MAX_BYTES must be between 1 KiB and 64 MiB")
+	if c.RequestHardMaxBytes < 1024*1024 || c.RequestHardMaxBytes > maximumConfigurableRequestHardMaxBytes {
+		problems = append(problems, "REQUEST_HARD_MAX_BYTES must be between 1 MiB and 256 MiB")
+	}
+	if c.RequestMaxBytes != 0 && (c.RequestMaxBytes < 1024 || c.RequestMaxBytes > c.RequestHardMaxBytes) {
+		problems = append(problems, "REQUEST_MAX_BYTES must be 0 for automatic actual-size admission or between 1 KiB and REQUEST_HARD_MAX_BYTES")
+	}
+	if c.LargeRequestThresholdBytes < 1024 || c.LargeRequestThresholdBytes > c.RequestHardMaxBytes {
+		problems = append(problems, "REQUEST_LARGE_BODY_THRESHOLD_BYTES must be between 1 KiB and REQUEST_HARD_MAX_BYTES")
+	}
+	if c.LargeRequestMaxConcurrency < 1 || c.LargeRequestMaxConcurrency > 64 {
+		problems = append(problems, "REQUEST_LARGE_BODY_MAX_CONCURRENCY must be between 1 and 64")
 	}
 	if c.ResponseInspectMaxBytes < 64*1024 || c.ResponseInspectMaxBytes > 16*1024*1024 {
 		problems = append(problems, "RESPONSE_INSPECT_MAX_BYTES must be between 64 KiB and 16 MiB")

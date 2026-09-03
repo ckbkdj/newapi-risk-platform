@@ -157,6 +157,10 @@ type AuditResult struct {
 	AuditTokensOverLimit     int                   `json:"audit_tokens_over_limit,omitempty"`
 	AuditAttempts            []AuditAttempt        `json:"audit_attempts,omitempty"`
 	RuleMatch                *RuleMatchDiagnostics `json:"rule_match,omitempty"`
+	AuditInputScope          string                `json:"audit_input_scope,omitempty"`
+	AuditIntentBytes         int                   `json:"audit_intent_bytes,omitempty"`
+	AuditIgnoredContextBytes int                   `json:"audit_ignored_context_bytes,omitempty"`
+	AuditIgnoredRoles        []string              `json:"audit_ignored_roles,omitempty"`
 }
 
 type TraceEvent struct {
@@ -178,6 +182,9 @@ type TraceEvent struct {
 	ResponseBytes   int64          `json:"response_bytes"`
 	PromptHMAC      string         `json:"prompt_hmac,omitempty"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
+	StartedAt       time.Time      `json:"started_at"`
+	CompletedAt     time.Time      `json:"completed_at"`
+	IngestedAt      time.Time      `json:"ingested_at"`
 	CreatedAt       time.Time      `json:"created_at"`
 }
 
@@ -198,7 +205,9 @@ type TrackingEvent struct {
 	RequestBytes    int64          `json:"request_bytes"`
 	ResponseBytes   int64          `json:"response_bytes"`
 	PromptHMAC      string         `json:"prompt_hmac"`
-	OccurredAt      time.Time      `json:"occurred_at"`
+	StartedAt       time.Time      `json:"started_at,omitempty"`
+	CompletedAt     time.Time      `json:"completed_at,omitempty"`
+	OccurredAt      time.Time      `json:"occurred_at,omitempty"`
 	Metadata        map[string]any `json:"metadata"`
 }
 

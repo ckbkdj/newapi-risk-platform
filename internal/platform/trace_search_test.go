@@ -23,6 +23,7 @@ func TestParseTraceSearchFilter(t *testing.T) {
 		"to":                {"2026-09-02T12:00:00Z"},
 		"limit":             {"100"},
 		"offset":            {"200"},
+		"time_basis":        {"completed"},
 	}
 	filter, err := parseTraceSearchFilter(values, now)
 	if err != nil {
@@ -34,7 +35,7 @@ func TestParseTraceSearchFilter(t *testing.T) {
 	if filter.UserID != "tenant-user-42" || filter.UserMatch != "prefix" || filter.TenantID != "tenant-a" {
 		t.Fatalf("unexpected user filters: %#v", filter)
 	}
-	if filter.HTTPStatus == nil || *filter.HTTPStatus != 200 || filter.Limit != 100 || filter.Offset != 200 {
+	if filter.HTTPStatus == nil || *filter.HTTPStatus != 200 || filter.Limit != 100 || filter.Offset != 200 || filter.TimeBasis != TraceTimeBasisCompleted {
 		t.Fatalf("unexpected pagination or status: %#v", filter)
 	}
 	if !filter.From.Equal(time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)) || !filter.To.Equal(now) {
@@ -48,7 +49,7 @@ func TestParseTraceSearchFilterDefaultsAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filter.Limit != defaultTraceSearchLimit || filter.Offset != 0 || filter.UserMatch != "exact" {
+	if filter.Limit != defaultTraceSearchLimit || filter.Offset != 0 || filter.UserMatch != "exact" || filter.TimeBasis != TraceTimeBasisCompleted {
 		t.Fatalf("unexpected defaults: %#v", filter)
 	}
 	if !filter.From.Equal(now.Add(-24*time.Hour)) || !filter.To.Equal(now) {
@@ -81,7 +82,7 @@ func TestBuildTraceSearchWhereEscapesPatterns(t *testing.T) {
 		Model:     "gpt_5%",
 	}
 	whereSQL, arguments := buildTraceSearchWhere(filter)
-	if !strings.Contains(whereSQL, "lower(external_user_id)") || !strings.Contains(whereSQL, "metadata ->> 'tenant_id'") {
+	if !strings.Contains(whereSQL, "COALESCE(completed_at, created_at)") || !strings.Contains(whereSQL, "lower(external_user_id)") || !strings.Contains(whereSQL, "metadata ->> 'tenant_id'") {
 		t.Fatalf("missing expected search clauses: %s", whereSQL)
 	}
 	if got, ok := arguments[3].(string); !ok || got != `%user\%\_id\\segment%` {
@@ -101,6 +102,7 @@ func TestAdminUIContainsTraceSearchControls(t *testing.T) {
 	for _, marker := range []string{
 		`id="trace-from"`,
 		`id="trace-to"`,
+		`id="trace-time-basis"`,
 		`id="trace-request-id"`,
 		`id="trace-user-match"`,
 		`id="trace-summary"`,

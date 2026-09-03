@@ -35,6 +35,7 @@ type TraceSearchFilter struct {
 	RiskCode        string
 	HTTPStatus      *int
 	UpstreamStatus  *int
+	TimeBasis       string
 	From            time.Time
 	To              time.Time
 	Limit           int
@@ -50,14 +51,16 @@ type TraceSearchSummary struct {
 }
 
 type TraceSearchResponse struct {
-	Items   []TraceEvent       `json:"items"`
-	Total   int64              `json:"total"`
-	Limit   int                `json:"limit"`
-	Offset  int                `json:"offset"`
-	HasMore bool               `json:"has_more"`
-	From    time.Time          `json:"from"`
-	To      time.Time          `json:"to"`
-	Summary TraceSearchSummary `json:"summary"`
+	Items      []TraceEvent       `json:"items"`
+	Total      int64              `json:"total"`
+	Limit      int                `json:"limit"`
+	Offset     int                `json:"offset"`
+	HasMore    bool               `json:"has_more"`
+	From       time.Time          `json:"from"`
+	To         time.Time          `json:"to"`
+	Summary    TraceSearchSummary `json:"summary"`
+	TimeBasis  string             `json:"time_basis"`
+	ServerTime time.Time          `json:"server_time"`
 }
 
 func (s *HTTPService) adminSearchTraces(w http.ResponseWriter, r *http.Request) {
@@ -94,12 +97,19 @@ func parseTraceSearchFilter(values url.Values, now time.Time) (TraceSearchFilter
 		Endpoint:        traceSearchValue(values.Get("endpoint"), 300),
 		Decision:        strings.ToLower(traceSearchValue(values.Get("decision"), 30)),
 		RiskCode:        strings.ToUpper(traceSearchValue(values.Get("risk_code"), 200)),
+		TimeBasis:       strings.ToLower(traceSearchValue(values.Get("time_basis"), 20)),
 		From:            now.Add(-24 * time.Hour),
 		To:              now,
 		Limit:           defaultTraceSearchLimit,
 	}
 	if filter.UserMatch == "" {
 		filter.UserMatch = "exact"
+	}
+	if filter.TimeBasis == "" {
+		filter.TimeBasis = TraceTimeBasisCompleted
+	}
+	if filter.TimeBasis != TraceTimeBasisCompleted && filter.TimeBasis != TraceTimeBasisStarted && filter.TimeBasis != TraceTimeBasisIngested {
+		return TraceSearchFilter{}, fmt.Errorf("time_basis must be completed, started, or ingested")
 	}
 	if filter.UserMatch != "exact" && filter.UserMatch != "prefix" && filter.UserMatch != "contains" {
 		return TraceSearchFilter{}, fmt.Errorf("user_match must be exact, prefix, or contains")
@@ -182,11 +192,13 @@ func traceSearchValue(value string, maximum int) string {
 func (s *Store) SearchTraces(ctx context.Context, filter TraceSearchFilter) (TraceSearchResponse, error) {
 	whereSQL, arguments := buildTraceSearchWhere(filter)
 	result := TraceSearchResponse{
-		Items:  make([]TraceEvent, 0, filter.Limit),
-		Limit:  filter.Limit,
-		Offset: filter.Offset,
-		From:   filter.From,
-		To:     filter.To,
+		Items:      make([]TraceEvent, 0, filter.Limit),
+		Limit:      filter.Limit,
+		Offset:     filter.Offset,
+		From:       filter.From,
+		To:         filter.To,
+		TimeBasis:  filter.TimeBasis,
+		ServerTime: time.Now().UTC(),
 	}
 	if err := s.pool.QueryRow(ctx, `SELECT
 		count(*),
@@ -210,11 +222,13 @@ func (s *Store) SearchTraces(ctx context.Context, filter TraceSearchFilter) (Tra
 	pageArguments = append(pageArguments, filter.Limit, filter.Offset)
 	limitPlaceholder := "$" + strconv.Itoa(len(pageArguments)-1)
 	offsetPlaceholder := "$" + strconv.Itoa(len(pageArguments))
+	timeExpression := traceTimeExpression(filter.TimeBasis)
 	rows, err := s.pool.Query(ctx, `SELECT request_id,external_event_id,source,route_slug,newapi_request_id,
 		external_user_id,model,endpoint,decision,risk_code,http_status,upstream_status,
-		latency_ms,audit_latency_ms,request_bytes,response_bytes,prompt_hmac,metadata,created_at
+		latency_ms,audit_latency_ms,request_bytes,response_bytes,prompt_hmac,metadata,
+		started_at,completed_at,ingested_at,created_at
 		FROM request_traces WHERE `+whereSQL+
-		" ORDER BY created_at DESC, request_id DESC, external_event_id DESC LIMIT "+limitPlaceholder+
+		" ORDER BY "+timeExpression+" DESC, request_id DESC, external_event_id DESC LIMIT "+limitPlaceholder+
 		" OFFSET "+offsetPlaceholder, pageArguments...)
 	if err != nil {
 		return result, err
@@ -228,7 +242,7 @@ func (s *Store) SearchTraces(ctx context.Context, filter TraceSearchFilter) (Tra
 			&event.NewAPIRequestID, &event.ExternalUserID, &event.Model, &event.Endpoint,
 			&event.Decision, &event.RiskCode, &event.HTTPStatus, &event.UpstreamStatus,
 			&event.LatencyMS, &event.AuditLatencyMS, &event.RequestBytes, &event.ResponseBytes,
-			&event.PromptHMAC, &metadata, &event.CreatedAt,
+			&event.PromptHMAC, &metadata, &event.StartedAt, &event.CompletedAt, &event.IngestedAt, &event.CreatedAt,
 		); err != nil {
 			return result, err
 		}
@@ -244,7 +258,8 @@ func (s *Store) SearchTraces(ctx context.Context, filter TraceSearchFilter) (Tra
 }
 
 func buildTraceSearchWhere(filter TraceSearchFilter) (string, []any) {
-	clauses := []string{"created_at >= $1", "created_at <= $2"}
+	timeExpression := traceTimeExpression(filter.TimeBasis)
+	clauses := []string{timeExpression + " >= $1", timeExpression + " <= $2"}
 	arguments := []any{filter.From, filter.To}
 	addEqual := func(expression string, value any, enabled bool) {
 		if !enabled {
