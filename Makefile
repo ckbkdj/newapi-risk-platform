@@ -1,4 +1,4 @@
-.PHONY: fmt test race vet build run init-env deploy doctor docker-up docker-down
+.PHONY: fmt test race vet build run init-env deploy update upgrade doctor docker-up docker-down
 
 fmt:
 	gofmt -w ./cmd ./internal
@@ -23,6 +23,12 @@ init-env:
 
 deploy:
 	bash scripts/deploy-local.sh
+
+update:
+	bash scripts/update.sh
+
+upgrade:
+	bash scripts/upgrade.sh
 
 doctor:
 	bash scripts/doctor.sh

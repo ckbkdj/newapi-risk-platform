@@ -262,29 +262,65 @@ for index in $(seq 1 10); do
   assert_status 555 "${status}" "${WORKDIR}/adaptive-provider-${index}.json"
 done
 
-adaptive_promoted=0
+adaptive_candidate_id=""
 for _ in $(seq 1 80); do
   curl --fail --silent --show-error \
-    "${BASE_URL}/api/admin/v1/cyber-rules" \
-    "${auth[@]}" >"${WORKDIR}/adaptive-rules.json"
-  if python3 - "${WORKDIR}/adaptive-rules.json" <<'PY'
+    "${BASE_URL}/api/admin/v1/cyber-rule-candidates?limit=100" \
+    "${auth[@]}" >"${WORKDIR}/adaptive-candidates.json"
+  adaptive_candidate_id="$(python3 - "${WORKDIR}/adaptive-candidates.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+policy = payload.get("policy", {})
+if policy.get("auto_promote") is not False or policy.get("auto_block") is not False:
+    raise SystemExit("Shadow-first policy is not active")
+for item in payload.get("items", []):
+    if (
+        str(item.get("proposed_code", "")).startswith("CYBER_ADAPTIVE_MALWARE_")
+        and item.get("status") in {"candidate", "shadow"}
+        and int(item.get("evidence_count", 0)) >= 3
+        and int(item.get("distinct_users", 0)) >= 2
+    ):
+        print(item["id"])
+        break
+PY
+)"
+  if [[ -n "${adaptive_candidate_id}" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+[[ -n "${adaptive_candidate_id}" ]] || fail "adaptive provider failures did not create a Shadow candidate"
+
+curl --fail --silent --show-error \
+  "${BASE_URL}/api/admin/v1/cyber-rules" \
+  "${auth[@]}" >"${WORKDIR}/adaptive-rules-before-approval.json"
+if python3 - "${WORKDIR}/adaptive-rules-before-approval.json" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     items = json.load(handle).get("items", [])
-for item in items:
-    if str(item.get("code", "")).startswith("CYBER_ADAPTIVE_MALWARE_") and item.get("action") == "block":
-        raise SystemExit(0)
-raise SystemExit(1)
+raise SystemExit(0 if any(
+    str(item.get("code", "")).startswith("CYBER_ADAPTIVE_MALWARE_")
+    and item.get("action") == "block"
+    and item.get("enabled") is True
+    for item in items
+) else 1)
 PY
-  then
-    adaptive_promoted=1
-    break
-  fi
-  sleep 0.25
-done
-[[ "${adaptive_promoted}" == 1 ]] || fail "adaptive provider failures did not promote to a narrow block rule"
+then
+  fail "Shadow candidate became an enforcing block rule without administrator approval"
+fi
+
+status="$(curl --silent --show-error -o "${WORKDIR}/adaptive-promote.json" -w '%{http_code}' \
+  "${BASE_URL}/api/admin/v1/cyber-rule-candidates/${adaptive_candidate_id}/promote" \
+  "${auth[@]}" -H 'Content-Type: application/json' \
+  --data-binary '{"action":"block"}')"
+assert_status 200 "${status}" "${WORKDIR}/adaptive-promote.json"
+contains "${WORKDIR}/adaptive-promote.json" 'CYBER_ADAPTIVE_MALWARE_'
+contains "${WORKDIR}/adaptive-promote.json" '"action":"block"'
 
 status="$(curl --silent --show-error -o "${WORKDIR}/adaptive-local-block.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \

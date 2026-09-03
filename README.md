@@ -86,25 +86,28 @@ New API 的流式适配层应同时识别 HTTP 555 和 SSE `event:error` 中的�
 
 ## 快速启动
 
-### 1. 准备配置
+### 1. 首次部署
 
 ```bash
 git clone https://github.com/ckbkdj/newapi-risk-platform.git
 cd newapi-risk-platform
-cp .env.example .env
-
-# 填入 .env
-openssl rand -base64 32   # MASTER_KEY_B64，必须解码为 32 字节
-openssl rand -hex 32      # JWT_SECRET
-openssl rand -base64 36   # PostgreSQL、管理员和追踪 Secret
+bash scripts/deploy-local.sh
 ```
 
-不要把 `.env` 提交到 Git。
+`deploy-local.sh` 会基于 `.env.example` 创建或迁移 `.env`、生成缺失的随机密钥、校验 Compose、构建容器并等待 `/readyz`。不要把 `.env` 提交到 Git。
+
+需要手工指定既有密钥时，可先编辑 `.env`，再重新执行：
+
+```bash
+bash scripts/deploy-local.sh
+```
 
 ### 2. 启动 PostgreSQL、Redis 和平台
 
+首次部署脚本已经完成启动。后续仅重新构建并检查就绪状态时仍执行：
+
 ```bash
-docker compose up -d --build
+bash scripts/deploy-local.sh
 curl http://127.0.0.1:8080/readyz
 ```
 
@@ -130,6 +133,48 @@ docker compose --profile longterm up -d --build
 ```
 
 内置 Kafka 是单节点开发/验收环境。商业生产环境应使用至少三 Broker 的托管或独立 Kafka，预创建 Topic，并将副本因子、ISR、ACL、TLS/SASL 和磁盘保留策略纳入运维。
+
+
+## Git 更新与安全升级
+
+已有部署不要手工 `git pull && docker compose up`。使用仓库内升级脚本：
+
+```bash
+# 在当前分支做 fast-forward 更新、备份数据库、迁移 .env、重建并验证
+bash scripts/upgrade.sh
+
+# 明确升级 main
+bash scripts/upgrade.sh main
+
+# update.sh 是兼容入口
+bash scripts/update.sh main
+```
+
+默认行为：
+
+- 只接受 fast-forward，远端改写历史时停止，不强制覆盖本地代码；
+- 工作区必须干净，避免把未提交修改卷入升级；
+- `.env` 原样保留，并备份到 `.upgrade-backups/<UTC时间>-<旧提交>/`；
+- PostgreSQL 正在运行时，默认先生成 `pg_dump -Fc` 备份；
+- 不删除 PostgreSQL、Redis 或 Kafka Volume；
+- 自动执行 `.env` 配置迁移、Compose 校验、镜像构建和 `/readyz` 检查；
+- 部署失败时回退代码与容器到旧提交，但不会自动反向执行数据库迁移，避免破坏升级期间产生的数据。
+
+可控开关：
+
+```bash
+BACKUP_DATABASE=0 bash scripts/upgrade.sh main       # 明确跳过数据库备份
+ROLLBACK_ON_FAILURE=0 bash scripts/upgrade.sh main   # 禁止自动代码/容器回退
+ALLOW_BRANCH_SWITCH=1 bash scripts/upgrade.sh main   # 允许从当前干净分支切换
+```
+
+升级失败时先查看脚本输出的备份目录，再运行：
+
+```bash
+docker compose ps -a
+docker compose logs --tail=300 --no-color
+bash scripts/doctor.sh
+```
 
 ## 配置审计模型
 

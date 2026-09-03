@@ -149,6 +149,88 @@ paths:
                     $ref: "#/components/schemas/AdminUser"
         "401": {description: Invalid credentials.}
         "429": {description: Login rate limit exceeded.}
+  /api/admin/v1/cyber-rule-candidates:
+    get:
+      operationId: listCyberRuleCandidates
+      summary: List adaptive rule candidates collected in Shadow-first mode.
+      security:
+        - AdminBearer: []
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 200}}
+      responses:
+        "200":
+          description: Candidate queue and the effective adaptive-learning policy.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, policy]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/CyberRuleCandidate"}
+                  policy: {$ref: "#/components/schemas/AdaptiveRulePolicy"}
+        "401": {description: Administrator authentication required.}
+  /api/admin/v1/cyber-rule-candidates/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    patch:
+      operationId: setCyberRuleCandidateStatus
+      summary: Reject a candidate or restore it to Shadow.
+      description: Requires the admin role. Promoted candidates are immutable through this endpoint.
+      security:
+        - AdminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: {type: string, enum: [shadow, rejected]}
+      responses:
+        "200": {description: Candidate status updated.}
+        "400": {description: Invalid candidate identifier or status.}
+        "401": {description: Administrator authentication required.}
+        "403": {description: Admin role required.}
+        "404": {description: Candidate not found or already promoted.}
+  /api/admin/v1/cyber-rule-candidates/{id}/promote:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+    post:
+      operationId: promoteCyberRuleCandidate
+      summary: Manually promote a Shadow candidate to an enforcing rule.
+      description: Requires the admin role. The action must be Review or Block; Allow rules cannot be created from adaptive candidates.
+      security:
+        - AdminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action: {type: string, enum: [review, block]}
+      responses:
+        "200":
+          description: Candidate promoted transactionally and the rule hot-reloaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [candidate, rule]
+                properties:
+                  candidate: {$ref: "#/components/schemas/CyberRuleCandidate"}
+                  rule: {$ref: "#/components/schemas/CyberRule"}
+        "400": {description: Invalid candidate identifier or action.}
+        "401": {description: Administrator authentication required.}
+        "403": {description: Admin role required.}
+        "404": {description: Candidate not found.}
+        "409": {description: Candidate is rejected, promoted, or otherwise not promotable.}
   /api/admin/v1/traces:
     get:
       operationId: searchTraces
@@ -244,6 +326,56 @@ components:
       description: Hex HMAC-SHA256 over timestamp, nonce, and the SHA-256 of the exact raw body.
       schema: {type: string, pattern: "^(sha256=)?[a-fA-F0-9]{64}$"}
   schemas:
+    AdaptiveRulePolicy:
+      type: object
+      required: [enabled, auto_promote, min_confidence, min_evidence, min_distinct_users, auto_block]
+      properties:
+        enabled: {type: boolean}
+        auto_promote: {type: boolean}
+        min_confidence: {type: number, minimum: 0, maximum: 1}
+        min_evidence: {type: integer, minimum: 1}
+        min_distinct_users: {type: integer, minimum: 0}
+        auto_block: {type: boolean}
+    CyberRuleCandidate:
+      type: object
+      required: [id, fingerprint, proposed_code, category, pattern, pattern_type, proposed_action, confidence, evidence_count, distinct_users, status]
+      properties:
+        id: {type: integer, format: int64}
+        fingerprint: {type: string}
+        proposed_code: {type: string}
+        category: {type: string}
+        pattern: {type: string}
+        pattern_type: {type: string, enum: [regex, contains, exact]}
+        proposed_action: {type: string, enum: [review, block]}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        model: {type: string}
+        route_slug: {type: string}
+        provider_error_class: {type: string}
+        upstream_status: {type: integer}
+        reason: {type: string}
+        evidence_count: {type: integer, minimum: 1}
+        distinct_users: {type: integer, minimum: 0}
+        status: {type: string, enum: [candidate, shadow, promoted, rejected]}
+        promoted_rule_id: {type: [integer, "null"], format: int64}
+        first_seen_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    CyberRule:
+      type: object
+      required: [id, code, name, category, pattern, pattern_type, action, priority, enabled]
+      properties:
+        id: {type: integer, format: int64}
+        code: {type: string}
+        name: {type: string}
+        description: {type: string}
+        category: {type: string}
+        pattern: {type: string}
+        pattern_type: {type: string, enum: [regex, contains, exact]}
+        action: {type: string, enum: [allow, review, block]}
+        priority: {type: integer}
+        enabled: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     RiskErrorEnvelope:
       type: object
       required: [error]

@@ -21,3 +21,25 @@
 ## 密钥边界
 
 内部工程模式允许请求者把 API Key 写入内部配置或私有项目，并只在送审副本和 Trace 中替换为占位符；真实请求仍完整转发。仅出现明确的窃取、他人目标、外传、公共仓库、公开发布或日志输出意图时保持 Block。防泄露、检查、轮换、撤销和脱敏属于正常安全处置。
+
+## Shadow-first 人工审批
+
+自适应学习只生成 `candidate` / `shadow` 候选。管理后台的 Cyber 规则页显示候选的置信度、样本数、不同用户数、模式和来源；只有管理员可以：
+
+- 晋升为 `Review`，命中后继续交给语义模型；
+- 在明确确认后晋升为 `Block`；
+- 拒绝候选，或把已拒绝候选恢复到 Shadow。
+
+对应接口是：
+
+```text
+GET   /api/admin/v1/cyber-rule-candidates
+PATCH /api/admin/v1/cyber-rule-candidates/{id}
+POST  /api/admin/v1/cyber-rule-candidates/{id}/promote
+```
+
+人工晋升在事务中锁定候选、写入规则并热加载；已晋升候选不能重复修改。自动晋升和自动 Block 仍默认关闭。
+
+## Git 更新与部署
+
+首次部署使用 `bash scripts/deploy-local.sh`。已有部署使用 `bash scripts/upgrade.sh <branch>`；升级脚本只接受 fast-forward，备份 `.env` 和正在运行的 PostgreSQL，保留全部 Volume，并在部署失败时回退代码与容器。数据库迁移不会被自动反向执行。
