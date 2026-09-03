@@ -10,6 +10,11 @@ if unsupported not in source:
     raise SystemExit("unsupported UUID lookahead fragment was not found")
 source = source.replace(unsupported, replacement, 1)
 source = source.replace('replacement = "${1}[ARTIFACT_ID]"', 'replacement = "${1}[ARTIFACT_ID]${2}"', 1)
+source = source.replace(
+    'func isUserProvidedSecretConfiguration(text string) bool {\n\treturn secretTermPattern.MatchString(text) && secretConfigurationPattern.MatchString(text)\n}',
+    'func isUserProvidedSecretConfiguration(text string) bool {\n\treturn strings.Contains(text, "[USER_PROVIDED_SECRET]") && secretConfigurationPattern.MatchString(text)\n}',
+    1,
+)
 
 source = source.replace(
     'func (e *AuditEngine) matchRules(text string, policy AuditPolicy) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic) {',
