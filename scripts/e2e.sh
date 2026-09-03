@@ -487,6 +487,14 @@ if int(metadata.get("request_body_over_limit_bytes", 0)) <= 0:
     raise RuntimeError(f"oversized request overage missing: {metadata}")
 if metadata.get("request_body_size_exact") is not True:
     raise RuntimeError(f"Content-Length request should have exact size: {metadata}")
+if metadata.get("error_origin") != "risk_gateway" or metadata.get("failure_stage") != "gateway_ingress":
+    raise RuntimeError(f"REQUEST_TOO_LARGE source/stage is ambiguous: {metadata}")
+if metadata.get("limit_config") != "REQUEST_MAX_BYTES" or metadata.get("failure_component") != "request_body_guard":
+    raise RuntimeError(f"REQUEST_TOO_LARGE owning guard is missing: {metadata}")
+if metadata.get("audit_started") is not False or metadata.get("upstream_started") is not False:
+    raise RuntimeError(f"REQUEST_TOO_LARGE must state that audit/upstream were not called: {metadata}")
+if not metadata.get("request_body_remediation"):
+    raise RuntimeError(f"REQUEST_TOO_LARGE remediation is missing: {metadata}")
 
 rule_item = next((item for item in items if item.get("request_id") == "e2e-rule-explainability"), None)
 if not rule_item:

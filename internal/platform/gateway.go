@@ -512,17 +512,41 @@ func markRequestTooLarge(trace *TraceEvent, requestBytes int64, limitBytes int64
 	overBytes := requestBytes - limitBytes
 	trace.RequestBytes = requestBytes
 	trace.Metadata["error_class"] = "request_body_too_large"
+	trace.Metadata["error_origin"] = "risk_gateway"
+	trace.Metadata["failure_stage"] = "gateway_ingress"
+	trace.Metadata["failure_component"] = "request_body_guard"
+	trace.Metadata["limit_owner"] = "risk_gateway"
+	trace.Metadata["limit_config"] = "REQUEST_MAX_BYTES"
+	trace.Metadata["limit_scope"] = "inbound_http_request_body"
+	trace.Metadata["limit_unit"] = "bytes"
+	trace.Metadata["audit_started"] = false
+	trace.Metadata["upstream_started"] = false
 	trace.Metadata["request_body_bytes"] = requestBytes
 	trace.Metadata["request_body_limit_bytes"] = limitBytes
 	trace.Metadata["request_body_over_limit_bytes"] = overBytes
 	trace.Metadata["request_body_size_exact"] = exact
+
+	recommended := recommendedRequestMaxBytes(requestBytes)
+	var remediation string
+	if recommended > 0 {
+		trace.Metadata["request_body_recommended_limit_bytes"] = recommended
+		remediation = fmt.Sprintf(
+			"This is a Risk Gateway ingress byte limit, not an audit-model or upstream-model limit. "+
+				"For an expected trusted request, set REQUEST_MAX_BYTES=%d and restart the gateway; otherwise reduce conversation history or replace inline base64 files/images with URLs. Audit and upstream were not called.",
+			recommended,
+		)
+	} else {
+		remediation = "This is a Risk Gateway ingress byte limit, not an audit-model or upstream-model limit. " +
+			"The request exceeds the supported 64 MiB body ceiling; reduce or split the payload, or replace inline base64 files/images with URLs. Audit and upstream were not called."
+	}
+	trace.Metadata["request_body_remediation"] = remediation
 
 	qualifier := ""
 	if !exact {
 		qualifier = "at least "
 	}
 	reason := fmt.Sprintf(
-		"request body is %s%d bytes; gateway limit is %d bytes; over limit by %s%d bytes",
+		"Risk Gateway ingress rejected the request before audit and upstream: request body is %s%d bytes; REQUEST_MAX_BYTES is %d bytes; over limit by %s%d bytes",
 		qualifier, requestBytes, limitBytes, qualifier, overBytes,
 	)
 	trace.Metadata["error_reason"] = reason
