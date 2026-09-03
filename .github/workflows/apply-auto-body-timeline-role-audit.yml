@@ -29,6 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/run-auto-body-timeline-role-audit.py
+          nl -ba internal/platform/gateway.go | sed -n '250,335p'
           gofmt -w ./cmd ./internal
       - name: Validate
         run: |
