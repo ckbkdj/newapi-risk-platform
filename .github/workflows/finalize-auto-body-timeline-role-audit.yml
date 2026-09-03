@@ -43,7 +43,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          import yaml
 
           html = Path('internal/platform/web/index.html').read_text(encoding='utf-8')
           scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.S | re.I)
@@ -51,9 +50,19 @@ jobs:
               raise SystemExit('embedded admin script not found')
           Path('/tmp/newapi-risk-admin.js').write_text('\n'.join(scripts), encoding='utf-8')
 
-          # Parse every YAML document to catch malformed Kubernetes/OpenAPI edits.
-          list(yaml.safe_load_all(Path('deploy/kubernetes.yaml').read_text(encoding='utf-8')))
-          yaml.safe_load(Path('docs/openapi.yaml').read_text(encoding='utf-8'))
+          k8s = Path('deploy/kubernetes.yaml').read_text(encoding='utf-8')
+          for expected in (
+              'REQUEST_MAX_BYTES: "0"',
+              'REQUEST_HARD_MAX_BYTES: "67108864"',
+              'REQUEST_LARGE_BODY_MAX_CONCURRENCY: "4"',
+              'AUDIT_TEXT_MAX_BYTES: "8388608"',
+          ):
+              if expected not in k8s:
+                  raise SystemExit(f'Kubernetes setting missing: {expected}')
+          openapi = Path('docs/openapi.yaml').read_text(encoding='utf-8')
+          for expected in ('X-Oneapi-Request-Id', 'time_basis', 'started_at', 'completed_at', 'ingested_at'):
+              if expected not in openapi:
+                  raise SystemExit(f'OpenAPI timeline/correlation field missing: {expected}')
           PY
           node --check /tmp/newapi-risk-admin.js
           docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
