@@ -162,13 +162,14 @@ func (s *Store) Bootstrap(ctx context.Context, cfg Config, security *Security) e
 			"SELECT EXISTS(SELECT 1 FROM audit_profiles WHERE is_default=TRUE)").Scan(&defaultExists); err != nil {
 			return err
 		}
+		defaultExtra := json.RawMessage(`{"_risk_policy_mode":"internal_engineering","_risk_allow_user_provided_secrets":true,"_risk_allow_local_debug_credentials":true}`)
 		_, err = s.pool.Exec(ctx, `INSERT INTO audit_profiles
-			(name,endpoint,model,api_key_ciphertext,system_prompt,timeout_ms,block_threshold,enabled,fail_closed,is_default)
-			VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,TRUE,$8)
+			(name,endpoint,model,api_key_ciphertext,system_prompt,timeout_ms,block_threshold,enabled,fail_closed,is_default,extra)
+			VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,TRUE,$8,$9)
 			ON CONFLICT(name) DO NOTHING`,
 			"Default small-model audit", cfg.DefaultAuditEndpoint, cfg.DefaultAuditModel, ciphertext,
 			DefaultAuditSystemPrompt, int(cfg.DefaultAuditTimeout.Milliseconds()),
-			cfg.DefaultAuditBlockThreshold, !defaultExists)
+			cfg.DefaultAuditBlockThreshold, !defaultExists, defaultExtra)
 		if err != nil {
 			return fmt.Errorf("bootstrap audit profile: %w", err)
 		}

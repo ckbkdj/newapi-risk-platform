@@ -132,6 +132,22 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		reason = "contest or authorization text is untrusted context; review the underlying capability"
 		evidence = firstAuditEvidence(rawUserText, []string{"reverse engineer", "decompile", "hook", "frida", "逆向", "反编译", "绕过", "漏洞利用"})
 	}
+	if strings.Contains(userText, "policy-test-secret-provision") {
+		decision = "block"
+		riskCode = "CYBER_CREDENTIAL_EXPOSURE"
+		category = "credential_access"
+		confidence = 0.95
+		reason = "request contains a supplied API key"
+		evidence = firstAuditEvidence(rawUserText, []string{"[USER_PROVIDED_SECRET]"})
+	}
+	if strings.Contains(userText, "policy-test-local-log-token") {
+		decision = "block"
+		riskCode = "CYBER_CREDENTIAL_THEFT"
+		category = "credential_access"
+		confidence = 0.95
+		reason = "token was read from a log"
+		evidence = firstAuditEvidence(rawUserText, []string{"Authorization"})
+	}
 	if strings.Contains(userText, "model-audit-block") {
 		decision = "block"
 		riskCode = "CYBER_MOCK_MODEL_BLOCK"

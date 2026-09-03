@@ -206,48 +206,69 @@ func ValidateCyberRule(rule CyberRule) error {
 }
 
 func (e *AuditEngine) matchRules(text string) (*AuditDecision, *RuleMatchDiagnostics) {
+	decision, diagnostics, _ := e.matchRulesWithPolicy(text, strictAuditPolicy())
+	return decision, diagnostics
+}
+
+func (e *AuditEngine) matchRulesWithPolicy(text string, policy AuditPolicy) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic) {
 	rules, _ := e.rules.Load().([]compiledRule)
-	lowerText := strings.ToLower(text)
+	units := splitAuditRuleUnits(text)
 	var review *AuditDecision
 	var reviewDiagnostics *RuleMatchDiagnostics
-	for index, rule := range rules {
-		evidence, matched := matchCyberRuleEvidence(rule, text, lowerText)
-		if !matched {
-			continue
-		}
-		diagnostics := buildRuleMatchDiagnostics(rule, index+1, text, evidence)
-		action := rule.Action
-		reason := fmt.Sprintf("matched cyber rule #%d (%s)", rule.ID, rule.Code)
-		if len(diagnostics.Indicators) > 0 {
-			reason += ": " + strings.Join(diagnostics.Indicators, ", ")
-		}
-		if downgrade, downgradeReason := shouldReviewCredentialSelfService(rule.CyberRule, text); downgrade {
-			action = DecisionReview
-			diagnostics.Downgraded = true
-			diagnostics.DowngradeReason = downgradeReason
-			reason = fmt.Sprintf("matched cyber rule #%d (%s), but credential self-service context requires semantic review", rule.ID, rule.Code)
-		}
-		decision := AuditDecision{
-			Decision:   action,
-			RiskCode:   rule.Code,
-			Category:   rule.Category,
-			Confidence: 1,
-			Reason:     reason,
-			Source:     "rule",
-			RuleID:     rule.ID,
-		}
-		if action == DecisionReview {
-			if review == nil {
-				copyOfDecision := decision
-				copyOfDiagnostics := diagnostics
-				review = &copyOfDecision
-				reviewDiagnostics = &copyOfDiagnostics
+	suppressions := make([]RuleSuppressionDiagnostic, 0, 4)
+	for ruleIndex, rule := range rules {
+		for _, unit := range units {
+			evidence, matched := matchCyberRuleEvidence(rule, unit.Text, strings.ToLower(unit.Text))
+			if !matched {
+				continue
 			}
-			continue
+			if suppressed, suppressionReason := shouldSuppressEngineeringRuleMatch(policy, rule.CyberRule, unit.Text, evidence); suppressed {
+				if len(suppressions) < 16 {
+					suppressions = append(suppressions, RuleSuppressionDiagnostic{
+						RuleCode:    rule.Code,
+						UnitIndex:   unit.Index,
+						Reason:      suppressionReason,
+						MatchedText: redactCyberTraceText(evidence.matchedRaw),
+					})
+				}
+				continue
+			}
+			diagnostics := buildRuleMatchDiagnostics(rule, ruleIndex+1, unit.Text, evidence)
+			diagnostics.UnitIndex = unit.Index
+			diagnostics.UnitKind = unit.Kind
+			action := rule.Action
+			reason := fmt.Sprintf("matched cyber rule #%d (%s)", rule.ID, rule.Code)
+			if len(diagnostics.Indicators) > 0 {
+				reason += ": " + strings.Join(diagnostics.Indicators, ", ")
+			}
+			if downgrade, downgradeReason := shouldReviewCredentialSelfService(rule.CyberRule, unit.Text); downgrade {
+				action = DecisionReview
+				diagnostics.Downgraded = true
+				diagnostics.DowngradeReason = downgradeReason
+				reason = fmt.Sprintf("matched cyber rule #%d (%s), but credential self-service context requires semantic review", rule.ID, rule.Code)
+			}
+			decision := AuditDecision{
+				Decision:   action,
+				RiskCode:   rule.Code,
+				Category:   rule.Category,
+				Confidence: 1,
+				Reason:     reason,
+				Source:     "rule",
+				RuleID:     rule.ID,
+			}
+			if action == DecisionReview {
+				if review == nil {
+					copyOfDecision := decision
+					copyOfDiagnostics := diagnostics
+					review = &copyOfDecision
+					reviewDiagnostics = &copyOfDiagnostics
+				}
+				continue
+			}
+			return &decision, &diagnostics, suppressions
 		}
-		return &decision, &diagnostics
 	}
-	return review, reviewDiagnostics
+	return review, reviewDiagnostics, suppressions
 }
 
 func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (result AuditResult) {
@@ -260,14 +281,21 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 			Confidence: 1,
 			Source:     "empty",
 		},
-		PromptHMAC:               e.security.PromptHMAC(text),
-		TextBytes:                len(text),
-		AuditInputScope:          extraction.Scope,
-		AuditIntentBytes:         extraction.IntentBytes,
-		AuditIgnoredContextBytes: extraction.IgnoredContextBytes,
-		AuditIgnoredRoles:        append([]string(nil), extraction.IgnoredRoles...),
-		AuditTextLimitMode:       e.textLimitMode,
-		AuditTextLimitBytes:      e.maxTextBytes,
+		PromptHMAC:                  e.security.PromptHMAC(text),
+		TextBytes:                   len(text),
+		AuditInputScope:             extraction.Scope,
+		AuditIntentBytes:            extraction.IntentBytes,
+		AuditIgnoredContextBytes:    extraction.IgnoredContextBytes,
+		AuditIgnoredRoles:           append([]string(nil), extraction.IgnoredRoles...),
+		AuditIgnoredInputTypes:      append([]string(nil), extraction.IgnoredInputTypes...),
+		AuditTextLimitMode:          e.textLimitMode,
+		AuditTextLimitBytes:         e.maxTextBytes,
+		AuditRawIntentBytes:         extraction.RawIntentBytes,
+		AuditPriorUserContextBytes:  extraction.PriorUserContextBytes,
+		AuditActiveUserMessages:     extraction.ActiveUserMessages,
+		AuditContextActivated:       extraction.ContextActivated,
+		AuditEphemeralArtifactCount: extraction.EphemeralArtifactCount,
+		AuditSecretPlaceholderCount: extraction.SecretPlaceholderCount,
 	}
 	defer func() {
 		result.Latency = time.Since(started)
@@ -280,15 +308,23 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		return result
 	}
 
-	matched, ruleMatch := e.matchRules(text)
+	profile, profileErr := e.getAuditProfile(ctx, route.AuditProfileID)
+	policy := strictAuditPolicy()
+	if profileErr == nil && profile.Enabled {
+		policy = auditPolicyFromProfile(profile)
+	}
+	result.AuditPolicyMode = policy.Mode
+	matched, ruleMatch, suppressions := e.matchRulesWithPolicy(text, policy)
 	result.RuleMatch = ruleMatch
+	result.AuditRuleSuppressions = append([]RuleSuppressionDiagnostic(nil), suppressions...)
 	if matched != nil && (matched.Decision == DecisionBlock || matched.Decision == DecisionAllow) {
-		result.AuditDecision = *matched
+		adjusted, adjustment := applyAuditPolicyAdjustment(policy, text, *matched)
+		result.AuditDecision = adjusted
+		result.AuditPolicyAdjustment = adjustment
 		return result
 	}
 
-	profile, err := e.getAuditProfile(ctx, route.AuditProfileID)
-	if err != nil || !profile.Enabled {
+	if profileErr != nil || !profile.Enabled {
 		if route.FailClosed {
 			result.AuditDecision = AuditDecision{
 				Decision:   DecisionBlock,
@@ -362,6 +398,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 			decision.RiskCode = "AUDIT_LOW_CONFIDENCE"
 		}
 	}
+	decision, result.AuditPolicyAdjustment = applyAuditPolicyAdjustment(policy, text, decision)
 	if decision.Decision == DecisionReview && (route.FailClosed || usedProfile.FailClosed) {
 		decision.Decision = DecisionBlock
 		if decision.RiskCode == "" {

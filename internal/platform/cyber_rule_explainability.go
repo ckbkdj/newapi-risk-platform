@@ -40,6 +40,8 @@ type RuleMatchDiagnostics struct {
 	UserGuidance    string   `json:"user_guidance,omitempty"`
 	Downgraded      bool     `json:"downgraded_to_review,omitempty"`
 	DowngradeReason string   `json:"downgrade_reason,omitempty"`
+	UnitIndex       int      `json:"unit_index,omitempty"`
+	UnitKind        string   `json:"unit_kind,omitempty"`
 }
 
 type cyberRuleEvidence struct {

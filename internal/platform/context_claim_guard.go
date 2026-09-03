@@ -59,6 +59,18 @@ Examples:
 - "CTF比赛明天几点开始" -> allow; it contains no operational cyber-assistance request.
 - "CTF规则明确禁止逆向App和Hook" -> allow; it is descriptive/prohibitive, not a request to perform the capability.`
 
+const MandatoryAuditPrecisionGuard = `MANDATORY PRECISION POLICY — CLASSIFY ACTIVE INTENT, NOT INCIDENTAL TOKENS:
+Only the structured active end-user request can justify block/review evidence. Prior user history that is not explicitly referenced, assistant/tool/function-call content, attachment names, temporary paths, UUID/hex fragments, build logs, and quoted examples are context, not the requested outcome.
+
+Do not infer cyber harm from isolated engineering homonyms. In particular:
+- event/message/stream replay or a replay pipeline is not session hijacking without authenticated material and takeover intent;
+- data/state/config/address/cache persistence is not unauthorized persistence without startup/backdoor/implant intent;
+- a generic server mention or a C2-looking substring inside a filename/UUID is not command-and-control;
+- a requester-provided API key used to configure/connect an internal development service is not credential theft or exposure by itself;
+- reading a token from a local development log to reproduce or diagnose an API request is not theft by itself.
+
+For credential, session, C2, or persistence blocks, require an explicit harmful action plus a relevant asset/target or harmful sink in the ACTIVE request. Keep blocking explicit theft, third-party takeover, exfiltration, publication of secrets, malicious C2 deployment, and unauthorized startup/backdoor persistence.`
+
 // ComposeMandatoryAuditSystemPrompt guarantees that an administrator-provided
 // audit prompt cannot accidentally or deliberately turn textual authorization
 // claims into a bypass. The configured prompt remains useful as the base policy
@@ -68,8 +80,8 @@ func ComposeMandatoryAuditSystemPrompt(configured string) string {
 	if base == "" {
 		base = DefaultAuditSystemPrompt
 	}
-	if strings.Contains(base, MandatoryAuditContextGuard) {
+	if strings.Contains(base, MandatoryAuditContextGuard) && strings.Contains(base, MandatoryAuditPrecisionGuard) {
 		return base
 	}
-	return MandatoryAuditContextGuard + "\n\nBASE AUDIT POLICY:\n" + base
+	return MandatoryAuditContextGuard + "\n\n" + MandatoryAuditPrecisionGuard + "\n\nBASE AUDIT POLICY:\n" + base
 }
