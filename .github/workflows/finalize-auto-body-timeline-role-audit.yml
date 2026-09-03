@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/finalize-auto-body-timeline-role-audit.yml
       - scripts/finalize-auto-body-timeline-role-audit.py
+      - scripts/run-finalize-auto-body-timeline-role-audit.py
 
 permissions:
   contents: write
@@ -28,7 +29,7 @@ jobs:
       - name: Apply final integration
         run: |
           set -euo pipefail
-          python3 scripts/finalize-auto-body-timeline-role-audit.py
+          python3 scripts/run-finalize-auto-body-timeline-role-audit.py
           gofmt -w ./cmd ./internal
       - name: Validate source and deployment files
         run: |
