@@ -2,8 +2,7 @@ name: New API Risk Platform CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
 
 permissions:
@@ -22,45 +21,56 @@ jobs:
         with:
           go-version: 1.23.x
           cache-dependency-path: go.sum
-      - name: Verify deployment scripts and generated environment
+
+      - name: Verify deployment scripts and environment migration
         run: |
           set -euo pipefail
           bash -n scripts/init-env.sh scripts/deploy-local.sh scripts/doctor.sh scripts/e2e.sh
-          bash scripts/init-env.sh >/tmp/init-env-output.txt
+          rm -f .env
+          bash scripts/init-env.sh >/tmp/init-env-fresh.txt
           python3 - <<'PY'
           import base64
           from pathlib import Path
 
-          values = {}
-          for line in Path('.env').read_text(encoding='utf-8').splitlines():
-              if not line or line.startswith('#') or '=' not in line:
-                  continue
-              key, value = line.split('=', 1)
-              values[key] = value
-          assert len(base64.b64decode(values['MASTER_KEY_B64'], validate=True)) == 32
-          assert len(values['JWT_SECRET'].encode()) >= 32
-          assert len(values['BOOTSTRAP_ADMIN_PASSWORD']) >= 14
-          assert values['POSTGRES_PASSWORD']
-          assert values['HTTP_PORT'] == '8080'
-          assert values['AUDIT_TEXT_MAX_BYTES'] == '8388608'
-          assert values['AUDIT_OUTPUT_MAX_TOKENS'] == '128'
-          assert values['AUDIT_DISABLE_THINKING'] == 'true'
-          assert values['AUDIT_LONG_CONTEXT_THRESHOLD_BYTES'] == '131072'
-          assert values['AUDIT_LONG_CONTEXT_TIMEOUT'] == '120s'
-          assert values['AUDIT_CONTEXT_TARGET_TOKENS'] == '0'
-          assert values['AUDIT_FALLBACK_CHUNK_BYTES'] == '196608'
-          assert values['AUDIT_CHUNK_OVERLAP_BYTES'] == '4096'
-          assert values['AUDIT_CHUNK_CONCURRENCY'] == '2'
-          assert values['AUDIT_MAX_CHUNKS'] == '64'
-          assert values['REQUEST_MAX_BYTES'] == '0'
-          assert values['REQUEST_HARD_MAX_BYTES'] == '67108864'
-          assert values['REQUEST_LARGE_BODY_THRESHOLD_BYTES'] == '8388608'
-          assert values['REQUEST_LARGE_BODY_MAX_CONCURRENCY'] == '4'
+          def values():
+              result = {}
+              for line in Path('.env').read_text(encoding='utf-8').splitlines():
+                  if line and not line.startswith('#') and '=' in line:
+                      key, value = line.split('=', 1)
+                      result[key] = value
+              return result
 
-          # Reproduce an old deployment. The old 262144 value was a byte cap,
-          # the previous release advised a temporary fixed 64 MiB workaround,
-          # and older versions had no automatic request-side body controls.
-          removed = {
+          current = values()
+          assert len(base64.b64decode(current['MASTER_KEY_B64'], validate=True)) == 32
+          assert len(current['JWT_SECRET'].encode()) >= 32
+          assert len(current['BOOTSTRAP_ADMIN_PASSWORD']) >= 14
+          assert current['POSTGRES_PASSWORD']
+          expected = {
+              'HTTP_PORT': '8080',
+              'REQUEST_MAX_BYTES': '0',
+              'REQUEST_HARD_MAX_BYTES': '67108864',
+              'REQUEST_LARGE_BODY_THRESHOLD_BYTES': '8388608',
+              'REQUEST_LARGE_BODY_MAX_CONCURRENCY': '4',
+              'AUDIT_TEXT_MAX_BYTES': '0',
+              'AUDIT_OUTPUT_MAX_TOKENS': '128',
+              'AUDIT_DISABLE_THINKING': 'true',
+              'AUDIT_LONG_CONTEXT_THRESHOLD_BYTES': '131072',
+              'AUDIT_LONG_CONTEXT_TIMEOUT': '120s',
+              'AUDIT_CONTEXT_TARGET_TOKENS': '0',
+              'AUDIT_FALLBACK_CHUNK_BYTES': '196608',
+              'AUDIT_CHUNK_OVERLAP_BYTES': '4096',
+              'AUDIT_CHUNK_CONCURRENCY': '2',
+              'AUDIT_MAX_CHUNKS': '256',
+          }
+          for key, value in expected.items():
+              assert current.get(key) == value, (key, current.get(key), value)
+
+          # Reproduce both the historical fixed 8 MiB deployment and the
+          # temporary fixed 64 MiB workaround. Existing secret values remain.
+          remove = {
+              'REQUEST_HARD_MAX_BYTES',
+              'REQUEST_LARGE_BODY_THRESHOLD_BYTES',
+              'REQUEST_LARGE_BODY_MAX_CONCURRENCY',
               'AUDIT_OUTPUT_MAX_TOKENS',
               'AUDIT_DISABLE_THINKING',
               'AUDIT_LONG_CONTEXT_THRESHOLD_BYTES',
@@ -69,70 +79,57 @@ jobs:
               'AUDIT_FALLBACK_CHUNK_BYTES',
               'AUDIT_CHUNK_OVERLAP_BYTES',
               'AUDIT_CHUNK_CONCURRENCY',
-              'AUDIT_MAX_CHUNKS',
-              'REQUEST_HARD_MAX_BYTES',
-              'REQUEST_LARGE_BODY_THRESHOLD_BYTES',
-              'REQUEST_LARGE_BODY_MAX_CONCURRENCY',
           }
           migrated = []
           for line in Path('.env').read_text(encoding='utf-8').splitlines():
               key = line.split('=', 1)[0] if '=' in line else ''
-              if key in removed:
+              if key in remove:
                   continue
-              if key == 'AUDIT_TEXT_MAX_BYTES':
-                  line = 'AUDIT_TEXT_MAX_BYTES=262144'
               if key == 'REQUEST_MAX_BYTES':
                   line = 'REQUEST_MAX_BYTES=67108864'
+              elif key == 'AUDIT_TEXT_MAX_BYTES':
+                  line = 'AUDIT_TEXT_MAX_BYTES=8388608'
+              elif key == 'AUDIT_MAX_CHUNKS':
+                  line = 'AUDIT_MAX_CHUNKS=64'
               migrated.append(line)
-          migrated.append('AUDIT_PROMPT_TRUNCATE_TOKENS=260000')
           Path('.env').write_text('\n'.join(migrated) + '\n', encoding='utf-8')
           PY
-          bash scripts/init-env.sh >/tmp/init-env-migration-output.txt
+          bash scripts/init-env.sh >/tmp/init-env-migrated.txt
           python3 - <<'PY'
           from pathlib import Path
-
           values = {}
           for line in Path('.env').read_text(encoding='utf-8').splitlines():
               if line and not line.startswith('#') and '=' in line:
                   key, value = line.split('=', 1)
                   values[key] = value
-          assert values['AUDIT_TEXT_MAX_BYTES'] == '8388608'
-          assert values['AUDIT_OUTPUT_MAX_TOKENS'] == '128'
-          assert values['AUDIT_DISABLE_THINKING'] == 'true'
-          assert values['AUDIT_LONG_CONTEXT_THRESHOLD_BYTES'] == '131072'
-          assert values['AUDIT_LONG_CONTEXT_TIMEOUT'] == '120s'
-          assert values['AUDIT_CONTEXT_TARGET_TOKENS'] == '0'
-          assert values['AUDIT_FALLBACK_CHUNK_BYTES'] == '196608'
-          assert values['AUDIT_CHUNK_OVERLAP_BYTES'] == '4096'
-          assert values['AUDIT_CHUNK_CONCURRENCY'] == '2'
-          assert values['AUDIT_MAX_CHUNKS'] == '64'
           assert values['REQUEST_MAX_BYTES'] == '0'
           assert values['REQUEST_HARD_MAX_BYTES'] == '67108864'
           assert values['REQUEST_LARGE_BODY_THRESHOLD_BYTES'] == '8388608'
           assert values['REQUEST_LARGE_BODY_MAX_CONCURRENCY'] == '4'
+          assert values['AUDIT_TEXT_MAX_BYTES'] == '0'
+          assert values['AUDIT_MAX_CHUNKS'] == '256'
           PY
-          rm -f .env
-      - name: Verify module lock
+
+      - name: Verify module lock and formatting
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: Verify formatting
-        run: |
           gofmt -w ./cmd ./internal
           git diff --exit-code
-      - name: Verify embedded admin JavaScript syntax
+
+      - name: Verify embedded admin JavaScript
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          html = Path("internal/platform/web/index.html").read_text(encoding="utf-8")
-          scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, flags=re.S | re.I)
+          html = Path('internal/platform/web/index.html').read_text(encoding='utf-8')
+          scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.S | re.I)
           if not scripts:
-              raise SystemExit("embedded admin script not found")
-          Path("/tmp/newapi-risk-admin.js").write_text("\n".join(scripts), encoding="utf-8")
+              raise SystemExit('embedded admin script not found')
+          Path('/tmp/newapi-risk-admin.js').write_text('\n'.join(scripts), encoding='utf-8')
           PY
           node --check /tmp/newapi-risk-admin.js
+
       - name: Unit tests with race detector
         run: go test -race -count=1 ./...
       - name: Go vet
@@ -142,11 +139,6 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
           CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
       - name: Validate Compose files
-        env:
-          POSTGRES_PASSWORD: ci-postgres-password-with-sufficient-length
-          MASTER_KEY_B64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-          JWT_SECRET: ci-jwt-secret-0123456789abcdef0123456789abcdef
-          BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password-with-sufficient-length
         run: |
           docker compose config --quiet
           docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet

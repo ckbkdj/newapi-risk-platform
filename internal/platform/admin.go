@@ -49,9 +49,15 @@ func (s *HTTPService) adminRuntime(w http.ResponseWriter, r *http.Request) {
 		"request_hard_max_bytes":             s.cfg.RequestHardMaxBytes,
 		"request_large_body_threshold_bytes": s.cfg.LargeRequestThresholdBytes,
 		"request_large_body_max_concurrency": s.cfg.LargeRequestMaxConcurrency,
-		"allow_private_upstreams":            s.cfg.AllowPrivateUpstreams,
-		"postgres_retention_days":            s.store.GetIntSetting(r.Context(), "retention_days", s.cfg.RetentionDays),
-		"raw_prompt_storage_enabled":         false,
+		"audit_text_max_bytes":               s.cfg.AuditTextMaxBytes,
+		"audit_text_limit_mode":              map[bool]string{true: "automatic_request_hard_ceiling", false: "configured"}[s.cfg.AuditTextMaxBytes == 0],
+		"audit_text_effective_limit_bytes": func() int {
+			value, _ := resolveAuditTextMaxBytes(s.cfg.AuditTextMaxBytes, s.cfg.RequestHardMaxBytes)
+			return value
+		}(),
+		"allow_private_upstreams":    s.cfg.AllowPrivateUpstreams,
+		"postgres_retention_days":    s.store.GetIntSetting(r.Context(), "retention_days", s.cfg.RetentionDays),
+		"raw_prompt_storage_enabled": false,
 	})
 }
 

@@ -51,6 +51,7 @@ type AuditEngine struct {
 	security                  *Security
 	client                    *http.Client
 	maxTextBytes              int
+	textLimitMode             string
 	outputMaxTokens           int
 	disableThinking           bool
 	longContextThresholdBytes int
@@ -73,6 +74,7 @@ func NewAuditEngine(
 	security *Security,
 	log *slog.Logger,
 ) *AuditEngine {
+	resolvedTextMaxBytes, textLimitMode := resolveAuditTextMaxBytes(cfg.AuditTextMaxBytes, cfg.RequestHardMaxBytes)
 	engine := &AuditEngine{
 		store:    store,
 		security: security,
@@ -85,7 +87,8 @@ func NewAuditEngine(
 				return errors.New("audit endpoint redirects are disabled")
 			},
 		},
-		maxTextBytes:              cfg.AuditTextMaxBytes,
+		maxTextBytes:              resolvedTextMaxBytes,
+		textLimitMode:             textLimitMode,
 		outputMaxTokens:           cfg.AuditOutputMaxTokens,
 		disableThinking:           cfg.AuditDisableThinking,
 		longContextThresholdBytes: cfg.AuditLongContextThresholdBytes,
@@ -263,6 +266,8 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		AuditIntentBytes:         extraction.IntentBytes,
 		AuditIgnoredContextBytes: extraction.IgnoredContextBytes,
 		AuditIgnoredRoles:        append([]string(nil), extraction.IgnoredRoles...),
+		AuditTextLimitMode:       e.textLimitMode,
+		AuditTextLimitBytes:      e.maxTextBytes,
 	}
 	defer func() {
 		result.Latency = time.Since(started)

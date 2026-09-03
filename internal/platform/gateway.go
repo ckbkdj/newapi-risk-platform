@@ -320,6 +320,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trace.Metadata["audit_input_scope"] = auditResult.AuditInputScope
 	trace.Metadata["audit_intent_bytes"] = auditResult.AuditIntentBytes
 	trace.Metadata["audit_ignored_context_bytes"] = auditResult.AuditIgnoredContextBytes
+	trace.Metadata["audit_text_limit_mode"] = auditResult.AuditTextLimitMode
+	trace.Metadata["audit_text_limit_bytes"] = auditResult.AuditTextLimitBytes
 	if len(auditResult.AuditIgnoredRoles) > 0 {
 		trace.Metadata["audit_ignored_roles"] = auditResult.AuditIgnoredRoles
 	}

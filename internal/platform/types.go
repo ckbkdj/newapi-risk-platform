@@ -161,6 +161,8 @@ type AuditResult struct {
 	AuditIntentBytes         int                   `json:"audit_intent_bytes,omitempty"`
 	AuditIgnoredContextBytes int                   `json:"audit_ignored_context_bytes,omitempty"`
 	AuditIgnoredRoles        []string              `json:"audit_ignored_roles,omitempty"`
+	AuditTextLimitMode       string                `json:"audit_text_limit_mode,omitempty"`
+	AuditTextLimitBytes      int                   `json:"audit_text_limit_bytes,omitempty"`
 }
 
 type TraceEvent struct {

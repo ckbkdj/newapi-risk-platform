@@ -85,7 +85,7 @@ if not values.get("BIND_ADDRESS", "").strip():
 # 262144 model tokens, so it is safe and necessary to migrate that exact old
 # default to 8 MiB so the request layer can segment the complete input.
 audit_defaults = {
-    "AUDIT_TEXT_MAX_BYTES": "8388608",
+    "AUDIT_TEXT_MAX_BYTES": "0",
     "AUDIT_OUTPUT_MAX_TOKENS": "128",
     "AUDIT_DISABLE_THINKING": "true",
     "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES": "131072",
@@ -94,15 +94,20 @@ audit_defaults = {
     "AUDIT_FALLBACK_CHUNK_BYTES": "196608",
     "AUDIT_CHUNK_OVERLAP_BYTES": "4096",
     "AUDIT_CHUNK_CONCURRENCY": "2",
-    "AUDIT_MAX_CHUNKS": "64",
+    "AUDIT_MAX_CHUNKS": "256",
 }
 for key, default in audit_defaults.items():
     current = values.get(key, "").strip()
     should_set = not current
-    if key == "AUDIT_TEXT_MAX_BYTES" and current in {"262144", "2097152"}:
+    if key == "AUDIT_TEXT_MAX_BYTES" and current in {"262144", "2097152", "8388608", "67108864"}:
         should_set = True
         warnings.append(
-            "AUDIT_TEXT_MAX_BYTES was upgraded to 8 MiB so the request layer can segment and audit the complete prompt."
+            "AUDIT_TEXT_MAX_BYTES was changed to 0 so every accepted end-user text byte is eligible for complete chunked audit."
+        )
+    if key == "AUDIT_MAX_CHUNKS" and current == "64":
+        should_set = True
+        warnings.append(
+            "AUDIT_MAX_CHUNKS was increased from 64 to 256 for complete large-text request auditing."
         )
     if key == "AUDIT_CONTEXT_TARGET_TOKENS" and current == "260000":
         should_set = True
