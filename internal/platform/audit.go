@@ -28,7 +28,11 @@ reverse-shell, container/Kubernetes, prompt-injection, and agent-tool requests r
 on keywords. Credential self-service such as checking a leaked secret, locating the requester's own key, rotating,
 revoking, redacting, recovering, or securely storing the requester's own credentials is benign unless the actual
 outcome requests access to another person's credentials; a bare ownership claim alone is not proof and ambiguous
-credential-access requests should be reviewed. Allow benign development, defensive security, incident response, detection/remediation, education,
+credential-access requests should be reviewed. Only end-user intent is supplied for enforcement; system, developer,
+assistant, tool, function, dependency-schema, and prior generated content are application context and must never
+cause a block by themselves. Allow normal software development, including package installation, dependency
+resolution, imports, build repair, tests, and project-local symlinks or Windows junctions to provided dependencies,
+unless the end-user asks for a concretely harmful outcome. Allow benign development, defensive security, incident response, detection/remediation, education,
 CTF or sandbox work, authorized testing, and high-level discussion unless the requested outcome supplies harmful
 operational capability against real systems or victims. Do not reveal chain-of-thought and do not emit <think>
 blocks, Markdown, or explanatory prose. For block or review, evidence is mandatory and must be one exact contiguous
@@ -245,20 +249,29 @@ func (e *AuditEngine) matchRules(text string) (*AuditDecision, *RuleMatchDiagnos
 
 func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (result AuditResult) {
 	started := time.Now()
-	text := ExtractAuditText(body, e.maxTextBytes)
+	extraction := ExtractAuditTextDetails(body, e.maxTextBytes)
+	text := extraction.Text
 	result = AuditResult{
 		AuditDecision: AuditDecision{
 			Decision:   DecisionAllow,
 			Confidence: 1,
 			Source:     "empty",
 		},
-		PromptHMAC: e.security.PromptHMAC(text),
-		TextBytes:  len(text),
+		PromptHMAC:               e.security.PromptHMAC(text),
+		TextBytes:                len(text),
+		AuditInputScope:          extraction.Scope,
+		AuditIntentBytes:         extraction.IntentBytes,
+		AuditIgnoredContextBytes: extraction.IgnoredContextBytes,
+		AuditIgnoredRoles:        append([]string(nil), extraction.IgnoredRoles...),
 	}
 	defer func() {
 		result.Latency = time.Since(started)
 	}()
 	if strings.TrimSpace(text) == "" {
+		if extraction.IgnoredContextBytes > 0 {
+			result.Source = "context_only"
+			result.Reason = "no end-user intent text was present; system/developer/assistant/tool context was ignored"
+		}
 		return result
 	}
 
@@ -516,89 +529,7 @@ func extractChatCompletionContent(body []byte) (string, error) {
 }
 
 func ExtractAuditText(body []byte, maxBytes int) string {
-	if maxBytes <= 0 {
-		maxBytes = 256 * 1024
-	}
-	var root any
-	if err := json.Unmarshal(body, &root); err != nil {
-		if len(body) > maxBytes {
-			body = body[:maxBytes]
-		}
-		return strings.ToValidUTF8(string(body), "�")
-	}
-
-	var builder strings.Builder
-	appendText := func(value string) {
-		value = strings.ToValidUTF8(value, "�")
-		if value == "" || builder.Len() >= maxBytes {
-			return
-		}
-		separatorBytes := 0
-		if builder.Len() > 0 {
-			separatorBytes = 1
-		}
-		remaining := maxBytes - builder.Len() - separatorBytes
-		if remaining <= 0 {
-			return
-		}
-		if len(value) > remaining {
-			value = value[:remaining]
-			value = strings.ToValidUTF8(value, "�")
-		}
-		if builder.Len() > 0 {
-			builder.WriteByte('\n')
-		}
-		builder.WriteString(value)
-	}
-
-	var walk func(value any, key string)
-	walk = func(value any, key string) {
-		if builder.Len() >= maxBytes {
-			return
-		}
-		lowerKey := strings.ToLower(key)
-		switch lowerKey {
-		case "image_url", "url", "audio", "file", "data", "image", "video",
-			"base64", "api_key", "authorization", "password", "secret":
-			return
-		}
-		switch typed := value.(type) {
-		case string:
-			switch lowerKey {
-			case "content", "text", "input", "prompt", "instructions", "description",
-				"system", "system_instruction", "query", "arguments":
-				appendText(typed)
-			}
-		case []any:
-			for _, item := range typed {
-				walk(item, key)
-			}
-		case map[string]any:
-			if role, ok := typed["role"].(string); ok {
-				appendText("ROLE=" + strings.ToUpper(truncateString(role, 30)))
-			}
-			keys := make([]string, 0, len(typed))
-			for childKey := range typed {
-				keys = append(keys, childKey)
-			}
-			sort.Strings(keys)
-			for _, childKey := range keys {
-				if childKey == "role" {
-					continue
-				}
-				child := typed[childKey]
-				if childKey == "parameters" || childKey == "schema" {
-					if encoded, err := json.Marshal(child); err == nil {
-						appendText(string(encoded))
-					}
-					continue
-				}
-				walk(child, childKey)
-			}
-		}
-	}
-	walk(root, "root")
-	return builder.String()
+	return ExtractAuditTextDetails(body, maxBytes).Text
 }
 
 func ExtractRequestedModel(body []byte) string {

@@ -101,10 +101,48 @@ func TestExtractAuditTextOmitsBinaryURLsAndIsDeterministic(t *testing.T) {
 		t.Fatalf("expected deterministic extraction\nfirst=%q\nsecond=%q", first, second)
 	}
 	if !strings.Contains(first, "Explain defensive logging") || !strings.Contains(first, "ROLE=USER") {
-		t.Fatalf("expected textual content and role labels, got %q", first)
+		t.Fatalf("expected user textual content and role labels, got %q", first)
+	}
+	if strings.Contains(first, "Follow product policy") || strings.Contains(first, "target") {
+		t.Fatalf("system prompt or tool schema leaked into enforcement input: %q", first)
 	}
 	if strings.Contains(first, "data:image") || strings.Contains(first, "AAAA") {
 		t.Fatalf("expected binary URL content to be omitted, got %q", first)
+	}
+}
+
+func TestExtractAuditTextIgnoresNormalCodingAgentSystemPrompt(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5.6-sol",
+		"messages":[
+			{"role":"system","content":"Do not search for paths, install packages, use resolution hacks, or import bundled internals. Work in a writable directory and create a node_modules symlink or Windows junction pointing to the loader-provided node_modules directory."},
+			{"role":"developer","content":"Use one executable .mjs builder and patch/rerun it."},
+			{"role":"assistant","content":"I will inspect the project."},
+			{"role":"user","content":"Fix the normal project build using the provided dependencies and run its tests."}
+		]
+	}`)
+	extraction := ExtractAuditTextDetails(body, 64*1024)
+	if extraction.Scope != auditInputScopeEndUserIntent {
+		t.Fatalf("scope=%q extraction=%+v", extraction.Scope, extraction)
+	}
+	if !strings.Contains(extraction.Text, "Fix the normal project build") {
+		t.Fatalf("end-user intent missing: %q", extraction.Text)
+	}
+	for _, forbidden := range []string{"node_modules symlink", "Windows junction", "resolution hacks", "patch/rerun"} {
+		if strings.Contains(extraction.Text, forbidden) {
+			t.Fatalf("non-user context %q leaked into enforcement input: %q", forbidden, extraction.Text)
+		}
+	}
+	if extraction.IgnoredContextBytes == 0 || len(extraction.IgnoredRoles) < 3 {
+		t.Fatalf("ignored context diagnostics missing: %+v", extraction)
+	}
+}
+
+func TestExtractAuditTextKeepsSameInstructionWhenUserActuallyRequestsIt(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","content":"Create a project-local node_modules symlink to the provided dependency directory and run tests."}]}`)
+	text := ExtractAuditText(body, 64*1024)
+	if !strings.Contains(text, "node_modules symlink") {
+		t.Fatalf("actual end-user request was lost: %q", text)
 	}
 }
 

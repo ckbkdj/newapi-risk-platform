@@ -23,9 +23,7 @@ func (s *Store) InsertTraceBatch(ctx context.Context, events []TraceEvent) error
 	defer transaction.Rollback(ctx)
 
 	for _, event := range events {
-		if event.CreatedAt.IsZero() {
-			event.CreatedAt = time.Now().UTC()
-		}
+		normalizeTraceTimeline(&event, time.Now().UTC())
 		if event.ExternalEventID != "" {
 			var inserted string
 			err := transaction.QueryRow(ctx, `INSERT INTO request_dedupe(event_id,expires_at)
@@ -45,13 +43,14 @@ func (s *Store) InsertTraceBatch(ctx context.Context, events []TraceEvent) error
 		_, err = transaction.Exec(ctx, `INSERT INTO request_traces
 			(request_id,external_event_id,source,route_slug,newapi_request_id,external_user_id,
 			model,endpoint,decision,risk_code,http_status,upstream_status,latency_ms,
-			audit_latency_ms,request_bytes,response_bytes,prompt_hmac,metadata,created_at)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+			audit_latency_ms,request_bytes,response_bytes,prompt_hmac,metadata,
+			started_at,completed_at,ingested_at,created_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
 			event.RequestID, event.ExternalEventID, event.Source, event.RouteSlug,
 			event.NewAPIRequestID, event.ExternalUserID, event.Model, event.Endpoint,
 			event.Decision, event.RiskCode, event.HTTPStatus, event.UpstreamStatus,
 			event.LatencyMS, event.AuditLatencyMS, event.RequestBytes, event.ResponseBytes,
-			event.PromptHMAC, metadata, event.CreatedAt)
+			event.PromptHMAC, metadata, event.StartedAt, event.CompletedAt, event.IngestedAt, event.CreatedAt)
 		if err != nil {
 			return err
 		}
@@ -88,7 +87,8 @@ func (s *Store) QueryTraces(ctx context.Context, filter TraceFilter) ([]TraceEve
 	arguments = append(arguments, filter.Limit)
 	query := `SELECT request_id,external_event_id,source,route_slug,newapi_request_id,
 		external_user_id,model,endpoint,decision,risk_code,http_status,upstream_status,
-		latency_ms,audit_latency_ms,request_bytes,response_bytes,prompt_hmac,metadata,created_at
+		latency_ms,audit_latency_ms,request_bytes,response_bytes,prompt_hmac,metadata,
+		started_at,completed_at,ingested_at,created_at
 		FROM request_traces WHERE ` + strings.Join(clauses, " AND ") +
 		" ORDER BY created_at DESC LIMIT $" + strconv.Itoa(len(arguments))
 	rows, err := s.pool.Query(ctx, query, arguments...)
@@ -105,7 +105,7 @@ func (s *Store) QueryTraces(ctx context.Context, filter TraceFilter) ([]TraceEve
 			&event.NewAPIRequestID, &event.ExternalUserID, &event.Model, &event.Endpoint,
 			&event.Decision, &event.RiskCode, &event.HTTPStatus, &event.UpstreamStatus,
 			&event.LatencyMS, &event.AuditLatencyMS, &event.RequestBytes, &event.ResponseBytes,
-			&event.PromptHMAC, &metadata, &event.CreatedAt,
+			&event.PromptHMAC, &metadata, &event.StartedAt, &event.CompletedAt, &event.IngestedAt, &event.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

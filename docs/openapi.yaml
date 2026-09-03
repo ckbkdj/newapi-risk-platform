@@ -49,6 +49,10 @@ paths:
         - name: X-NewAPI-Request-ID
           in: header
           schema: {type: string, maxLength: 128}
+        - name: X-Oneapi-Request-Id
+          in: header
+          description: Native NewAPI request identifier when forwarded by the channel.
+          schema: {type: string, maxLength: 128}
         - name: X-NewAPI-User-ID
           in: header
           schema: {type: string, maxLength: 200}
@@ -167,6 +171,7 @@ paths:
         - {name: risk_code, in: query, schema: {type: string, maxLength: 200}}
         - {name: http_status, in: query, schema: {type: integer, minimum: 0, maximum: 999}}
         - {name: upstream_status, in: query, schema: {type: integer, minimum: 0, maximum: 999}}
+        - {name: time_basis, in: query, description: Time column used for filtering and ordering. Defaults to request completion time to align with NewAPI logs., schema: {type: string, enum: [completed, started, ingested], default: completed}}
         - {name: from, in: query, schema: {type: string, format: date-time}}
         - {name: to, in: query, schema: {type: string, format: date-time}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 200}}
@@ -178,7 +183,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, total, limit, offset, has_more, from, to, summary]
+                required: [items, total, limit, offset, has_more, from, to, time_basis, server_time, summary]
                 properties:
                   items:
                     type: array
@@ -189,6 +194,8 @@ paths:
                   has_more: {type: boolean}
                   from: {type: string, format: date-time}
                   to: {type: string, format: date-time}
+                  time_basis: {type: string, enum: [completed, started, ingested]}
+                  server_time: {type: string, format: date-time}
                   summary:
                     type: object
                     required: [allowed_requests, blocked_requests, error_requests, review_requests, average_latency_ms]
@@ -271,7 +278,9 @@ components:
         request_bytes: {type: integer, format: int64}
         response_bytes: {type: integer, format: int64}
         prompt_hmac: {type: string, maxLength: 128}
-        occurred_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+        occurred_at: {type: string, format: date-time, description: Backward-compatible completion/event time.}
         metadata:
           type: object
           additionalProperties: true
@@ -281,7 +290,10 @@ components:
         - type: object
           properties:
             source: {type: string}
-            created_at: {type: string, format: date-time}
+            started_at: {type: string, format: date-time}
+            completed_at: {type: string, format: date-time}
+            ingested_at: {type: string, format: date-time}
+            created_at: {type: string, format: date-time, description: PostgreSQL partition timestamp.}
     AdminUser:
       type: object
       properties:

@@ -52,9 +52,14 @@ jobs:
           assert values['AUDIT_CHUNK_OVERLAP_BYTES'] == '4096'
           assert values['AUDIT_CHUNK_CONCURRENCY'] == '2'
           assert values['AUDIT_MAX_CHUNKS'] == '64'
+          assert values['REQUEST_MAX_BYTES'] == '0'
+          assert values['REQUEST_HARD_MAX_BYTES'] == '67108864'
+          assert values['REQUEST_LARGE_BODY_THRESHOLD_BYTES'] == '8388608'
+          assert values['REQUEST_LARGE_BODY_MAX_CONCURRENCY'] == '4'
 
           # Reproduce an old deployment. The old 262144 value was a byte cap,
-          # and old versions had no request-side chunk configuration.
+          # the previous release advised a temporary fixed 64 MiB workaround,
+          # and older versions had no automatic request-side body controls.
           removed = {
               'AUDIT_OUTPUT_MAX_TOKENS',
               'AUDIT_DISABLE_THINKING',
@@ -65,6 +70,9 @@ jobs:
               'AUDIT_CHUNK_OVERLAP_BYTES',
               'AUDIT_CHUNK_CONCURRENCY',
               'AUDIT_MAX_CHUNKS',
+              'REQUEST_HARD_MAX_BYTES',
+              'REQUEST_LARGE_BODY_THRESHOLD_BYTES',
+              'REQUEST_LARGE_BODY_MAX_CONCURRENCY',
           }
           migrated = []
           for line in Path('.env').read_text(encoding='utf-8').splitlines():
@@ -73,6 +81,8 @@ jobs:
                   continue
               if key == 'AUDIT_TEXT_MAX_BYTES':
                   line = 'AUDIT_TEXT_MAX_BYTES=262144'
+              if key == 'REQUEST_MAX_BYTES':
+                  line = 'REQUEST_MAX_BYTES=67108864'
               migrated.append(line)
           migrated.append('AUDIT_PROMPT_TRUNCATE_TOKENS=260000')
           Path('.env').write_text('\n'.join(migrated) + '\n', encoding='utf-8')
@@ -96,6 +106,10 @@ jobs:
           assert values['AUDIT_CHUNK_OVERLAP_BYTES'] == '4096'
           assert values['AUDIT_CHUNK_CONCURRENCY'] == '2'
           assert values['AUDIT_MAX_CHUNKS'] == '64'
+          assert values['REQUEST_MAX_BYTES'] == '0'
+          assert values['REQUEST_HARD_MAX_BYTES'] == '67108864'
+          assert values['REQUEST_LARGE_BODY_THRESHOLD_BYTES'] == '8388608'
+          assert values['REQUEST_LARGE_BODY_MAX_CONCURRENCY'] == '4'
           PY
           rm -f .env
       - name: Verify module lock

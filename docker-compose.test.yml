@@ -12,7 +12,10 @@ services:
       AUDIT_CHUNK_OVERLAP_BYTES: "64"
       AUDIT_CHUNK_CONCURRENCY: "2"
       AUDIT_MAX_CHUNKS: "32"
-      REQUEST_MAX_BYTES: "65536"
+      REQUEST_MAX_BYTES: "0"
+      REQUEST_HARD_MAX_BYTES: "1048576"
+      REQUEST_LARGE_BODY_THRESHOLD_BYTES: "131072"
+      REQUEST_LARGE_BODY_MAX_CONCURRENCY: "2"
     depends_on:
       mock-provider:
         condition: service_started

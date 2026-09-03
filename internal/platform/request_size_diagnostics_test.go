@@ -5,70 +5,45 @@ import (
 	"testing"
 )
 
-func TestMarkRequestTooLargeExact(t *testing.T) {
-	trace := TraceEvent{Metadata: map[string]any{}}
-	reason := markRequestTooLarge(&trace, 10*1024*1024, 8*1024*1024, true)
-	if trace.RequestBytes != 10*1024*1024 {
-		t.Fatalf("request bytes = %d", trace.RequestBytes)
-	}
-	if trace.Metadata["request_body_size_exact"] != true {
-		t.Fatalf("expected exact size metadata: %#v", trace.Metadata)
-	}
-	if trace.Metadata["request_body_over_limit_bytes"] != int64(2*1024*1024) {
-		t.Fatalf("unexpected over-limit bytes: %#v", trace.Metadata)
-	}
-	if !strings.Contains(reason, "10485760") || !strings.Contains(reason, "8388608") {
-		t.Fatalf("reason lacks sizes: %q", reason)
-	}
-	if !strings.Contains(reason, "Risk Gateway ingress") || !strings.Contains(reason, "before audit and upstream") {
-		t.Fatalf("reason does not identify the owning stage: %q", reason)
-	}
-	for key, expected := range map[string]any{
-		"error_origin":      "risk_gateway",
-		"failure_stage":     "gateway_ingress",
-		"failure_component": "request_body_guard",
-		"limit_config":      "REQUEST_MAX_BYTES",
-		"audit_started":     false,
-		"upstream_started":  false,
-	} {
-		if got := trace.Metadata[key]; got != expected {
-			t.Fatalf("%s = %#v, want %#v; metadata=%#v", key, got, expected, trace.Metadata)
-		}
-	}
-	if trace.Metadata["request_body_recommended_limit_bytes"] != int64(16*1024*1024) {
-		t.Fatalf("unexpected recommended limit: %#v", trace.Metadata)
-	}
-	if guidance, _ := trace.Metadata["request_body_remediation"].(string); !strings.Contains(guidance, "not an audit-model or upstream-model limit") {
-		t.Fatalf("remediation lacks source distinction: %#v", trace.Metadata)
-	}
-}
-
-func TestMarkRequestTooLargeLowerBound(t *testing.T) {
-	trace := TraceEvent{Metadata: map[string]any{}}
-	reason := markRequestTooLarge(&trace, 65537, 65536, false)
-	if trace.Metadata["request_body_size_exact"] != false {
-		t.Fatalf("expected lower-bound metadata: %#v", trace.Metadata)
-	}
-	if !strings.Contains(reason, "at least") {
-		t.Fatalf("lower-bound reason is not explicit: %q", reason)
-	}
-}
-
-func TestRecommendedRequestMaxBytesForObservedProductionSize(t *testing.T) {
+func TestAutomaticRequestBodyPolicyAllowsObservedProductionSize(t *testing.T) {
 	const observed = int64(60853983)
-	if got := recommendedRequestMaxBytes(observed); got != 64*1024*1024 {
-		t.Fatalf("recommended limit = %d, want %d", got, int64(64*1024*1024))
+	policy := resolveRequestBodyLimit(0, 64*1024*1024, observed)
+	if policy.Mode != "auto_actual_size" || policy.EffectiveLimitBytes != observed {
+		t.Fatalf("unexpected automatic policy: %+v", policy)
+	}
+	if policy.ExceedsKnownLength(observed) {
+		t.Fatalf("observed production body should pass automatically: %+v", policy)
 	}
 }
 
-func TestMarkRequestTooLargeAboveSupportedCeiling(t *testing.T) {
-	trace := TraceEvent{Metadata: map[string]any{}}
-	_ = markRequestTooLarge(&trace, 80*1024*1024, 8*1024*1024, true)
-	if _, exists := trace.Metadata["request_body_recommended_limit_bytes"]; exists {
-		t.Fatalf("unsupported request must not receive an unsafe recommendation: %#v", trace.Metadata)
+func TestAutomaticRequestBodyPolicyRejectsOnlyAboveHardCeiling(t *testing.T) {
+	policy := resolveRequestBodyLimit(0, 64*1024*1024, 80*1024*1024)
+	if policy.Mode != "auto_hard_ceiling" || !policy.ExceedsKnownLength(80*1024*1024) {
+		t.Fatalf("hard-ceiling policy is wrong: %+v", policy)
 	}
-	guidance, _ := trace.Metadata["request_body_remediation"].(string)
-	if !strings.Contains(guidance, "supported 64 MiB body ceiling") {
-		t.Fatalf("hard-ceiling guidance missing: %#v", trace.Metadata)
+}
+
+func TestConfiguredRequestBodyPolicyPreservesExplicitLimit(t *testing.T) {
+	policy := resolveRequestBodyLimit(8*1024*1024, 64*1024*1024, 10*1024*1024)
+	if policy.Mode != "configured" || !policy.ExceedsKnownLength(10*1024*1024) {
+		t.Fatalf("explicit limit policy is wrong: %+v", policy)
+	}
+	trace := TraceEvent{Metadata: map[string]any{}}
+	reason := markRequestTooLarge(&trace, 10*1024*1024, policy, true)
+	if !strings.Contains(reason, "configured") || !strings.Contains(reason, "before audit and upstream") {
+		t.Fatalf("reason lacks source and mode: %q", reason)
+	}
+	if trace.Metadata["request_body_remediation"] == "" || trace.Metadata["audit_started"] != false || trace.Metadata["upstream_started"] != false {
+		t.Fatalf("source diagnostics missing: %#v", trace.Metadata)
+	}
+}
+
+func TestUnknownLengthUsesHardCeilingAndLargeSlot(t *testing.T) {
+	policy := resolveRequestBodyLimit(0, 64*1024*1024, -1)
+	if policy.Mode != "auto_hard_ceiling" || policy.EffectiveLimitBytes != 64*1024*1024 {
+		t.Fatalf("unexpected unknown-length policy: %+v", policy)
+	}
+	if !requestBodyNeedsLargeSlot(-1, 8*1024*1024) {
+		t.Fatal("unknown-length request must use a bounded large-body slot")
 	}
 }

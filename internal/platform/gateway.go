@@ -62,17 +62,18 @@ type cachedRoute struct {
 }
 
 type Gateway struct {
-	cfg        Config
-	store      *Store
-	security   *Security
-	redis      *RedisGuard
-	audit      *AuditEngine
-	traces     *TraceWriter
-	client     *http.Client
-	global     chan struct{}
-	log        *slog.Logger
-	cacheMu    sync.RWMutex
-	routeCache map[string]cachedRoute
+	cfg         Config
+	store       *Store
+	security    *Security
+	redis       *RedisGuard
+	audit       *AuditEngine
+	traces      *TraceWriter
+	client      *http.Client
+	global      chan struct{}
+	largeBodies chan struct{}
+	log         *slog.Logger
+	cacheMu     sync.RWMutex
+	routeCache  map[string]cachedRoute
 }
 
 func NewGateway(
@@ -97,9 +98,10 @@ func NewGateway(
 				return errors.New("upstream redirects are disabled")
 			},
 		},
-		global:     make(chan struct{}, cfg.GlobalMaxConcurrency),
-		log:        log,
-		routeCache: make(map[string]cachedRoute),
+		global:      make(chan struct{}, cfg.GlobalMaxConcurrency),
+		largeBodies: make(chan struct{}, cfg.LargeRequestMaxConcurrency),
+		log:         log,
+		routeCache:  make(map[string]cachedRoute),
 	}
 }
 
@@ -133,11 +135,22 @@ func (g *Gateway) getRoute(ctx context.Context, slug string) (Route, error) {
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
-	requestID := normalizeRequestID(r.Header.Get("X-Request-ID"))
+	startedAt := started.UTC()
+	xRequestID := normalizeRequestID(r.Header.Get("X-Request-ID"))
+	oneAPIRequestID := normalizeRequestID(r.Header.Get("X-Oneapi-Request-Id"))
+	inboundRequestID := firstNonEmpty(xRequestID, oneAPIRequestID)
+	requestID := inboundRequestID
+	requestIDSource := "x_request_id"
+	if xRequestID == "" && oneAPIRequestID != "" {
+		requestIDSource = "x_oneapi_request_id"
+	}
 	if requestID == "" {
 		requestID = NewRequestID()
+		requestIDSource = "generated"
 	}
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
+	w.Header().Set("X-Risk-Started-At", startedAt.Format(time.RFC3339Nano))
 
 	if r.Method == http.MethodConnect || r.Method == http.MethodTrace {
 		writeGatewayError(w, http.StatusMethodNotAllowed, requestID, "METHOD_NOT_ALLOWED", "method is not allowed")
@@ -152,14 +165,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RequestID:       requestID,
 		Source:          "gateway",
 		RouteSlug:       slug,
-		NewAPIRequestID: normalizeRequestID(r.Header.Get("X-NewAPI-Request-ID")),
+		NewAPIRequestID: firstNonEmpty(normalizeRequestID(r.Header.Get("X-NewAPI-Request-ID")), oneAPIRequestID, inboundRequestID),
 		ExternalUserID: normalizeIdentifier(firstNonEmpty(
 			r.Header.Get("X-NewAPI-User-ID"),
 			r.Header.Get("X-User-ID"),
 		)),
 		Endpoint:  truncateString(chi.URLParam(r, "*"), 300),
-		CreatedAt: time.Now().UTC(),
-		Metadata:  map[string]any{},
+		StartedAt: startedAt,
+		CreatedAt: startedAt,
+		Metadata: map[string]any{
+			"request_id_source":  requestIDSource,
+			"gateway_started_at": startedAt.Format(time.RFC3339Nano),
+			"audit_started":      false,
+			"upstream_started":   false,
+		},
 	}
 	finished := false
 	finish := func(decision string, riskCode string, status int, upstreamStatus int, responseBytes int64) {
@@ -172,7 +191,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		trace.HTTPStatus = status
 		trace.UpstreamStatus = upstreamStatus
 		trace.ResponseBytes = responseBytes
+		trace.CompletedAt = time.Now().UTC()
 		trace.LatencyMS = time.Since(started).Milliseconds()
+		trace.Metadata["gateway_completed_at"] = trace.CompletedAt.Format(time.RFC3339Nano)
+		trace.Metadata["timeline_duration_ms"] = trace.LatencyMS
 		if riskCode != "" {
 			trace.Metadata["error_reason"] = traceFailureReason(riskCode, upstreamStatus, trace.Metadata)
 		}
@@ -214,32 +236,66 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If Content-Length is present we know the exact size before reading. This
-	// avoids buffering an oversized body and lets the trace show the real value.
-	if r.ContentLength > g.cfg.RequestMaxBytes {
-		reason := markRequestTooLarge(&trace, r.ContentLength, g.cfg.RequestMaxBytes, true)
+	bodyPolicy := resolveRequestBodyLimit(g.cfg.RequestMaxBytes, g.cfg.RequestHardMaxBytes, r.ContentLength)
+	trace.Metadata["request_body_limit_mode"] = bodyPolicy.Mode
+	trace.Metadata["request_body_effective_limit_bytes"] = bodyPolicy.EffectiveLimitBytes
+	trace.Metadata["request_body_hard_limit_bytes"] = bodyPolicy.HardLimitBytes
+	if bodyPolicy.ConfiguredLimitBytes > 0 {
+		trace.Metadata["request_body_configured_limit_bytes"] = bodyPolicy.ConfiguredLimitBytes
+	}
+	w.Header().Set("X-Risk-Request-Limit-Mode", bodyPolicy.Mode)
+	w.Header().Set("X-Risk-Request-Limit-Bytes", fmt.Sprintf("%d", bodyPolicy.EffectiveLimitBytes))
+	w.Header().Set("X-Risk-Request-Hard-Limit-Bytes", fmt.Sprintf("%d", bodyPolicy.HardLimitBytes))
+
+	// In automatic mode a known Content-Length is admitted at its actual size
+	// up to the hard ceiling. This lets large but valid NewAPI payloads pass
+	// without an operator manually chasing each observed body size.
+	if bodyPolicy.ExceedsKnownLength(r.ContentLength) {
+		reason := markRequestTooLarge(&trace, r.ContentLength, bodyPolicy, true)
 		w.Header().Set("X-Risk-Request-Bytes", fmt.Sprintf("%d", trace.RequestBytes))
-		w.Header().Set("X-Risk-Request-Limit-Bytes", fmt.Sprintf("%d", g.cfg.RequestMaxBytes))
+		w.Header().Set("X-Risk-Request-Limit-Bytes", fmt.Sprintf("%d", bodyPolicy.EffectiveLimitBytes))
+		w.Header().Set("X-Risk-Request-Hard-Limit-Bytes", fmt.Sprintf("%d", bodyPolicy.HardLimitBytes))
+		w.Header().Set("X-Risk-Request-Limit-Mode", bodyPolicy.Mode)
 		w.Header().Set("X-Risk-Request-Size-Exact", "true")
 		finish("error", "REQUEST_TOO_LARGE", g.cfg.ErrorHTTPStatus, 0, 0)
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "REQUEST_TOO_LARGE", reason)
 		return
 	}
 
-	bodyReader := http.MaxBytesReader(w, r.Body, g.cfg.RequestMaxBytes)
+	if requestBodyNeedsLargeSlot(r.ContentLength, g.cfg.LargeRequestThresholdBytes) {
+		select {
+		case g.largeBodies <- struct{}{}:
+			defer func() { <-g.largeBodies }()
+			trace.Metadata["large_request_slot"] = true
+			trace.Metadata["large_request_max_concurrency"] = g.cfg.LargeRequestMaxConcurrency
+		default:
+			trace.Metadata["error_origin"] = "risk_gateway"
+			trace.Metadata["failure_stage"] = "gateway_ingress"
+			trace.Metadata["failure_component"] = "large_request_memory_guard"
+			trace.Metadata["error_reason"] = "large request concurrency limit reached; retry when another large request finishes"
+			finish("error", "LARGE_REQUEST_CONCURRENCY_LIMITED", http.StatusServiceUnavailable, 0, 0)
+			w.Header().Set("Retry-After", "1")
+			writeGatewayError(w, http.StatusServiceUnavailable, requestID, "LARGE_REQUEST_CONCURRENCY_LIMITED", "large request concurrency limit reached")
+			return
+		}
+	}
+
+	bodyReader := http.MaxBytesReader(w, r.Body, bodyPolicy.EffectiveLimitBytes)
 	body, err := io.ReadAll(bodyReader)
 	if err != nil {
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
-			// Chunked/unknown-length requests cannot be read to EOF without
-			// defeating the DoS limit. Record the strongest safe lower bound.
-			observed := g.cfg.RequestMaxBytes + 1
+			// Unknown-length requests are read only to the effective safety
+			// boundary. Record a lower bound rather than claiming an exact size.
+			observed := bodyPolicy.EffectiveLimitBytes + 1
 			if int64(len(body)) > observed {
 				observed = int64(len(body))
 			}
-			reason := markRequestTooLarge(&trace, observed, g.cfg.RequestMaxBytes, false)
+			reason := markRequestTooLarge(&trace, observed, bodyPolicy, false)
 			w.Header().Set("X-Risk-Request-Bytes", fmt.Sprintf("%d", trace.RequestBytes))
-			w.Header().Set("X-Risk-Request-Limit-Bytes", fmt.Sprintf("%d", g.cfg.RequestMaxBytes))
+			w.Header().Set("X-Risk-Request-Limit-Bytes", fmt.Sprintf("%d", bodyPolicy.EffectiveLimitBytes))
+			w.Header().Set("X-Risk-Request-Hard-Limit-Bytes", fmt.Sprintf("%d", bodyPolicy.HardLimitBytes))
+			w.Header().Set("X-Risk-Request-Limit-Mode", bodyPolicy.Mode)
 			w.Header().Set("X-Risk-Request-Size-Exact", "false")
 			finish("error", "REQUEST_TOO_LARGE", g.cfg.ErrorHTTPStatus, 0, 0)
 			writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "REQUEST_TOO_LARGE", reason)
@@ -255,11 +311,18 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trace.RequestBytes = int64(len(body))
 	trace.Model = ExtractRequestedModel(body)
 
+	trace.Metadata["audit_started"] = true
 	auditResult := g.audit.Audit(r.Context(), route, body)
 	trace.AuditLatencyMS = auditResult.Latency.Milliseconds()
 	trace.PromptHMAC = auditResult.PromptHMAC
 	trace.Metadata["audit_source"] = auditResult.Source
 	trace.Metadata["audit_category"] = auditResult.Category
+	trace.Metadata["audit_input_scope"] = auditResult.AuditInputScope
+	trace.Metadata["audit_intent_bytes"] = auditResult.AuditIntentBytes
+	trace.Metadata["audit_ignored_context_bytes"] = auditResult.AuditIgnoredContextBytes
+	if len(auditResult.AuditIgnoredRoles) > 0 {
+		trace.Metadata["audit_ignored_roles"] = auditResult.AuditIgnoredRoles
+	}
 	if match := auditResult.RuleMatch; match != nil {
 		trace.Metadata["audit_rule_id"] = match.RuleID
 		trace.Metadata["audit_rule_position"] = match.RulePosition
@@ -408,6 +471,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	upstreamRequest = upstreamRequest.WithContext(requestContext)
 	upstreamStarted := time.Now()
+	trace.Metadata["upstream_started"] = true
 	response, err := g.client.Do(upstreamRequest)
 	trace.Metadata["upstream_header_latency_ms"] = time.Since(upstreamStarted).Milliseconds()
 	if err != nil {
@@ -502,7 +566,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	finish(DecisionAllow, "", status, response.StatusCode, bytesWritten)
 }
 
-func markRequestTooLarge(trace *TraceEvent, requestBytes int64, limitBytes int64, exact bool) string {
+func markRequestTooLarge(trace *TraceEvent, requestBytes int64, policy requestBodyLimitPolicy, exact bool) string {
+	limitBytes := policy.EffectiveLimitBytes
 	if limitBytes < 1 {
 		limitBytes = 1
 	}
@@ -516,9 +581,11 @@ func markRequestTooLarge(trace *TraceEvent, requestBytes int64, limitBytes int64
 	trace.Metadata["failure_stage"] = "gateway_ingress"
 	trace.Metadata["failure_component"] = "request_body_guard"
 	trace.Metadata["limit_owner"] = "risk_gateway"
-	trace.Metadata["limit_config"] = "REQUEST_MAX_BYTES"
+	trace.Metadata["limit_config"] = map[bool]string{true: "REQUEST_HARD_MAX_BYTES", false: "REQUEST_MAX_BYTES"}[policy.Mode != "configured"]
 	trace.Metadata["limit_scope"] = "inbound_http_request_body"
 	trace.Metadata["limit_unit"] = "bytes"
+	trace.Metadata["request_body_limit_mode"] = policy.Mode
+	trace.Metadata["request_body_hard_limit_bytes"] = policy.HardLimitBytes
 	trace.Metadata["audit_started"] = false
 	trace.Metadata["upstream_started"] = false
 	trace.Metadata["request_body_bytes"] = requestBytes
@@ -526,18 +593,16 @@ func markRequestTooLarge(trace *TraceEvent, requestBytes int64, limitBytes int64
 	trace.Metadata["request_body_over_limit_bytes"] = overBytes
 	trace.Metadata["request_body_size_exact"] = exact
 
-	recommended := recommendedRequestMaxBytes(requestBytes)
 	var remediation string
-	if recommended > 0 {
-		trace.Metadata["request_body_recommended_limit_bytes"] = recommended
+	switch policy.Mode {
+	case "configured":
+		trace.Metadata["request_body_recommended_limit_bytes"] = recommendedRequestMaxBytes(requestBytes, policy.HardLimitBytes)
+		remediation = "The explicit REQUEST_MAX_BYTES soft limit rejected this body before audit and upstream. Set REQUEST_MAX_BYTES=0 to use automatic actual-size admission, or reduce/externalize the payload."
+	default:
 		remediation = fmt.Sprintf(
-			"This is a Risk Gateway ingress byte limit, not an audit-model or upstream-model limit. "+
-				"For an expected trusted request, set REQUEST_MAX_BYTES=%d and restart the gateway; otherwise reduce conversation history or replace inline base64 files/images with URLs. Audit and upstream were not called.",
-			recommended,
+			"The request exceeds the automatic hard ceiling REQUEST_HARD_MAX_BYTES=%d. Reduce/split the payload, replace inline base64 files or images with URLs, or raise the hard ceiling only with a bounded large-request concurrency budget. Audit and upstream were not called.",
+			policy.HardLimitBytes,
 		)
-	} else {
-		remediation = "This is a Risk Gateway ingress byte limit, not an audit-model or upstream-model limit. " +
-			"The request exceeds the supported 64 MiB body ceiling; reduce or split the payload, or replace inline base64 files/images with URLs. Audit and upstream were not called."
 	}
 	trace.Metadata["request_body_remediation"] = remediation
 
@@ -546,8 +611,8 @@ func markRequestTooLarge(trace *TraceEvent, requestBytes int64, limitBytes int64
 		qualifier = "at least "
 	}
 	reason := fmt.Sprintf(
-		"Risk Gateway ingress rejected the request before audit and upstream: request body is %s%d bytes; REQUEST_MAX_BYTES is %d bytes; over limit by %s%d bytes",
-		qualifier, requestBytes, limitBytes, qualifier, overBytes,
+		"Risk Gateway ingress rejected the request before audit and upstream: request body is %s%d bytes; %s effective limit is %d bytes; hard ceiling is %d bytes; over limit by %s%d bytes",
+		qualifier, requestBytes, policy.Mode, limitBytes, policy.HardLimitBytes, qualifier, overBytes,
 	)
 	trace.Metadata["error_reason"] = reason
 	return reason
@@ -668,6 +733,7 @@ func (g *Gateway) proxyBuffered(
 	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.WriteHeader(response.StatusCode)
 	written, writeError := w.Write(prefix)
 	total := int64(written)
@@ -744,6 +810,7 @@ func (g *Gateway) proxySSE(
 
 	copyResponseHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.WriteHeader(response.StatusCode)
 	flusher, canFlush := w.(http.Flusher)
 	var total int64
@@ -928,6 +995,7 @@ func writeRiskError(w http.ResponseWriter, status int, requestID string, riskCod
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.Header().Set("X-Risk-Error-Code", "555")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -945,6 +1013,7 @@ func writeGatewayError(w http.ResponseWriter, status int, requestID string, code
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{
