@@ -314,7 +314,7 @@ func streamSlowUsage(w http.ResponseWriter) {
 	for index := 0; index < 8; index++ {
 		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"part-%d \"}}]}\n\n", index)
 		flush(w)
-		time.Sleep(75 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 	_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":17969,\"completion_tokens\":4970,\"total_tokens\":22939,\"prompt_tokens_details\":{\"cached_tokens\":9984},\"completion_tokens_details\":{\"reasoning_tokens\":321}}}\n\n")
 	flush(w)

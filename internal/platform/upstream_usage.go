@@ -47,8 +47,11 @@ func (u *upstreamTokenUsage) Merge(other upstreamTokenUsage) {
 		u.Source = other.Source
 	}
 	u.Exact = u.Exact || other.Exact
-	if u.TotalTokens == 0 && (u.InputTokens > 0 || u.OutputTokens > 0) {
-		u.TotalTokens = u.InputTokens + u.OutputTokens
+	// Some streaming APIs report input usage in an early event and output
+	// usage in a later event. Preserve an explicitly reported total, but once
+	// both sides are known never leave total_tokens equal to only one side.
+	if computed := u.InputTokens + u.OutputTokens; computed > u.TotalTokens {
+		u.TotalTokens = computed
 	}
 }
 

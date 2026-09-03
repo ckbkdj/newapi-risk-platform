@@ -30,6 +30,15 @@ func TestParseOpenAIChatUsage(t *testing.T) {
 	}
 }
 
+func TestMergeSeparateStreamingUsageEvents(t *testing.T) {
+	var usage upstreamTokenUsage
+	usage.Merge(upstreamTokenUsage{InputTokens: 100, TotalTokens: 100, Source: "anthropic_usage", Exact: true})
+	usage.Merge(upstreamTokenUsage{OutputTokens: 25, TotalTokens: 25, Source: "anthropic_usage", Exact: true})
+	if usage.InputTokens != 100 || usage.OutputTokens != 25 || usage.TotalTokens != 125 {
+		t.Fatalf("separate streaming usage was not merged: %+v", usage)
+	}
+}
+
 func TestParseResponsesCompletedUsage(t *testing.T) {
 	lines := []string{
 		"event: response.completed",

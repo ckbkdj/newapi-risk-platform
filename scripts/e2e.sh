@@ -89,7 +89,7 @@ print(json.dumps({
   "audit_profile_id": None,
   "enabled": True,
   "fail_closed": True,
-  "request_timeout_ms": 200,
+  "request_timeout_ms": 1000,
   "max_concurrency": 10,
   "rate_limit_rps": 1000,
   "rate_limit_burst": 1000
@@ -359,8 +359,8 @@ status="$(curl --silent --show-error --no-buffer -o "${WORKDIR}/stream-normal.tx
 assert_status 200 "${status}" "${WORKDIR}/stream-normal.txt"
 contains "${WORKDIR}/stream-normal.txt" '[DONE]'
 
-# This stream runs for roughly 625 ms while its route timeout is only 200 ms.
-# It must succeed because events arrive every 75 ms: request_timeout_ms is an
+# This stream runs for roughly 1.6 seconds while its route timeout is only
+# 1 second. It must succeed because events arrive every 200 ms: request_timeout_ms is an
 # SSE idle timeout, not a hard cap on total generation time.
 status="$(curl --silent --show-error --no-buffer -o "${WORKDIR}/stream-slow-usage.txt" -w '%{http_code}' \
   "${stream_gateway}" "${gateway_auth[@]}" \
@@ -605,7 +605,7 @@ if not slow_usage:
 slow_meta = slow_usage.get("metadata", {})
 if slow_usage.get("decision") != "allow" or int(slow_usage.get("http_status", 0)) != 200:
     raise RuntimeError(f"healthy long SSE stream was falsely interrupted: {slow_usage}")
-if int(slow_usage.get("latency_ms", 0)) <= 200:
+if int(slow_usage.get("latency_ms", 0)) <= 1000:
     raise RuntimeError(f"slow stream did not exceed route timeout as intended: {slow_usage}")
 for key in ("error_reason", "failure_stage", "stream_error_semantics", "upstream_error_reason"):
     if slow_meta.get(key):

@@ -101,7 +101,7 @@
                 <div class="field"><label for="route-profile">审计模型</label><select id="route-profile"><option value="">默认模型</option></select></div>
                 <div class="field wide"><label for="route-upstream-secret">上游密钥</label><input id="route-upstream-secret" type="password" autocomplete="new-password"><small>编辑时留空表示保留现有密钥。</small></div>
                 <div class="field wide"><label for="route-inbound-key">New API 渠道 Key</label><input id="route-inbound-key" type="password" autocomplete="new-password"><small>New API 可把此值作为渠道 Bearer Key；编辑时留空表示保留。</small></div>
-                <div class="field"><label for="route-timeout">超时（毫秒）</label><input id="route-timeout" type="number" min="1000" value="120000"></div>
+                <div class="field"><label for="route-timeout">非流式总超时 / SSE 空闲超时（毫秒）</label><input id="route-timeout" type="number" min="1000" value="120000"><small>非流式限制完整响应时长；流式仅在连续无任何 SSE 事件达到该时长时超时，持续输出不会被总时长截断。</small></div>
                 <div class="field"><label for="route-concurrency">最大并发</label><input id="route-concurrency" type="number" min="1" value="256"></div>
                 <div class="field"><label for="route-rps">每秒请求数（0=不限）</label><input id="route-rps" type="number" min="0" step="0.1" value="100"></div>
                 <div class="field"><label for="route-burst">突发容量</label><input id="route-burst" type="number" min="1" value="200"></div>
