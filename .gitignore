@@ -1,8 +1,8 @@
 .env
-.upgrade-backups/
-bin/
 .env.*
 !.env.example
+.upgrade-backups/
+bin/
 coverage.out
 *.log
 *.tmp
