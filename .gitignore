@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+.upgrade-backups/
 bin/
 coverage.out
 *.log

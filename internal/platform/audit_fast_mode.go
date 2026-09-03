@@ -40,8 +40,10 @@ func (e *AuditEngine) auditMessages(profile AuditProfile, text string) []map[str
 	if systemPrompt == "" {
 		systemPrompt = DefaultAuditSystemPrompt
 	}
+	systemPrompt = appendFastAuditDirective(systemPrompt)
+	systemPrompt += "\n\n" + auditPolicySystemDirective(profile)
 	return []map[string]string{
-		{"role": "system", "content": appendFastAuditDirective(systemPrompt)},
+		{"role": "system", "content": systemPrompt},
 		{"role": "user", "content": e.auditUserContent(profile, text)},
 	}
 }

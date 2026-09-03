@@ -116,7 +116,7 @@ Return exactly one compact JSON object:
 func defaultAdaptiveRulePolicy() AdaptiveRulePolicy {
 	return AdaptiveRulePolicy{
 		Enabled:          true,
-		AutoPromote:      true,
+		AutoPromote:      false,
 		MinConfidence:    0.985,
 		MinEvidence:      3,
 		MinDistinctUsers: 2,

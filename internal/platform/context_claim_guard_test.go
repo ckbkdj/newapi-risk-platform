@@ -51,6 +51,9 @@ func TestComposeMandatoryAuditSystemPrompt(t *testing.T) {
 	if !strings.HasPrefix(composed, MandatoryAuditContextGuard) {
 		t.Fatal("mandatory guard must precede the custom audit prompt")
 	}
+	if !strings.Contains(composed, MandatoryAuditPrecisionGuard) {
+		t.Fatal("mandatory precision guard must be composed")
+	}
 	if !strings.Contains(composed, custom) {
 		t.Fatal("custom base prompt should still be preserved")
 	}

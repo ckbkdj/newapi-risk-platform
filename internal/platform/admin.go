@@ -318,7 +318,8 @@ func (s *HTTPService) adminAuditDryRun(w http.ResponseWriter, r *http.Request) {
 		Text      string `json:"text"`
 		ProfileID *int64 `json:"profile_id"`
 	}
-	if err := decodeJSONBody(w, r, int64(s.cfg.AuditTextMaxBytes+4096), &input); err != nil {
+	effectiveAuditTextMaxBytes, _ := resolveAuditTextMaxBytes(s.cfg.AuditTextMaxBytes, s.cfg.RequestHardMaxBytes)
+	if err := decodeJSONBody(w, r, int64(effectiveAuditTextMaxBytes+4096), &input); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -328,7 +329,7 @@ func (s *HTTPService) adminAuditDryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	result := s.audit.DryRun(
 		r.Context(),
-		truncateString(input.Text, s.cfg.AuditTextMaxBytes),
+		truncateString(input.Text, effectiveAuditTextMaxBytes),
 		input.ProfileID,
 	)
 	s.auditAdmin(r, "dry_run", "audit", "", map[string]any{

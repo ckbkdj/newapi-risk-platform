@@ -322,6 +322,22 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trace.Metadata["audit_ignored_context_bytes"] = auditResult.AuditIgnoredContextBytes
 	trace.Metadata["audit_text_limit_mode"] = auditResult.AuditTextLimitMode
 	trace.Metadata["audit_text_limit_bytes"] = auditResult.AuditTextLimitBytes
+	trace.Metadata["audit_raw_intent_bytes"] = auditResult.AuditRawIntentBytes
+	trace.Metadata["audit_prior_user_context_bytes"] = auditResult.AuditPriorUserContextBytes
+	trace.Metadata["audit_active_user_messages"] = auditResult.AuditActiveUserMessages
+	trace.Metadata["audit_context_activated"] = auditResult.AuditContextActivated
+	trace.Metadata["audit_ephemeral_artifact_count"] = auditResult.AuditEphemeralArtifactCount
+	trace.Metadata["audit_secret_placeholder_count"] = auditResult.AuditSecretPlaceholderCount
+	trace.Metadata["audit_policy_mode"] = auditResult.AuditPolicyMode
+	if len(auditResult.AuditIgnoredInputTypes) > 0 {
+		trace.Metadata["audit_ignored_input_types"] = auditResult.AuditIgnoredInputTypes
+	}
+	if len(auditResult.AuditRuleSuppressions) > 0 {
+		trace.Metadata["audit_rule_suppressions"] = auditResult.AuditRuleSuppressions
+	}
+	if auditResult.AuditPolicyAdjustment != nil {
+		trace.Metadata["audit_policy_adjustment"] = auditResult.AuditPolicyAdjustment
+	}
 	if len(auditResult.AuditIgnoredRoles) > 0 {
 		trace.Metadata["audit_ignored_roles"] = auditResult.AuditIgnoredRoles
 	}
