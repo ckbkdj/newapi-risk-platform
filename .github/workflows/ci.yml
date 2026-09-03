@@ -25,7 +25,15 @@ jobs:
       - name: Verify deployment scripts and environment migration
         run: |
           set -euo pipefail
-          bash -n scripts/init-env.sh scripts/deploy-local.sh scripts/doctor.sh scripts/e2e.sh
+          bash -n \
+            scripts/init-env.sh \
+            scripts/deploy-local.sh \
+            scripts/doctor.sh \
+            scripts/e2e.sh \
+            scripts/upgrade.sh \
+            scripts/update.sh \
+            scripts/upgrade_test.sh
+          bash scripts/upgrade_test.sh
           rm -f .env
           bash scripts/init-env.sh >/tmp/init-env-fresh.txt
           python3 - <<'PY'
