@@ -7,6 +7,7 @@ on:
       - fix/auto-body-timeline-and-role-aware-audit
     paths:
       - .github/workflows/apply-auto-body-timeline-role-audit.yml
+      - scripts/run-auto-body-timeline-role-audit.py
 
 permissions:
   contents: write
