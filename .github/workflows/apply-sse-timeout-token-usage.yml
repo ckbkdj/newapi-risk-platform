@@ -27,7 +27,7 @@ jobs:
       - name: Apply integration
         run: |
           set -euo pipefail
-          python3 scripts/apply-sse-timeout-token-usage.py
+          python3 scripts/fix-sse-token-usage-followup.py
           gofmt -w ./cmd ./internal
       - name: Validate
         run: |
@@ -56,16 +56,13 @@ jobs:
           git config user.email "41898282+ckbkdj@users.noreply.github.com"
           git add \
             cmd/mockprovider/main.go \
-            docs/upstream-stream-and-token-usage.md \
-            internal/platform/audit_diagnostics.go \
-            internal/platform/gateway.go \
             internal/platform/upstream_usage.go \
             internal/platform/upstream_usage_test.go \
             internal/platform/web/index.html \
             scripts/e2e.sh
           if git diff --cached --quiet; then
-            echo "integration already applied"
+            echo "follow-up already applied"
             exit 0
           fi
-          git commit -m "fix(gateway): use SSE idle timeout and trace upstream token usage"
+          git commit -m "test(gateway): validate long healthy SSE streams and usage totals"
           git push origin HEAD:fix/sse-timeout-and-token-usage
