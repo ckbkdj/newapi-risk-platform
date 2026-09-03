@@ -27,7 +27,7 @@ jobs:
       - name: Apply integration
         run: |
           set -euo pipefail
-          python3 scripts/apply-auto-body-timeline-role-audit.py
+          python3 scripts/run-auto-body-timeline-role-audit.py
           gofmt -w ./cmd ./internal
       - name: Validate
         run: |
