@@ -371,7 +371,9 @@ func traceFailureReason(riskCode string, upstreamStatus int, metadata map[string
 	case "UPSTREAM_STREAM_ERROR":
 		return "真实上游流式响应返回错误事件"
 	case "UPSTREAM_STREAM_INTERRUPTED":
-		return "真实上游流式连接在完成前中断"
+		return "真实上游流式连接在完成前中断；查看流读取诊断和完成标记"
+	case "UPSTREAM_STREAM_TIMEOUT":
+		return "真实上游流式响应超过配置的空闲超时；只有连续无事件才会触发，不再限制总生成时长"
 	case "UPSTREAM_READ_ERROR":
 		return "读取真实上游响应失败"
 	case "CLIENT_DISCONNECT":

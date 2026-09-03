@@ -215,6 +215,12 @@ func providerHandler(w http.ResponseWriter, r *http.Request) {
 	case "stream-normal":
 		streamNormal(w)
 		return
+	case "stream-slow-usage":
+		streamSlowUsage(w)
+		return
+	case "buffered-usage":
+		bufferedUsage(w)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":     "completion-mock",
@@ -300,6 +306,36 @@ func streamNormal(w http.ResponseWriter) {
 	_, _ = writer.WriteString("data: [DONE]\n\n")
 	_ = writer.Flush()
 	flush(w)
+}
+
+func streamSlowUsage(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.WriteHeader(http.StatusOK)
+	for index := 0; index < 8; index++ {
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"part-%d \"}}]}\n\n", index)
+		flush(w)
+		time.Sleep(75 * time.Millisecond)
+	}
+	_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":17969,\"completion_tokens\":4970,\"total_tokens\":22939,\"prompt_tokens_details\":{\"cached_tokens\":9984},\"completion_tokens_details\":{\"reasoning_tokens\":321}}}\n\n")
+	flush(w)
+	time.Sleep(25 * time.Millisecond)
+	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	flush(w)
+}
+
+func bufferedUsage(w http.ResponseWriter) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": "buffered-usage",
+		"choices": []any{map[string]any{
+			"message":       map[string]any{"role": "assistant", "content": "usage response"},
+			"finish_reason": "stop",
+		}},
+		"usage": map[string]any{
+			"prompt_tokens":     321,
+			"completion_tokens": 45,
+			"total_tokens":      366,
+		},
+	})
 }
 
 func flush(w http.ResponseWriter) {

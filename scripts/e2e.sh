@@ -74,6 +74,35 @@ curl --fail --silent --show-error \
   --data-binary "${route_payload}" >"${WORKDIR}/route.json"
 contains "${WORKDIR}/route.json" '"slug":"mock-main"'
 
+stream_route_payload="$(python3 - <<PY
+import json
+print(json.dumps({
+  "id": 0,
+  "slug": "mock-stream",
+  "name": "E2E streaming idle-timeout route",
+  "base_url": "http://mock-provider:18081",
+  "provider": "generic",
+  "auth_mode": "none",
+  "secret_header": "",
+  "upstream_secret": "",
+  "inbound_key": "${ROUTE_KEY}",
+  "audit_profile_id": None,
+  "enabled": True,
+  "fail_closed": True,
+  "request_timeout_ms": 200,
+  "max_concurrency": 10,
+  "rate_limit_rps": 1000,
+  "rate_limit_burst": 1000
+}, separators=(",", ":")))
+PY
+)"
+curl --fail --silent --show-error \
+  "${BASE_URL}/api/admin/v1/routes" \
+  "${auth[@]}" \
+  -H 'Content-Type: application/json' \
+  --data-binary "${stream_route_payload}" >"${WORKDIR}/stream-route.json"
+contains "${WORKDIR}/stream-route.json" '"slug":"mock-stream"'
+
 
 curl --fail --silent --show-error \
   "${BASE_URL}/api/admin/v1/cyber-rules" \
@@ -119,6 +148,7 @@ curl --fail --silent --show-error "${BASE_URL}/api/admin/v1/cyber-rules" "${auth
 contains "${WORKDIR}/editable-rule-list.json" '[e2e editable]'
 
 gateway="${BASE_URL}/gateway/mock-main/v1/chat/completions"
+stream_gateway="${BASE_URL}/gateway/mock-stream/v1/chat/completions"
 gateway_auth=(-H "Authorization: Bearer ${ROUTE_KEY}" -H 'Content-Type: application/json')
 
 python3 - "${WORKDIR}/too-large.json" <<'PY'
@@ -329,6 +359,25 @@ status="$(curl --silent --show-error --no-buffer -o "${WORKDIR}/stream-normal.tx
 assert_status 200 "${status}" "${WORKDIR}/stream-normal.txt"
 contains "${WORKDIR}/stream-normal.txt" '[DONE]'
 
+# This stream runs for roughly 625 ms while its route timeout is only 200 ms.
+# It must succeed because events arrive every 75 ms: request_timeout_ms is an
+# SSE idle timeout, not a hard cap on total generation time.
+status="$(curl --silent --show-error --no-buffer -o "${WORKDIR}/stream-slow-usage.txt" -w '%{http_code}' \
+  "${stream_gateway}" "${gateway_auth[@]}" \
+  -H 'X-Request-ID: e2e-stream-slow-usage' \
+  --data-binary '{"model":"stream-slow-usage","stream":true,"messages":[{"role":"user","content":"safe long stream with usage"}]}')"
+assert_status 200 "${status}" "${WORKDIR}/stream-slow-usage.txt"
+contains "${WORKDIR}/stream-slow-usage.txt" 'finish_reason'
+contains "${WORKDIR}/stream-slow-usage.txt" 'prompt_tokens'
+contains "${WORKDIR}/stream-slow-usage.txt" '[DONE]'
+
+status="$(curl --silent --show-error -o "${WORKDIR}/buffered-usage.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-Request-ID: e2e-buffered-usage' \
+  --data-binary '{"model":"buffered-usage","messages":[{"role":"user","content":"safe buffered usage"}]}')"
+assert_status 200 "${status}" "${WORKDIR}/buffered-usage.json"
+contains "${WORKDIR}/buffered-usage.json" 'usage response'
+
 BASE_URL="${BASE_URL}" TRACKING_KEY_ID="${TRACKING_KEY_ID}" TRACKING_SECRET="${TRACKING_SECRET}" python3 - <<'PY'
 import hashlib
 import hmac
@@ -395,6 +444,8 @@ for _ in $(seq 1 40); do
      grep -Fq 'e2e-own-secret-self-service' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-late' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-normal' "${WORKDIR}/traces.json" && \
+     grep -Fq 'e2e-stream-slow-usage' "${WORKDIR}/traces.json" && \
+     grep -Fq 'e2e-buffered-usage' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-model-block-evidence' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-audit-failover' "${WORKDIR}/traces.json"; then
     trace_ok=1
@@ -547,6 +598,43 @@ if stream_normal.get("decision") != "allow" or int(stream_normal.get("http_statu
 for key in ("error_reason", "failure_stage", "stream_error_semantics", "upstream_error_reason"):
     if normal_meta.get(key):
         raise RuntimeError(f"normal stream was polluted with {key}: {normal_meta}")
+
+slow_usage = next((item for item in items if item.get("request_id") == "e2e-stream-slow-usage"), None)
+if not slow_usage:
+    raise RuntimeError("slow usage stream trace missing")
+slow_meta = slow_usage.get("metadata", {})
+if slow_usage.get("decision") != "allow" or int(slow_usage.get("http_status", 0)) != 200:
+    raise RuntimeError(f"healthy long SSE stream was falsely interrupted: {slow_usage}")
+if int(slow_usage.get("latency_ms", 0)) <= 200:
+    raise RuntimeError(f"slow stream did not exceed route timeout as intended: {slow_usage}")
+for key in ("error_reason", "failure_stage", "stream_error_semantics", "upstream_error_reason"):
+    if slow_meta.get(key):
+        raise RuntimeError(f"healthy slow stream was polluted with {key}: {slow_meta}")
+expected_usage = {
+    "upstream_input_tokens": 17969,
+    "upstream_output_tokens": 4970,
+    "upstream_total_tokens": 22939,
+    "upstream_cached_tokens": 9984,
+    "upstream_reasoning_tokens": 321,
+}
+for key, expected in expected_usage.items():
+    if int(slow_meta.get(key, 0)) != expected:
+        raise RuntimeError(f"{key}={slow_meta.get(key)!r}, expected {expected}: {slow_meta}")
+if slow_meta.get("upstream_usage_exact") is not True:
+    raise RuntimeError(f"upstream usage was not marked exact: {slow_meta}")
+if slow_meta.get("upstream_timeout_scope") != "response_headers_then_stream_idle":
+    raise RuntimeError(f"SSE timeout semantics missing: {slow_meta}")
+if slow_meta.get("upstream_completion_semantics") != "data_done":
+    raise RuntimeError(f"SSE completion marker missing: {slow_meta}")
+if float(slow_meta.get("upstream_output_tokens_per_second", 0)) <= 0:
+    raise RuntimeError(f"output token rate missing: {slow_meta}")
+
+buffered_usage = next((item for item in items if item.get("request_id") == "e2e-buffered-usage"), None)
+if not buffered_usage:
+    raise RuntimeError("buffered usage trace missing")
+buffered_meta = buffered_usage.get("metadata", {})
+if int(buffered_meta.get("upstream_input_tokens", 0)) != 321 or int(buffered_meta.get("upstream_output_tokens", 0)) != 45:
+    raise RuntimeError(f"buffered token usage missing: {buffered_meta}")
 PY
 
 
