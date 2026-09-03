@@ -22,3 +22,7 @@ REQUEST_LARGE_BODY_MAX_CONCURRENCY=4
 系统、developer、assistant、tool、function、工具 schema 和历史生成内容不再进入规则/模型的执法文本。只有 user/end_user/human/customer/client 角色以及顶层用户 `input`、`prompt`、`query` 可以触发 Block。正常 AI 编程系统提示词中的依赖解析、导入、构建修复、项目内 symlink 或 Windows junction 不会再被当作攻击。
 
 Trace 会记录 `audit_input_scope=end_user_intent_only`、用户意图字节数、忽略的上下文字节数和角色，但不保存完整系统提示词。
+
+## NewAPI 请求关联
+
+Risk Gateway 识别 `X-NewAPI-Request-ID`、`X-Oneapi-Request-Id` 和 `X-Request-ID`。响应同时返回 `X-Risk-Request-ID` 与 `X-Oneapi-Request-Id`，使 NewAPI 可以把风控 Request ID 记录为 upstream request ID。页面默认按完成时间展示，并同时提供开始、完成、入库三种时间。

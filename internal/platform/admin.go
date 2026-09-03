@@ -35,17 +35,23 @@ func (s *HTTPService) adminDashboard(w http.ResponseWriter, r *http.Request) {
 
 func (s *HTTPService) adminRuntime(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"environment":                s.cfg.Environment,
-		"postgres_healthy":           s.store.Health(r.Context()) == nil,
-		"redis":                      s.redis.Status(),
-		"kafka_enabled":              s.events.Enabled(),
-		"kafka_queue_depth":          s.events.QueueDepth(),
-		"trace_queue_depth":          s.traces.Depth(),
-		"trace_dropped":              s.traces.Dropped(),
-		"error_http_status":          s.cfg.ErrorHTTPStatus,
-		"allow_private_upstreams":    s.cfg.AllowPrivateUpstreams,
-		"postgres_retention_days":    s.store.GetIntSetting(r.Context(), "retention_days", s.cfg.RetentionDays),
-		"raw_prompt_storage_enabled": false,
+		"environment":                        s.cfg.Environment,
+		"postgres_healthy":                   s.store.Health(r.Context()) == nil,
+		"redis":                              s.redis.Status(),
+		"kafka_enabled":                      s.events.Enabled(),
+		"kafka_queue_depth":                  s.events.QueueDepth(),
+		"trace_queue_depth":                  s.traces.Depth(),
+		"trace_dropped":                      s.traces.Dropped(),
+		"error_http_status":                  s.cfg.ErrorHTTPStatus,
+		"server_time":                        time.Now().UTC(),
+		"request_body_limit_mode":            map[bool]string{true: "automatic", false: "configured"}[s.cfg.RequestMaxBytes == 0],
+		"request_max_bytes":                  s.cfg.RequestMaxBytes,
+		"request_hard_max_bytes":             s.cfg.RequestHardMaxBytes,
+		"request_large_body_threshold_bytes": s.cfg.LargeRequestThresholdBytes,
+		"request_large_body_max_concurrency": s.cfg.LargeRequestMaxConcurrency,
+		"allow_private_upstreams":            s.cfg.AllowPrivateUpstreams,
+		"postgres_retention_days":            s.store.GetIntSetting(r.Context(), "retention_days", s.cfg.RetentionDays),
+		"raw_prompt_storage_enabled":         false,
 	})
 }
 

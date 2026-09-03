@@ -136,14 +136,20 @@ func (g *Gateway) getRoute(ctx context.Context, slug string) (Route, error) {
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	startedAt := started.UTC()
-	inboundRequestID := normalizeRequestID(r.Header.Get("X-Request-ID"))
+	xRequestID := normalizeRequestID(r.Header.Get("X-Request-ID"))
+	oneAPIRequestID := normalizeRequestID(r.Header.Get("X-Oneapi-Request-Id"))
+	inboundRequestID := firstNonEmpty(xRequestID, oneAPIRequestID)
 	requestID := inboundRequestID
 	requestIDSource := "x_request_id"
+	if xRequestID == "" && oneAPIRequestID != "" {
+		requestIDSource = "x_oneapi_request_id"
+	}
 	if requestID == "" {
 		requestID = NewRequestID()
 		requestIDSource = "generated"
 	}
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.Header().Set("X-Risk-Started-At", startedAt.Format(time.RFC3339Nano))
 
 	if r.Method == http.MethodConnect || r.Method == http.MethodTrace {
@@ -159,7 +165,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RequestID:       requestID,
 		Source:          "gateway",
 		RouteSlug:       slug,
-		NewAPIRequestID: firstNonEmpty(normalizeRequestID(r.Header.Get("X-NewAPI-Request-ID")), inboundRequestID),
+		NewAPIRequestID: firstNonEmpty(normalizeRequestID(r.Header.Get("X-NewAPI-Request-ID")), oneAPIRequestID, inboundRequestID),
 		ExternalUserID: normalizeIdentifier(firstNonEmpty(
 			r.Header.Get("X-NewAPI-User-ID"),
 			r.Header.Get("X-User-ID"),
@@ -170,6 +176,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{
 			"request_id_source":  requestIDSource,
 			"gateway_started_at": startedAt.Format(time.RFC3339Nano),
+			"audit_started":      false,
+			"upstream_started":   false,
 		},
 	}
 	finished := false
@@ -235,6 +243,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if bodyPolicy.ConfiguredLimitBytes > 0 {
 		trace.Metadata["request_body_configured_limit_bytes"] = bodyPolicy.ConfiguredLimitBytes
 	}
+	w.Header().Set("X-Risk-Request-Limit-Mode", bodyPolicy.Mode)
+	w.Header().Set("X-Risk-Request-Limit-Bytes", fmt.Sprintf("%d", bodyPolicy.EffectiveLimitBytes))
+	w.Header().Set("X-Risk-Request-Hard-Limit-Bytes", fmt.Sprintf("%d", bodyPolicy.HardLimitBytes))
 
 	// In automatic mode a known Content-Length is admitted at its actual size
 	// up to the hard ceiling. This lets large but valid NewAPI payloads pass
@@ -300,6 +311,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trace.RequestBytes = int64(len(body))
 	trace.Model = ExtractRequestedModel(body)
 
+	trace.Metadata["audit_started"] = true
 	auditResult := g.audit.Audit(r.Context(), route, body)
 	trace.AuditLatencyMS = auditResult.Latency.Milliseconds()
 	trace.PromptHMAC = auditResult.PromptHMAC
@@ -459,6 +471,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	upstreamRequest = upstreamRequest.WithContext(requestContext)
 	upstreamStarted := time.Now()
+	trace.Metadata["upstream_started"] = true
 	response, err := g.client.Do(upstreamRequest)
 	trace.Metadata["upstream_header_latency_ms"] = time.Since(upstreamStarted).Milliseconds()
 	if err != nil {
@@ -720,6 +733,7 @@ func (g *Gateway) proxyBuffered(
 	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.WriteHeader(response.StatusCode)
 	written, writeError := w.Write(prefix)
 	total := int64(written)
@@ -796,6 +810,7 @@ func (g *Gateway) proxySSE(
 
 	copyResponseHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.WriteHeader(response.StatusCode)
 	flusher, canFlush := w.(http.Flusher)
 	var total int64
@@ -980,6 +995,7 @@ func writeRiskError(w http.ResponseWriter, status int, requestID string, riskCod
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.Header().Set("X-Risk-Error-Code", "555")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -997,6 +1013,7 @@ func writeGatewayError(w http.ResponseWriter, status int, requestID string, code
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{

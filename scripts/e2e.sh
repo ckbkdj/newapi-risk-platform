@@ -155,7 +155,7 @@ python3 - "${WORKDIR}/too-large.json" <<'PY'
 import json
 import sys
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    json.dump({"model":"normal","messages":[{"role":"user","content":"x" * 70000}]}, handle)
+    json.dump({"model":"normal","messages":[{"role":"user","content":"x" * 1100000}]}, handle)
 PY
 status="$(curl --silent --show-error -D "${WORKDIR}/too-large.headers" -o "${WORKDIR}/too-large-response.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
@@ -163,8 +163,26 @@ status="$(curl --silent --show-error -D "${WORKDIR}/too-large.headers" -o "${WOR
   --data-binary @"${WORKDIR}/too-large.json")"
 assert_status 555 "${status}" "${WORKDIR}/too-large-response.json"
 contains "${WORKDIR}/too-large-response.json" 'REQUEST_TOO_LARGE'
-contains "${WORKDIR}/too-large.headers" 'X-Risk-Request-Limit-Bytes: 65536'
+contains "${WORKDIR}/too-large.headers" 'X-Risk-Request-Limit-Bytes: 1048576'
+contains "${WORKDIR}/too-large.headers" 'X-Risk-Request-Hard-Limit-Bytes: 1048576'
+contains "${WORKDIR}/too-large.headers" 'X-Risk-Request-Limit-Mode: auto_hard_ceiling'
 contains "${WORKDIR}/too-large.headers" 'X-Risk-Request-Size-Exact: true'
+
+python3 - "${WORKDIR}/auto-large.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({"model":"normal","messages":[{"role":"user","content":"Explain normal project build verification."}],"padding":"x" * 700000}, handle)
+PY
+status="$(curl --silent --show-error -D "${WORKDIR}/auto-large.headers" -o "${WORKDIR}/auto-large-response.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-Oneapi-Request-Id: e2e-newapi-auto-large' \
+  --data-binary @"${WORKDIR}/auto-large.json")"
+assert_status 200 "${status}" "${WORKDIR}/auto-large-response.json"
+contains "${WORKDIR}/auto-large-response.json" 'mock provider success'
+contains "${WORKDIR}/auto-large.headers" 'X-Risk-Request-Limit-Mode: auto_actual_size'
+contains "${WORKDIR}/auto-large.headers" 'X-Risk-Request-Hard-Limit-Bytes: 1048576'
+contains "${WORKDIR}/auto-large.headers" 'X-Oneapi-Request-Id: e2e-newapi-auto-large'
 
 status="$(curl --silent --show-error -o "${WORKDIR}/allow.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
@@ -452,6 +470,7 @@ for _ in $(seq 1 40); do
      grep -Fq 'e2e-stream-late' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-normal' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-system-context-allow' "${WORKDIR}/traces.json" && \
+     grep -Fq 'e2e-newapi-auto-large' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-stream-slow-usage' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-buffered-usage' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-model-block-evidence' "${WORKDIR}/traces.json" && \
@@ -487,22 +506,39 @@ too_large = next((item for item in items if item.get("request_id") == "e2e-reque
 if not too_large:
     raise RuntimeError("REQUEST_TOO_LARGE trace is missing")
 metadata = too_large.get("metadata", {})
-if int(too_large.get("request_bytes", 0)) <= 65536:
+if int(too_large.get("request_bytes", 0)) <= 1048576:
     raise RuntimeError(f"oversized request bytes were not persisted: {too_large}")
-if int(metadata.get("request_body_limit_bytes", 0)) != 65536:
-    raise RuntimeError(f"oversized request limit missing: {metadata}")
+if int(metadata.get("request_body_limit_bytes", 0)) != 1048576:
+    raise RuntimeError(f"oversized request hard limit missing: {metadata}")
 if int(metadata.get("request_body_over_limit_bytes", 0)) <= 0:
     raise RuntimeError(f"oversized request overage missing: {metadata}")
 if metadata.get("request_body_size_exact") is not True:
     raise RuntimeError(f"Content-Length request should have exact size: {metadata}")
 if metadata.get("error_origin") != "risk_gateway" or metadata.get("failure_stage") != "gateway_ingress":
     raise RuntimeError(f"REQUEST_TOO_LARGE source/stage is ambiguous: {metadata}")
-if metadata.get("limit_config") != "REQUEST_MAX_BYTES" or metadata.get("failure_component") != "request_body_guard":
+if metadata.get("request_body_limit_mode") != "auto_hard_ceiling" or metadata.get("limit_config") != "REQUEST_HARD_MAX_BYTES":
+    raise RuntimeError(f"REQUEST_TOO_LARGE hard-ceiling owner/mode is missing: {metadata}")
+if metadata.get("failure_component") != "request_body_guard":
     raise RuntimeError(f"REQUEST_TOO_LARGE owning guard is missing: {metadata}")
 if metadata.get("audit_started") is not False or metadata.get("upstream_started") is not False:
     raise RuntimeError(f"REQUEST_TOO_LARGE must state that audit/upstream were not called: {metadata}")
 if not metadata.get("request_body_remediation"):
     raise RuntimeError(f"REQUEST_TOO_LARGE remediation is missing: {metadata}")
+
+auto_large = next((item for item in items if item.get("request_id") == "e2e-newapi-auto-large"), None)
+if not auto_large:
+    raise RuntimeError("automatic actual-size request trace is missing")
+alm = auto_large.get("metadata", {})
+if auto_large.get("decision") != "allow" or int(auto_large.get("http_status", 0)) != 200:
+    raise RuntimeError(f"automatic actual-size request was not allowed: {auto_large}")
+if auto_large.get("newapi_request_id") != "e2e-newapi-auto-large" or alm.get("request_id_source") != "x_oneapi_request_id":
+    raise RuntimeError(f"native NewAPI request ID correlation missing: {auto_large}")
+if alm.get("request_body_limit_mode") != "auto_actual_size" or int(alm.get("request_body_effective_limit_bytes", 0)) <= 131072:
+    raise RuntimeError(f"automatic request body admission metadata missing: {alm}")
+if int(alm.get("request_body_hard_limit_bytes", 0)) != 1048576:
+    raise RuntimeError(f"automatic request hard ceiling missing: {alm}")
+if alm.get("large_request_slot") is not True or alm.get("audit_started") is not True or alm.get("upstream_started") is not True:
+    raise RuntimeError(f"large request stage diagnostics missing: {alm}")
 
 rule_item = next((item for item in items if item.get("request_id") == "e2e-rule-explainability"), None)
 if not rule_item:
