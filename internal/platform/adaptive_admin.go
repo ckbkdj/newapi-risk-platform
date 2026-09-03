@@ -82,20 +82,14 @@ func (s *Store) PromoteCyberRuleCandidateManual(
 		return CyberRuleCandidate{}, CyberRule{}, fmt.Errorf("candidate rule is invalid: %w", err)
 	}
 
+	// A candidate may never replace an existing operator-managed rule. Even though
+	// adaptive codes contain a fingerprint fragment, a collision must be surfaced
+	// for human resolution rather than silently changing production enforcement.
 	const ruleColumns = `id,code,name,description,category,pattern,pattern_type,action,priority,enabled,created_at,updated_at`
 	rule, err := scanCyberRule(transaction.QueryRow(ctx, `INSERT INTO cyber_rules
 		(code,name,description,category,pattern,pattern_type,action,priority,enabled)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,TRUE)
-		ON CONFLICT(code) DO UPDATE SET
-			name=EXCLUDED.name,
-			description=EXCLUDED.description,
-			category=EXCLUDED.category,
-			pattern=EXCLUDED.pattern,
-			pattern_type=EXCLUDED.pattern_type,
-			action=EXCLUDED.action,
-			priority=EXCLUDED.priority,
-			enabled=TRUE,
-			updated_at=now()
+		ON CONFLICT(code) DO NOTHING
 		RETURNING `+ruleColumns,
 		ruleInput.Code,
 		ruleInput.Name,
@@ -106,6 +100,12 @@ func (s *Store) PromoteCyberRuleCandidateManual(
 		ruleInput.Action,
 		ruleInput.Priority,
 	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CyberRuleCandidate{}, CyberRule{}, fmt.Errorf(
+			"candidate code %q conflicts with an existing rule",
+			candidate.ProposedCode,
+		)
+	}
 	if err != nil {
 		return CyberRuleCandidate{}, CyberRule{}, err
 	}
