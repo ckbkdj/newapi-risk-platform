@@ -113,7 +113,7 @@ func LoadConfig() (Config, error) {
 		LargeRequestThresholdBytes:     int64(envInt("REQUEST_LARGE_BODY_THRESHOLD_BYTES", 8*1024*1024)),
 		LargeRequestMaxConcurrency:     envInt("REQUEST_LARGE_BODY_MAX_CONCURRENCY", 4),
 		ResponseInspectMaxBytes:        int64(envInt("RESPONSE_INSPECT_MAX_BYTES", 2*1024*1024)),
-		AuditTextMaxBytes:              envInt("AUDIT_TEXT_MAX_BYTES", 8*1024*1024),
+		AuditTextMaxBytes:              envInt("AUDIT_TEXT_MAX_BYTES", 0),
 		AuditOutputMaxTokens:           envInt("AUDIT_OUTPUT_MAX_TOKENS", 128),
 		AuditDisableThinking:           envBool("AUDIT_DISABLE_THINKING", true),
 		AuditLongContextThresholdBytes: envInt("AUDIT_LONG_CONTEXT_THRESHOLD_BYTES", 128*1024),
@@ -188,14 +188,16 @@ func (c Config) Validate() error {
 	if c.ResponseInspectMaxBytes < 64*1024 || c.ResponseInspectMaxBytes > 16*1024*1024 {
 		problems = append(problems, "RESPONSE_INSPECT_MAX_BYTES must be between 64 KiB and 16 MiB")
 	}
-	if c.AuditTextMaxBytes < 4096 || c.AuditTextMaxBytes > 16*1024*1024 {
-		problems = append(problems, "AUDIT_TEXT_MAX_BYTES must be between 4 KiB and 16 MiB")
+	maximumConfiguredAuditTextBytes := c.RequestHardMaxBytes + automaticAuditTextOverheadBytes
+	if c.AuditTextMaxBytes != 0 && (c.AuditTextMaxBytes < 4096 || int64(c.AuditTextMaxBytes) > maximumConfiguredAuditTextBytes) {
+		problems = append(problems, "AUDIT_TEXT_MAX_BYTES must be 0 to follow REQUEST_HARD_MAX_BYTES or between 4 KiB and REQUEST_HARD_MAX_BYTES plus separator headroom")
 	}
+	effectiveAuditTextMaxBytes, _ := resolveAuditTextMaxBytes(c.AuditTextMaxBytes, c.RequestHardMaxBytes)
 	if c.AuditOutputMaxTokens < 32 || c.AuditOutputMaxTokens > 1024 {
 		problems = append(problems, "AUDIT_OUTPUT_MAX_TOKENS must be between 32 and 1024")
 	}
-	if c.AuditLongContextThresholdBytes < 256 || c.AuditLongContextThresholdBytes > c.AuditTextMaxBytes {
-		problems = append(problems, "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES must be between 256 bytes and AUDIT_TEXT_MAX_BYTES")
+	if c.AuditLongContextThresholdBytes < 256 || c.AuditLongContextThresholdBytes > effectiveAuditTextMaxBytes {
+		problems = append(problems, "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES must be between 256 bytes and the effective audit text limit")
 	}
 	if c.AuditLongContextTimeout < time.Second || c.AuditLongContextTimeout > 10*time.Minute {
 		problems = append(problems, "AUDIT_LONG_CONTEXT_TIMEOUT must be between 1s and 10m")
@@ -203,8 +205,8 @@ func (c Config) Validate() error {
 	if c.AuditContextTargetTokens != 0 && (c.AuditContextTargetTokens < 1024 || c.AuditContextTargetTokens > 1000000) {
 		problems = append(problems, "AUDIT_CONTEXT_TARGET_TOKENS must be 0 for automatic model-derived sizing or between 1024 and 1000000")
 	}
-	if c.AuditFallbackChunkBytes < 1024 || c.AuditFallbackChunkBytes > c.AuditTextMaxBytes {
-		problems = append(problems, "AUDIT_FALLBACK_CHUNK_BYTES must be between 1024 and AUDIT_TEXT_MAX_BYTES")
+	if c.AuditFallbackChunkBytes < 1024 || c.AuditFallbackChunkBytes > effectiveAuditTextMaxBytes {
+		problems = append(problems, "AUDIT_FALLBACK_CHUNK_BYTES must be between 1024 and the effective audit text limit")
 	}
 	if c.AuditChunkOverlapBytes < 0 || c.AuditChunkOverlapBytes >= c.AuditFallbackChunkBytes/2 {
 		problems = append(problems, "AUDIT_CHUNK_OVERLAP_BYTES must be non-negative and less than half of AUDIT_FALLBACK_CHUNK_BYTES")

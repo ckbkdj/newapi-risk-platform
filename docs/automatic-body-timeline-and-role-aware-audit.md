@@ -26,3 +26,7 @@ Trace 会记录 `audit_input_scope=end_user_intent_only`、用户意图字节数
 ## NewAPI 请求关联
 
 Risk Gateway 识别 `X-NewAPI-Request-ID`、`X-Oneapi-Request-Id` 和 `X-Request-ID`。响应同时返回 `X-Risk-Request-ID` 与 `X-Oneapi-Request-Id`，使 NewAPI 可以把风控 Request ID 记录为 upstream request ID。页面默认按完成时间展示，并同时提供开始、完成、入库三种时间。
+
+## 完整大文本审计
+
+`AUDIT_TEXT_MAX_BYTES=0` 表示审计文本容量自动跟随 `REQUEST_HARD_MAX_BYTES`，并为角色标签保留少量空间。合法大请求不会再出现“Gateway 已放行 58 MiB，但只审计前 8 MiB 文本”的隐藏截断。超过审计模型上下文后仍使用重叠分段，默认最多 256 段；无法完成所有分段时保持 fail-closed，不会放行未审计尾部。
