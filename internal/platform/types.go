@@ -120,18 +120,25 @@ type AuditDecision struct {
 }
 
 type AuditAttempt struct {
-	ProfileID   int64   `json:"profile_id"`
-	ProfileName string  `json:"profile_name"`
-	Model       string  `json:"model"`
-	Attempt     int     `json:"attempt"`
-	Success     bool    `json:"success"`
-	Decision    string  `json:"decision,omitempty"`
-	RiskCode    string  `json:"risk_code,omitempty"`
-	Confidence  float64 `json:"confidence,omitempty"`
-	Evidence    string  `json:"evidence,omitempty"`
-	ErrorClass  string  `json:"error_class,omitempty"`
-	HTTPStatus  int     `json:"http_status,omitempty"`
-	Reason      string  `json:"reason,omitempty"`
+	ProfileID            int64   `json:"profile_id"`
+	ProfileName          string  `json:"profile_name"`
+	Model                string  `json:"model"`
+	Attempt              int     `json:"attempt"`
+	Success              bool    `json:"success"`
+	Decision             string  `json:"decision,omitempty"`
+	RiskCode             string  `json:"risk_code,omitempty"`
+	Confidence           float64 `json:"confidence,omitempty"`
+	Evidence             string  `json:"evidence,omitempty"`
+	ErrorClass           string  `json:"error_class,omitempty"`
+	HTTPStatus           int     `json:"http_status,omitempty"`
+	Reason               string  `json:"reason,omitempty"`
+	OutputMode           string  `json:"output_mode,omitempty"`
+	OutputMaxTokens      int     `json:"output_max_tokens,omitempty"`
+	FinishReason         string  `json:"finish_reason,omitempty"`
+	ResponseContentBytes int     `json:"response_content_bytes,omitempty"`
+	ResponseSource       string  `json:"response_source,omitempty"`
+	ResponsePreview      string  `json:"response_preview,omitempty"`
+	ResponseID           string  `json:"response_id,omitempty"`
 }
 
 type AuditResult struct {
@@ -173,6 +180,13 @@ type AuditResult struct {
 	AuditRuleSuppressions       []RuleSuppressionDiagnostic `json:"audit_rule_suppressions,omitempty"`
 	AuditPolicyMode             string                      `json:"audit_policy_mode,omitempty"`
 	AuditPolicyAdjustment       *AuditPolicyAdjustment      `json:"audit_policy_adjustment,omitempty"`
+	AuditOutputMode             string                      `json:"audit_output_mode,omitempty"`
+	AuditOutputMaxTokens        int                         `json:"audit_output_max_tokens,omitempty"`
+	AuditFinishReason           string                      `json:"audit_finish_reason,omitempty"`
+	AuditResponseContentBytes   int                         `json:"audit_response_content_bytes,omitempty"`
+	AuditResponseSource         string                      `json:"audit_response_source,omitempty"`
+	AuditResponsePreview        string                      `json:"audit_response_preview,omitempty"`
+	AuditResponseID             string                      `json:"audit_response_id,omitempty"`
 }
 
 type TraceEvent struct {

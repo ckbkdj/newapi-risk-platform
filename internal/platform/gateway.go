@@ -440,6 +440,27 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(auditResult.AuditAttempts) > 0 {
 		trace.Metadata["audit_attempts"] = auditResult.AuditAttempts
 	}
+	if auditResult.AuditOutputMode != "" {
+		trace.Metadata["audit_output_mode"] = auditResult.AuditOutputMode
+	}
+	if auditResult.AuditOutputMaxTokens > 0 {
+		trace.Metadata["audit_output_max_tokens"] = auditResult.AuditOutputMaxTokens
+	}
+	if auditResult.AuditFinishReason != "" {
+		trace.Metadata["audit_finish_reason"] = auditResult.AuditFinishReason
+	}
+	if auditResult.AuditResponseContentBytes > 0 {
+		trace.Metadata["audit_response_content_bytes"] = auditResult.AuditResponseContentBytes
+	}
+	if auditResult.AuditResponseSource != "" {
+		trace.Metadata["audit_response_source"] = auditResult.AuditResponseSource
+	}
+	if auditResult.AuditResponsePreview != "" {
+		trace.Metadata["audit_response_preview"] = auditResult.AuditResponsePreview
+	}
+	if auditResult.AuditResponseID != "" {
+		trace.Metadata["audit_response_id"] = auditResult.AuditResponseID
+	}
 	auditDuration.WithLabelValues(slug).Observe(auditResult.Latency.Seconds())
 	if auditResult.Decision == DecisionBlock {
 		riskCode := firstNonEmpty(auditResult.RiskCode, "CYBER_POLICY_BLOCK")

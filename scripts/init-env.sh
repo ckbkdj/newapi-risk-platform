@@ -86,7 +86,7 @@ if not values.get("BIND_ADDRESS", "").strip():
 # default to 8 MiB so the request layer can segment the complete input.
 audit_defaults = {
     "AUDIT_TEXT_MAX_BYTES": "0",
-    "AUDIT_OUTPUT_MAX_TOKENS": "128",
+    "AUDIT_OUTPUT_MAX_TOKENS": "256",
     "AUDIT_DISABLE_THINKING": "true",
     "AUDIT_LONG_CONTEXT_THRESHOLD_BYTES": "131072",
     "AUDIT_LONG_CONTEXT_TIMEOUT": "120s",
@@ -103,6 +103,11 @@ for key, default in audit_defaults.items():
         should_set = True
         warnings.append(
             "AUDIT_TEXT_MAX_BYTES was changed to 0 so every accepted end-user text byte is eligible for complete chunked audit."
+        )
+    if key == "AUDIT_OUTPUT_MAX_TOKENS" and current == "128":
+        should_set = True
+        warnings.append(
+            "AUDIT_OUTPUT_MAX_TOKENS was increased from 128 to 256 so the six-field structured policy JSON is not truncated."
         )
     if key == "AUDIT_MAX_CHUNKS" and current == "64":
         should_set = True

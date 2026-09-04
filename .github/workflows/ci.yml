@@ -60,7 +60,7 @@ jobs:
               'REQUEST_LARGE_BODY_THRESHOLD_BYTES': '8388608',
               'REQUEST_LARGE_BODY_MAX_CONCURRENCY': '4',
               'AUDIT_TEXT_MAX_BYTES': '0',
-              'AUDIT_OUTPUT_MAX_TOKENS': '128',
+              'AUDIT_OUTPUT_MAX_TOKENS': '256',
               'AUDIT_DISABLE_THINKING': 'true',
               'AUDIT_LONG_CONTEXT_THRESHOLD_BYTES': '131072',
               'AUDIT_LONG_CONTEXT_TIMEOUT': '120s',
@@ -73,13 +73,12 @@ jobs:
           for key, value in expected.items():
               assert current.get(key) == value, (key, current.get(key), value)
 
-          # Reproduce both the historical fixed 8 MiB deployment and the
-          # temporary fixed 64 MiB workaround. Existing secret values remain.
+          # Reproduce an old deployment. Existing secret values remain while
+          # fixed request/audit limits and the 128-token JSON budget migrate.
           remove = {
               'REQUEST_HARD_MAX_BYTES',
               'REQUEST_LARGE_BODY_THRESHOLD_BYTES',
               'REQUEST_LARGE_BODY_MAX_CONCURRENCY',
-              'AUDIT_OUTPUT_MAX_TOKENS',
               'AUDIT_DISABLE_THINKING',
               'AUDIT_LONG_CONTEXT_THRESHOLD_BYTES',
               'AUDIT_LONG_CONTEXT_TIMEOUT',
@@ -97,6 +96,8 @@ jobs:
                   line = 'REQUEST_MAX_BYTES=67108864'
               elif key == 'AUDIT_TEXT_MAX_BYTES':
                   line = 'AUDIT_TEXT_MAX_BYTES=8388608'
+              elif key == 'AUDIT_OUTPUT_MAX_TOKENS':
+                  line = 'AUDIT_OUTPUT_MAX_TOKENS=128'
               elif key == 'AUDIT_MAX_CHUNKS':
                   line = 'AUDIT_MAX_CHUNKS=64'
               migrated.append(line)
@@ -115,6 +116,7 @@ jobs:
           assert values['REQUEST_LARGE_BODY_THRESHOLD_BYTES'] == '8388608'
           assert values['REQUEST_LARGE_BODY_MAX_CONCURRENCY'] == '4'
           assert values['AUDIT_TEXT_MAX_BYTES'] == '0'
+          assert values['AUDIT_OUTPUT_MAX_TOKENS'] == '256'
           assert values['AUDIT_MAX_CHUNKS'] == '256'
           PY
 

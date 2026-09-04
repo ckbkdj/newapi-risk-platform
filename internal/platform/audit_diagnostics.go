@@ -14,12 +14,19 @@ import (
 const auditDiagnosticTextLimit = 700
 
 type AuditModelCallError struct {
-	Class            string
-	HTTPStatus       int
-	Message          string
-	Cause            error
-	MaxContextTokens int
-	RequestedTokens  int
+	Class                string
+	HTTPStatus           int
+	Message              string
+	Cause                error
+	MaxContextTokens     int
+	RequestedTokens      int
+	OutputMode           string
+	OutputMaxTokens      int
+	FinishReason         string
+	ResponseContentBytes int
+	ResponseSource       string
+	ResponsePreview      string
+	ResponseID           string
 }
 
 func (e *AuditModelCallError) Error() string {
@@ -84,6 +91,9 @@ func auditHTTPStatusError(status int, body []byte) error {
 	message := fmt.Sprintf("audit model returned HTTP %d", status)
 	if detail != "" {
 		message += ": " + detail
+	}
+	if (status == 400 || status == 422) && looksLikeStructuredOutputUnsupported(message) {
+		class = "structured_output_unsupported"
 	}
 	maxContextTokens := 0
 	requestedTokens := 0
@@ -224,23 +234,42 @@ func sanitizeAuditDiagnostic(value string) string {
 }
 
 func parseAuditModelResponseContent(content string) (modelAuditResponse, error) {
+	return parseAuditModelResponseContentDepth(content, 0)
+}
+
+func parseAuditModelResponseContentDepth(content string, depth int) (modelAuditResponse, error) {
 	content = strings.TrimSpace(strings.ToValidUTF8(content, ""))
 	if content == "" {
 		return modelAuditResponse{}, newAuditModelCallError("empty_response", 0, "audit model returned empty content", nil)
 	}
+	if depth > 5 {
+		return modelAuditResponse{}, newAuditModelCallError("invalid_json", 0, "audit model output exceeded nested JSON recovery depth", nil)
+	}
 
-	var direct modelAuditResponse
-	if json.Unmarshal([]byte(content), &direct) == nil && strings.TrimSpace(direct.Decision) != "" {
-		return validateAuditModelResponse(direct)
+	var decoded any
+	if json.Unmarshal([]byte(content), &decoded) == nil {
+		if result, found, err := auditModelResponseFromValue(decoded, depth); found || err != nil {
+			return result, err
+		}
 	}
 
 	candidates := balancedJSONObjects(content)
+	var candidateError error
 	for index := len(candidates) - 1; index >= 0; index-- {
-		var candidate modelAuditResponse
-		if json.Unmarshal([]byte(candidates[index]), &candidate) != nil || strings.TrimSpace(candidate.Decision) == "" {
+		var value any
+		if json.Unmarshal([]byte(candidates[index]), &value) != nil {
 			continue
 		}
-		return validateAuditModelResponse(candidate)
+		result, found, err := auditModelResponseFromValue(value, depth)
+		if found && err == nil {
+			return result, nil
+		}
+		if err != nil && candidateError == nil {
+			candidateError = err
+		}
+	}
+	if candidateError != nil {
+		return modelAuditResponse{}, candidateError
 	}
 	return modelAuditResponse{}, newAuditModelCallError(
 		"invalid_json",
@@ -248,6 +277,47 @@ func parseAuditModelResponseContent(content string) (modelAuditResponse, error) 
 		"audit model output did not contain a valid policy JSON object",
 		nil,
 	)
+}
+
+func auditModelResponseFromValue(value any, depth int) (modelAuditResponse, bool, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		if _, exists := typed["decision"]; exists {
+			encoded, err := json.Marshal(typed)
+			if err != nil {
+				return modelAuditResponse{}, true, newAuditModelCallError("invalid_json", 0, "encode nested audit model policy object", err)
+			}
+			var result modelAuditResponse
+			if err := json.Unmarshal(encoded, &result); err != nil {
+				return modelAuditResponse{}, true, newAuditModelCallError("invalid_json", 0, "decode nested audit model policy object", err)
+			}
+			validated, err := validateAuditModelResponse(result)
+			return validated, true, err
+		}
+		for _, key := range []string{"result", "policy", "decision_result", "output", "response", "data"} {
+			if child, exists := typed[key]; exists {
+				if result, found, err := auditModelResponseFromValue(child, depth+1); found || err != nil {
+					return result, found, err
+				}
+			}
+		}
+	case []any:
+		for index := len(typed) - 1; index >= 0; index-- {
+			if result, found, err := auditModelResponseFromValue(typed[index], depth+1); found || err != nil {
+				return result, found, err
+			}
+		}
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return modelAuditResponse{}, false, nil
+		}
+		result, err := parseAuditModelResponseContentDepth(text, depth+1)
+		if err == nil {
+			return result, true, nil
+		}
+	}
+	return modelAuditResponse{}, false, nil
 }
 
 func validateAuditModelResponse(result modelAuditResponse) (modelAuditResponse, error) {
