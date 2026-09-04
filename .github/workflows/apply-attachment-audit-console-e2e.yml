@@ -1,0 +1,104 @@
+name: Apply attachment audit console and E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/attachment-media-audit
+    paths:
+      - .github/workflows/apply-attachment-audit-console-e2e.yml
+      - scripts/apply-attachment-audit-console-e2e.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-attachment-audit-console-e2e
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/attachment-media-audit
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+      - name: Wait for attachment engine
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 100); do
+            git fetch origin feat/attachment-media-audit
+            git reset --hard origin/feat/attachment-media-audit
+            if test -f internal/platform/attachment_audit.go && \
+               test -f internal/platform/attachment_extract.go && \
+               grep -q 'attachmentSemaphore' internal/platform/audit.go; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo 'attachment engine did not become available' >&2
+          exit 1
+      - name: Apply console, API, docs and E2E
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/apply-attachment-audit-console-e2e.py
+          python3 scripts/apply-attachment-audit-console-e2e.py
+          gofmt -w ./cmd ./internal
+      - name: Validate source
+        run: |
+          set -euo pipefail
+          git diff --check
+          bash -n scripts/e2e.sh scripts/init-env.sh scripts/deploy-local.sh scripts/upgrade.sh scripts/update.sh scripts/upgrade_test.sh
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('internal/platform/web/index.html').read_text(encoding='utf-8')
+          scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.S | re.I)
+          if not scripts:
+              raise SystemExit('embedded admin script not found')
+          Path('/tmp/admin.js').write_text('\n'.join(scripts), encoding='utf-8')
+          for marker in ('附件审计', 'attachment-audit-form', 'attachment_audits'):
+              if marker not in html:
+                  raise SystemExit(f'admin attachment marker missing: {marker}')
+          api = Path('docs/openapi.yaml').read_text(encoding='utf-8')
+          if '/api/admin/v1/attachment-audits/dry-run:' not in api:
+              raise SystemExit('attachment dry-run OpenAPI path missing')
+          PY
+          node --check /tmp/admin.js
+          docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
+      - name: Commit console and E2E
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+ckbkdj@users.noreply.github.com"
+          git add \
+            README.md \
+            cmd/mockprovider/main.go \
+            docker-compose.test.yml \
+            docs/attachment-media-audit.md \
+            docs/openapi.yaml \
+            internal/platform/admin.go \
+            internal/platform/attachment_admin.go \
+            internal/platform/attachment_audit.go \
+            internal/platform/attachment_fetch.go \
+            internal/platform/http.go \
+            internal/platform/web/index.html \
+            scripts/e2e.sh
+          if git diff --cached --quiet; then
+            echo "console and E2E already applied"
+            exit 0
+          fi
+          git commit -m "feat(audit): add attachment review console and E2E"
+          git push origin HEAD:feat/attachment-media-audit
