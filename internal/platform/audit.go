@@ -361,6 +361,13 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result.AuditFallbackCount = failoverMetadata.FallbackCount
 	result.AuditAttempts = append([]AuditAttempt(nil), failoverMetadata.Attempts...)
 	result.AuditModelsTried = auditAttemptModelNames(failoverMetadata.Attempts)
+	result.AuditOutputMode = failoverMetadata.OutputDiagnostics.Mode
+	result.AuditOutputMaxTokens = failoverMetadata.OutputDiagnostics.MaxTokens
+	result.AuditFinishReason = failoverMetadata.OutputDiagnostics.FinishReason
+	result.AuditResponseContentBytes = failoverMetadata.OutputDiagnostics.ResponseContentBytes
+	result.AuditResponseSource = failoverMetadata.OutputDiagnostics.ResponseSource
+	result.AuditResponsePreview = failoverMetadata.OutputDiagnostics.ResponsePreview
+	result.AuditResponseID = failoverMetadata.OutputDiagnostics.ResponseID
 	if result.AuditRequestedTokens > result.AuditContextWindowTokens && result.AuditContextWindowTokens > 0 {
 		result.AuditTokensOverLimit = result.AuditRequestedTokens - result.AuditContextWindowTokens
 	}
@@ -441,11 +448,12 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
 	}
+	outputPlan := auditOutputPlanFromContext(ctx)
 	payload := map[string]any{
 		"model":       profile.Model,
 		"temperature": 0,
-		"max_tokens":  e.outputMaxTokens,
-		"messages":    e.auditMessages(profile, text),
+		"max_tokens":  outputPlan.MaxTokens,
+		"messages":    e.auditMessagesWithPlan(profile, text, outputPlan),
 	}
 	if len(profile.Extra) > 0 {
 		var extra map[string]any
@@ -464,6 +472,7 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(
 		}
 	}
 	e.applyFastAuditDefaults(profile, payload)
+	applyAuditOutputContract(payload, outputPlan)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return AuditDecision{}, newAuditModelCallError("request_encode", 0, "encode audit model request", err)
@@ -499,16 +508,56 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(
 	if err != nil {
 		return AuditDecision{}, newAuditModelCallError("response_read", 0, "read audit model response", err)
 	}
+	responseRequestID := firstNonEmpty(
+		response.Header.Get("X-Request-ID"),
+		response.Header.Get("X-Request-Id"),
+		response.Header.Get("X-Oneapi-Request-Id"),
+	)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return AuditDecision{}, auditHTTPStatusError(response.StatusCode, responseBody)
+		diagnostics := auditOutputDiagnostics{
+			Mode:                 outputPlan.Mode,
+			MaxTokens:            outputPlan.MaxTokens,
+			ResponseContentBytes: len(responseBody),
+			ResponseSource:       "http_error_body",
+			ResponsePreview:      string(responseBody),
+			ResponseID:           responseRequestID,
+			Failed:               true,
+		}
+		recordAuditOutputDiagnostics(ctx, diagnostics)
+		return AuditDecision{}, annotateAuditOutputError(
+			auditHTTPStatusError(response.StatusCode, responseBody),
+			diagnostics,
+		)
 	}
-	content, err := extractChatCompletionContent(responseBody)
+	completion, err := extractAuditCompletionResponse(responseBody)
 	if err != nil {
-		return AuditDecision{}, newAuditModelCallError("response_format", 0, err.Error(), nil)
+		diagnostics := auditOutputDiagnostics{
+			Mode:                 outputPlan.Mode,
+			MaxTokens:            outputPlan.MaxTokens,
+			ResponseContentBytes: len(responseBody),
+			ResponseSource:       "response_envelope",
+			ResponsePreview:      string(responseBody),
+			ResponseID:           responseRequestID,
+			Failed:               true,
+		}
+		recordAuditOutputDiagnostics(ctx, diagnostics)
+		return AuditDecision{}, annotateAuditOutputError(
+			newAuditModelCallError("response_format", 0, err.Error(), nil),
+			diagnostics,
+		)
 	}
-	modelResult, err := parseAuditModelResponseContent(content)
+	if completion.ResponseID == "" {
+		completion.ResponseID = responseRequestID
+	}
+	diagnostics := auditOutputDiagnosticsForResponse(outputPlan, completion, false)
+	modelResult, err := parseAuditModelResponseContent(completion.Content)
 	if err != nil {
-		return AuditDecision{}, err
+		if errorClass, _, _ := auditModelErrorDetails(err); errorClass == "invalid_json" {
+			err = auditInvalidModelOutputError(completion)
+		}
+		diagnostics.Failed = true
+		recordAuditOutputDiagnostics(ctx, diagnostics)
+		return AuditDecision{}, annotateAuditOutputError(err, diagnostics)
 	}
 	decision := AuditDecision{
 		Decision:   modelResult.Decision,
@@ -519,55 +568,25 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(
 		Source:     "model",
 		Evidence:   modelResult.Evidence,
 	}
-	return validateAuditDecisionEvidence(decision, evidenceSource)
+	validated, err := validateAuditDecisionEvidence(decision, evidenceSource)
+	if err != nil {
+		diagnostics.Failed = true
+		recordAuditOutputDiagnostics(ctx, diagnostics)
+		return AuditDecision{}, annotateAuditOutputError(err, diagnostics)
+	}
+	// A successful policy result does not persist the full JSON response. The
+	// mode, byte count, finish reason and response field remain observable.
+	diagnostics.ResponsePreview = ""
+	recordAuditOutputDiagnostics(ctx, diagnostics)
+	return validated, nil
 }
 
 func extractChatCompletionContent(body []byte) (string, error) {
-	var direct modelAuditResponse
-	if json.Unmarshal(body, &direct) == nil && strings.TrimSpace(direct.Decision) != "" {
-		return string(body), nil
+	response, err := extractAuditCompletionResponse(body)
+	if err != nil {
+		return "", err
 	}
-	var envelope struct {
-		Choices []struct {
-			Text    json.RawMessage `json:"text"`
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return "", fmt.Errorf("decode audit model response: %w", err)
-	}
-	if len(envelope.Choices) == 0 {
-		return "", errors.New("audit model response has no choices")
-	}
-	decodeText := func(raw json.RawMessage) string {
-		if len(raw) == 0 || string(raw) == "null" {
-			return ""
-		}
-		var text string
-		if json.Unmarshal(raw, &text) == nil {
-			return text
-		}
-		var parts []map[string]any
-		if json.Unmarshal(raw, &parts) == nil {
-			var builder strings.Builder
-			for _, part := range parts {
-				if value, ok := part["text"].(string); ok {
-					builder.WriteString(value)
-				}
-			}
-			return builder.String()
-		}
-		return ""
-	}
-	if text := decodeText(envelope.Choices[0].Message.Content); strings.TrimSpace(text) != "" {
-		return text, nil
-	}
-	if text := decodeText(envelope.Choices[0].Text); strings.TrimSpace(text) != "" {
-		return text, nil
-	}
-	return "", errors.New("audit model response content is not text")
+	return response.Content, nil
 }
 
 func ExtractAuditText(body []byte, maxBytes int) string {

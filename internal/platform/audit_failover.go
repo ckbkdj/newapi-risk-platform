@@ -14,11 +14,12 @@ const (
 )
 
 type auditFailoverMetadata struct {
-	CallMetadata    auditCallMetadata
-	AttemptCount    int
-	ModelRetryCount int
-	FallbackCount   int
-	Attempts        []AuditAttempt
+	CallMetadata      auditCallMetadata
+	AttemptCount      int
+	ModelRetryCount   int
+	FallbackCount     int
+	Attempts          []AuditAttempt
+	OutputDiagnostics auditOutputDiagnostics
 }
 
 func (e *AuditEngine) callModelWithFailover(
@@ -88,15 +89,26 @@ func (e *AuditEngine) callModelWithFailover(
 				break
 			}
 
-			decision, callMetadata, err := e.callModel(ctx, profile, text)
+			outputPlan := e.auditOutputPlan(profile, attempt)
+			attemptContext, outputState := withAuditOutputAttempt(ctx, outputPlan)
+			decision, callMetadata, err := e.callModel(attemptContext, profile, text)
+			outputDiagnostics := outputState.snapshot(err != nil)
+			metadata.OutputDiagnostics = outputDiagnostics
 			metadata.CallMetadata = mergeAuditCallMetadata(metadata.CallMetadata, callMetadata)
 			metadata.AttemptCount++
 			attemptRecord := AuditAttempt{
-				ProfileID:   profile.ID,
-				ProfileName: profile.Name,
-				Model:       profile.Model,
-				Attempt:     attempt + 1,
-				Success:     err == nil,
+				ProfileID:            profile.ID,
+				ProfileName:          profile.Name,
+				Model:                profile.Model,
+				Attempt:              attempt + 1,
+				Success:              err == nil,
+				OutputMode:           outputDiagnostics.Mode,
+				OutputMaxTokens:      outputDiagnostics.MaxTokens,
+				FinishReason:         outputDiagnostics.FinishReason,
+				ResponseContentBytes: outputDiagnostics.ResponseContentBytes,
+				ResponseSource:       outputDiagnostics.ResponseSource,
+				ResponsePreview:      outputDiagnostics.ResponsePreview,
+				ResponseID:           outputDiagnostics.ResponseID,
 			}
 			if err == nil {
 				attemptRecord.Decision = decision.Decision
@@ -108,6 +120,7 @@ func (e *AuditEngine) callModelWithFailover(
 				return decision, profile, metadata, nil
 			}
 
+			err = annotateAuditOutputError(err, outputDiagnostics)
 			lastErr = err
 			attemptRecord.ErrorClass, attemptRecord.HTTPStatus, attemptRecord.Reason = auditModelErrorDetails(err)
 			metadata.Attempts = append(metadata.Attempts, attemptRecord)
@@ -170,6 +183,8 @@ func auditErrorRetryableOnSameProfile(err error) bool {
 		"response_format",
 		"empty_response",
 		"invalid_json",
+		"output_truncated",
+		"structured_output_unsupported",
 		"invalid_decision",
 		"invalid_evidence":
 		return true

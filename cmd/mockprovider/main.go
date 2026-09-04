@@ -16,6 +16,9 @@ type chatRequest struct {
 	Stream             bool           `json:"stream"`
 	MaxTokens          int            `json:"max_tokens"`
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs"`
+	ResponseFormat     map[string]any `json:"response_format"`
+	StructuredOutputs  map[string]any `json:"structured_outputs"`
+	GuidedJSON         any            `json:"guided_json"`
 	Messages           []struct {
 		Role    string `json:"role"`
 		Content any    `json:"content"`
@@ -60,7 +63,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(strings.ToLower(request.Model), "qwen") {
 		enableThinking, ok := request.ChatTemplateKwargs["enable_thinking"].(bool)
 		preserveThinking, preserveOK := request.ChatTemplateKwargs["preserve_thinking"].(bool)
-		if !ok || enableThinking || !preserveOK || preserveThinking || request.MaxTokens != 128 {
+		if !ok || enableThinking || !preserveOK || preserveThinking || request.MaxTokens < 256 || request.MaxTokens > 1024 {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": map[string]any{"message": "Qwen fast audit request parameters are missing"},
 			})
@@ -91,6 +94,16 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 			"id": "adaptive-audit-mock",
 			"choices": []any{map[string]any{
 				"message": map[string]any{"role": "assistant", "content": string(classification)},
+			}},
+		})
+		return
+	}
+	if strings.Contains(userText, "model-audit-structured-recovery") && mockAuditOutputMode(request) == "json_schema" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "audit-structured-recovery-first",
+			"choices": []any{map[string]any{
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": "The request is safe, but this first response forgot the required JSON object."},
 			}},
 		})
 		return
@@ -166,7 +179,8 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(userText, "model-audit-invalid-json") {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"choices": []any{map[string]any{
-				"message": map[string]any{"role": "assistant", "content": "not-json"},
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": "not-json"},
 			}},
 		})
 		return
@@ -182,12 +196,28 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": "audit-mock",
 		"choices": []any{map[string]any{
+			"finish_reason": "stop",
 			"message": map[string]any{
 				"role":    "assistant",
 				"content": string(classification),
 			},
 		}},
 	})
+}
+
+func mockAuditOutputMode(request chatRequest) string {
+	if value, _ := request.ResponseFormat["type"].(string); strings.EqualFold(value, "json_schema") {
+		return "json_schema"
+	} else if strings.EqualFold(value, "json_object") {
+		return "json_object"
+	}
+	if len(request.StructuredOutputs) > 0 {
+		return "vllm_structured_json"
+	}
+	if request.GuidedJSON != nil {
+		return "guided_json"
+	}
+	return "prompt_only"
 }
 
 func firstAuditEvidence(text string, candidates []string) string {

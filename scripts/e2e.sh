@@ -360,6 +360,13 @@ status="$(curl --silent --show-error -o "${WORKDIR}/audit-thinking.json" -w '%{h
 assert_status 200 "${status}" "${WORKDIR}/audit-thinking.json"
 contains "${WORKDIR}/audit-thinking.json" 'mock provider success'
 
+status="$(curl --silent --show-error -o "${WORKDIR}/audit-structured-recovery.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" \
+  -H 'X-Request-ID: e2e-audit-structured-recovery' \
+  --data-binary '{"model":"normal","messages":[{"role":"user","content":"model-audit-structured-recovery"}]}')"
+assert_status 200 "${status}" "${WORKDIR}/audit-structured-recovery.json"
+contains "${WORKDIR}/audit-structured-recovery.json" 'mock provider success'
+
 status="$(curl --silent --show-error -o "${WORKDIR}/audit-http-401.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
   --data-binary '{"model":"normal","messages":[{"role":"user","content":"model-audit-http-401"}]}')"
@@ -541,7 +548,8 @@ for _ in $(seq 1 40); do
      grep -Fq 'e2e-stream-slow-usage' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-buffered-usage' "${WORKDIR}/traces.json" && \
      grep -Fq 'e2e-model-block-evidence' "${WORKDIR}/traces.json" && \
-     grep -Fq 'e2e-audit-failover' "${WORKDIR}/traces.json"; then
+     grep -Fq 'e2e-audit-failover' "${WORKDIR}/traces.json" && \
+     grep -Fq 'e2e-audit-structured-recovery' "${WORKDIR}/traces.json"; then
     trace_ok=1
     break
   fi
@@ -569,6 +577,29 @@ for item in errors:
         raise RuntimeError(f"audit error trace is missing readable reason: {item}")
 if not any(item.get("metadata", {}).get("audit_http_status") == 401 for item in errors):
     raise RuntimeError("audit HTTP status 401 was not persisted")
+structured_recovery = next((item for item in items if item.get("request_id") == "e2e-audit-structured-recovery"), None)
+if not structured_recovery:
+    raise RuntimeError("structured-output recovery trace is missing")
+srm = structured_recovery.get("metadata", {})
+if structured_recovery.get("decision") != "allow" or int(structured_recovery.get("http_status", 0)) != 200:
+    raise RuntimeError(f"structured-output recovery did not reach upstream: {structured_recovery}")
+attempts = srm.get("audit_attempts", [])
+if len(attempts) != 2:
+    raise RuntimeError(f"expected one invalid JSON attempt and one recovery attempt: {attempts}")
+first, second = attempts
+if first.get("success") is not False or first.get("error_class") != "invalid_json" or first.get("output_mode") != "json_schema":
+    raise RuntimeError(f"first structured-output failure diagnostics are wrong: {first}")
+if "forgot the required JSON" not in str(first.get("response_preview", "")):
+    raise RuntimeError(f"sanitized invalid response preview is missing: {first}")
+if second.get("success") is not True or second.get("output_mode") != "vllm_structured_json":
+    raise RuntimeError(f"second structured-output recovery mode did not succeed: {second}")
+if int(second.get("output_max_tokens", 0)) < 384 or second.get("finish_reason") != "stop":
+    raise RuntimeError(f"recovery output budget/finish reason is wrong: {second}")
+if int(srm.get("audit_model_attempts", 0)) != 2 or int(srm.get("audit_model_retries", 0)) != 1:
+    raise RuntimeError(f"structured recovery retry counts are wrong: {srm}")
+if srm.get("audit_output_mode") != "vllm_structured_json" or srm.get("audit_response_preview"):
+    raise RuntimeError(f"successful final output diagnostics are wrong: {srm}")
+
 too_large = next((item for item in items if item.get("request_id") == "e2e-request-too-large"), None)
 if not too_large:
     raise RuntimeError("REQUEST_TOO_LARGE trace is missing")

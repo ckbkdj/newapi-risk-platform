@@ -36,23 +36,44 @@ func appendFastAuditDirective(systemPrompt string) string {
 }
 
 func (e *AuditEngine) auditMessages(profile AuditProfile, text string) []map[string]string {
+	return e.auditMessagesWithPlan(
+		profile,
+		text,
+		auditOutputPlan{Mode: auditOutputModePromptOnly, MaxTokens: e.outputMaxTokens},
+	)
+}
+
+func (e *AuditEngine) auditMessagesWithPlan(profile AuditProfile, text string, plan auditOutputPlan) []map[string]string {
 	systemPrompt := strings.TrimSpace(profile.SystemPrompt)
 	if systemPrompt == "" {
 		systemPrompt = DefaultAuditSystemPrompt
 	}
 	systemPrompt = appendFastAuditDirective(systemPrompt)
 	systemPrompt += "\n\n" + auditPolicySystemDirective(profile)
+	systemPrompt += "\n\n" + auditOutputPlanDirective(plan)
 	return []map[string]string{
 		{"role": "system", "content": systemPrompt},
-		{"role": "user", "content": e.auditUserContent(profile, text)},
+		{"role": "user", "content": e.auditUserContentWithPlan(profile, text, plan)},
 	}
 }
 
 func (e *AuditEngine) auditUserContent(profile AuditProfile, text string) string {
-	if !e.qwenFastModeEnabled(profile) {
-		return text
+	return e.auditUserContentWithPlan(
+		profile,
+		text,
+		auditOutputPlan{Mode: auditOutputModePromptOnly, MaxTokens: e.outputMaxTokens},
+	)
+}
+
+func (e *AuditEngine) auditUserContentWithPlan(profile AuditProfile, text string, plan auditOutputPlan) string {
+	result := text
+	if e.qwenFastModeEnabled(profile) {
+		result += fastAuditUserSuffix
 	}
-	return text + fastAuditUserSuffix
+	if plan.Attempt > 0 {
+		result += "\n\n[FORMAT RECOVERY]\n" + auditOutputPlanDirective(plan)
+	}
+	return result
 }
 
 func (e *AuditEngine) applyFastAuditDefaults(profile AuditProfile, payload map[string]any) {
