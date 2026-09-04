@@ -1,0 +1,78 @@
+name: Apply attachment audit engine v2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/attachment-media-audit
+    paths:
+      - .github/workflows/apply-attachment-audit-engine-v2.yml
+      - scripts/run-attachment-audit-engine.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-attachment-audit-engine-v2
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/attachment-media-audit
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+          cache-dependency-path: go.sum
+      - name: Wait for foundation commit
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 80); do
+            git fetch origin feat/attachment-media-audit
+            git reset --hard origin/feat/attachment-media-audit
+            if test -f internal/platform/attachment_types.go && grep -q 'ATTACHMENT_AUDIT_ENABLED' internal/platform/config.go; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo 'attachment foundation did not become available' >&2
+          exit 1
+      - name: Apply engine
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/apply-attachment-audit-engine.py scripts/run-attachment-audit-engine.py
+          python3 scripts/run-attachment-audit-engine.py
+          gofmt -w ./cmd ./internal
+      - name: Validate
+        run: |
+          set -euo pipefail
+          git diff --check
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
+      - name: Commit engine
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+ckbkdj@users.noreply.github.com"
+          git add \
+            internal/platform/attachment_audit.go \
+            internal/platform/attachment_audit_test.go \
+            internal/platform/audit.go \
+            internal/platform/gateway.go \
+            internal/platform/types.go
+          if git diff --cached --quiet; then
+            echo "engine already applied"
+            exit 0
+          fi
+          git commit -m "feat(audit): audit images and files independently"
+          git push origin HEAD:feat/attachment-media-audit
