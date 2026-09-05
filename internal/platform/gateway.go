@@ -367,11 +367,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if auditResult.Reason != "" {
 		trace.Metadata["audit_reason"] = truncateString(auditResult.Reason, auditDiagnosticTextLimit)
 	}
-	if strings.HasPrefix(auditResult.Source, "model") {
-		trace.Metadata["audit_model_decision"] = auditResult.Decision
-		trace.Metadata["audit_model_risk_code"] = auditResult.RiskCode
-		trace.Metadata["audit_model_confidence"] = auditResult.Confidence
-	}
+	recordAuditDecisionMetadata(trace.Metadata, auditResult)
 	if auditResult.EvidenceVerified {
 		trace.Metadata["audit_model_evidence"] = truncateString(auditResult.Evidence, 1200)
 		trace.Metadata["audit_model_evidence_context"] = truncateString(auditResult.EvidenceContext, 1600)
@@ -402,6 +398,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if auditResult.AuditChunkBytes > 0 {
 		trace.Metadata["audit_chunk_bytes"] = auditResult.AuditChunkBytes
+	}
+	trace.Metadata["audit_input_tokens_lower_bound"] = auditResult.AuditRequestedTokensLowerBound
+	if auditResult.AuditObservedOutputTokens > 0 {
+		trace.Metadata["audit_observed_output_tokens"] = auditResult.AuditObservedOutputTokens
 	}
 	if auditResult.AuditRequestedTokens > 0 {
 		trace.Metadata["audit_requested_tokens"] = auditResult.AuditRequestedTokens

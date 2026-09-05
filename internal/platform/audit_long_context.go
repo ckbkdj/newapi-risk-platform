@@ -11,12 +11,14 @@ import (
 const auditChunkRetryLimit = 4
 
 type auditCallMetadata struct {
-	Mode                string
-	ChunkCount          int
-	ChunkBytes          int
-	RequestedTokens     int
-	ContextWindowTokens int
-	RetryCount          int
+	Mode                      string
+	ChunkCount                int
+	ChunkBytes                int
+	RequestedTokens           int
+	RequestedTokensLowerBound bool
+	ObservedOutputTokens      int
+	ContextWindowTokens       int
+	RetryCount                int
 }
 
 type auditChunkResult struct {
@@ -40,19 +42,24 @@ func (e *AuditEngine) callModel(
 		ChunkBytes: len(text),
 	}
 
-	decision, err := e.callModelOnce(ctx, profile, text)
-	if err == nil || !isAuditContextLengthError(err) {
-		return decision, metadata, err
+	// Every chunk, including a short tail, inherits the full request's prefill
+	// timeout. The caller's own deadline is still an absolute upper bound.
+	ctx = context.WithValue(ctx, auditOriginalTextBytesKey{}, len(text))
+	resume, _ := ctx.Value(auditResumeChunksKey{}).(auditCallMetadata)
+	var lastContextError error
+	chunkBytes := resume.ChunkBytes
+	if resume.Mode == "chunked_after_context_limit" && chunkBytes > 0 {
+		metadata = resume
+	} else {
+		decision, err := e.callModelOnce(ctx, profile, text)
+		if err == nil || !isAuditContextLengthError(err) {
+			return decision, metadata, err
+		}
+		metadata.Mode = "chunked_after_context_limit"
+		metadata = observeAuditContextError(metadata, err)
+		chunkBytes = e.recoveryAuditChunkBytes(ctx, len(text), err)
+		lastContextError = err
 	}
-
-	metadata.Mode = "chunked_after_context_limit"
-	metadata.ContextWindowTokens, metadata.RequestedTokens = auditContextTokenCounts(err)
-	chunkBytes := e.initialAuditChunkBytes(
-		len(text),
-		metadata.RequestedTokens,
-		metadata.ContextWindowTokens,
-	)
-	lastContextError := err
 
 	for retry := 0; retry < auditChunkRetryLimit; retry++ {
 		chunks := splitAuditTextByBytes(text, chunkBytes, e.chunkOverlapBytes)
@@ -80,6 +87,7 @@ func (e *AuditEngine) callModel(
 			return AuditDecision{}, metadata, chunkErr
 		}
 		lastContextError = chunkErr
+		metadata = observeAuditContextError(metadata, chunkErr)
 		if chunkBytes <= 1024 {
 			break
 		}
@@ -101,15 +109,22 @@ func (e *AuditEngine) initialAuditChunkBytes(
 		return 1
 	}
 
+	return e.auditChunkBytesForOutput(textBytes, requestedTokens, contextWindowTokens, e.outputMaxTokens)
+}
+
+func (e *AuditEngine) auditChunkBytesForOutput(textBytes, requestedTokens, contextWindowTokens, outputTokens int) int {
 	targetTokens := e.contextTargetTokens
 	if contextWindowTokens > 0 {
-		modelTarget := contextWindowTokens - e.outputMaxTokens - 256
+		modelTarget := contextWindowTokens - outputTokens - 2048
 		if modelTarget > 0 && (targetTokens <= 0 || modelTarget < targetTokens) {
 			targetTokens = modelTarget
 		}
 	}
 
 	chunkBytes := e.fallbackChunkBytes
+	if chunkBytes <= 0 {
+		chunkBytes = 192 * 1024
+	}
 	if requestedTokens > 0 && targetTokens > 0 && requestedTokens > targetTokens {
 		// A 10% safety margin covers system/template overhead and token-density
 		// variation between portions of the request.

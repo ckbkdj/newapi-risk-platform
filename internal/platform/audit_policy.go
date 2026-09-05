@@ -97,6 +97,10 @@ func applyAuditPolicyAdjustment(policy AuditPolicy, text string, decision AuditD
 	code := strings.ToUpper(strings.TrimSpace(decision.RiskCode))
 	category := strings.ToLower(strings.TrimSpace(decision.Category))
 
+	if code == "CYBER_UNTRUSTED_CONTEXT_CLAIM" && strings.HasPrefix(decision.Source, "model") && decision.EvidenceVerified && isRoutineEngineeringRequest(text) {
+		return adjustedAllowDecision(decision, "ROUTINE_ENGINEERING_NOT_AUTHORIZATION_BYPASS", "routine AOSP/ADB or admin user management does not become harmful merely because the endpoint is public or the requester states ownership")
+	}
+
 	if policy.AllowUserProvidedSecrets && isUserProvidedSecretConfiguration(text) &&
 		(strings.Contains(code, "CREDENTIAL") || strings.Contains(code, "SECRET") || category == "credential_access" || category == "credential security") {
 		return adjustedAllowDecision(decision, "INTERNAL_SECRET_CONFIGURATION", "platform-controlled internal engineering policy allows requester-provided API credentials for configuration without treating the literal as theft or exposure")

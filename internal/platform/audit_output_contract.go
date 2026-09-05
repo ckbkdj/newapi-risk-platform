@@ -279,6 +279,9 @@ func annotateAuditOutputError(err error, diagnostics auditOutputDiagnostics) err
 	if !errors.As(err, &callError) {
 		return err
 	}
+	diagnostics.ResponsePreview = sanitizeAuditResponsePreview(diagnostics.ResponsePreview)
+	diagnostics.ResponseID = truncateString(strings.TrimSpace(diagnostics.ResponseID), 200)
+	diagnostics.ResponseSource = truncateString(strings.TrimSpace(diagnostics.ResponseSource), 120)
 	copyError := *callError
 	copyError.OutputMode = diagnostics.Mode
 	copyError.OutputMaxTokens = diagnostics.MaxTokens

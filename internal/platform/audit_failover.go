@@ -75,6 +75,8 @@ func (e *AuditEngine) callModelWithFailover(
 			retries = maxAuditRetryCount
 		}
 
+		formatAttempt := 0
+		var profileChunks auditCallMetadata
 		for attempt := 0; attempt <= retries; attempt++ {
 			if ctx.Err() != nil {
 				return AuditDecision{}, usedProfile, metadata, ctx.Err()
@@ -89,10 +91,17 @@ func (e *AuditEngine) callModelWithFailover(
 				break
 			}
 
-			outputPlan := e.auditOutputPlan(profile, attempt)
+			outputPlan := e.auditOutputPlan(profile, formatAttempt)
 			attemptContext, outputState := withAuditOutputAttempt(ctx, outputPlan)
+			attemptContext = context.WithValue(attemptContext, auditResumeChunksKey{}, profileChunks)
 			decision, callMetadata, err := e.callModel(attemptContext, profile, text)
-			outputDiagnostics := outputState.snapshot(err != nil)
+			profileChunks = callMetadata
+			outputDiagnostics := outputState.snapshot(false)
+			if err != nil {
+				// A previous HTTP 400 in another chunk is not the response to a
+				// later transport timeout. Correlate diagnostics to this error.
+				outputDiagnostics = auditDiagnosticsFromError(outputPlan, err)
+			}
 			metadata.OutputDiagnostics = outputDiagnostics
 			metadata.CallMetadata = mergeAuditCallMetadata(metadata.CallMetadata, callMetadata)
 			metadata.AttemptCount++
@@ -127,6 +136,9 @@ func (e *AuditEngine) callModelWithFailover(
 			if attempt >= retries || !auditErrorRetryableOnSameProfile(err) {
 				break
 			}
+			if auditErrorNeedsOutputRecovery(err) {
+				formatAttempt++
+			}
 			metadata.ModelRetryCount++
 			if err := waitAuditRetry(ctx, attempt); err != nil {
 				return AuditDecision{}, usedProfile, metadata, err
@@ -160,6 +172,8 @@ func mergeAuditCallMetadata(existing auditCallMetadata, current auditCallMetadat
 	if existing.RequestedTokens > result.RequestedTokens {
 		result.RequestedTokens = existing.RequestedTokens
 		result.ContextWindowTokens = existing.ContextWindowTokens
+		result.RequestedTokensLowerBound = existing.RequestedTokensLowerBound
+		result.ObservedOutputTokens = existing.ObservedOutputTokens
 	} else if result.RequestedTokens == 0 && existing.RequestedTokens > 0 {
 		result.RequestedTokens = existing.RequestedTokens
 		result.ContextWindowTokens = existing.ContextWindowTokens

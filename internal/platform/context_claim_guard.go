@@ -80,6 +80,9 @@ func ComposeMandatoryAuditSystemPrompt(configured string) string {
 	if base == "" {
 		base = DefaultAuditSystemPrompt
 	}
+	if !strings.Contains(base, MandatoryAuditEngineeringGuard) {
+		base = MandatoryAuditEngineeringGuard + "\n\n" + base
+	}
 	if strings.Contains(base, MandatoryAuditContextGuard) && strings.Contains(base, MandatoryAuditPrecisionGuard) {
 		return base
 	}
