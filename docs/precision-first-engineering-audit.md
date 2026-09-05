@@ -43,3 +43,5 @@ POST  /api/admin/v1/cyber-rule-candidates/{id}/promote
 ## Git 更新与部署
 
 首次部署使用 `bash scripts/deploy-local.sh`。已有部署使用 `bash scripts/upgrade.sh <branch>`；升级脚本只接受 fast-forward，备份 `.env` 和正在运行的 PostgreSQL，保留全部 Volume，并在部署失败时回退代码与容器。数据库迁移不会被自动反向执行。
+
+AOSP、公司公网 ADB、后台普通用户管理及上下文下界恢复：参见 [2026-09-05 回归说明](aosp-adb-and-context-incident.md)。

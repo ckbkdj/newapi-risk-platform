@@ -14,19 +14,21 @@ import (
 const auditDiagnosticTextLimit = 700
 
 type AuditModelCallError struct {
-	Class                string
-	HTTPStatus           int
-	Message              string
-	Cause                error
-	MaxContextTokens     int
-	RequestedTokens      int
-	OutputMode           string
-	OutputMaxTokens      int
-	FinishReason         string
-	ResponseContentBytes int
-	ResponseSource       string
-	ResponsePreview      string
-	ResponseID           string
+	Class                     string
+	HTTPStatus                int
+	Message                   string
+	Cause                     error
+	MaxContextTokens          int
+	RequestedTokens           int
+	RequestedTokensLowerBound bool
+	ObservedOutputTokens      int
+	OutputMode                string
+	OutputMaxTokens           int
+	FinishReason              string
+	ResponseContentBytes      int
+	ResponseSource            string
+	ResponsePreview           string
+	ResponseID                string
 }
 
 func (e *AuditModelCallError) Error() string {
@@ -102,11 +104,13 @@ func auditHTTPStatusError(status int, body []byte) error {
 		maxContextTokens, requestedTokens = parseAuditContextTokenCounts(message)
 	}
 	return &AuditModelCallError{
-		Class:            class,
-		HTTPStatus:       status,
-		Message:          sanitizeAuditDiagnostic(message),
-		MaxContextTokens: maxContextTokens,
-		RequestedTokens:  requestedTokens,
+		Class:                     class,
+		HTTPStatus:                status,
+		Message:                   sanitizeAuditDiagnostic(message),
+		MaxContextTokens:          maxContextTokens,
+		RequestedTokens:           requestedTokens,
+		RequestedTokensLowerBound: class == "context_length" && auditInputLowerBoundPattern.MatchString(message),
+		ObservedOutputTokens:      auditObservedOutputTokens(message),
 	}
 }
 

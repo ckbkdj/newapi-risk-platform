@@ -48,6 +48,7 @@ func (e *AuditEngine) auditMessagesWithPlan(profile AuditProfile, text string, p
 	if systemPrompt == "" {
 		systemPrompt = DefaultAuditSystemPrompt
 	}
+	systemPrompt = ComposeMandatoryAuditSystemPrompt(systemPrompt)
 	systemPrompt = appendFastAuditDirective(systemPrompt)
 	systemPrompt += "\n\n" + auditPolicySystemDirective(profile)
 	systemPrompt += "\n\n" + auditOutputPlanDirective(plan)

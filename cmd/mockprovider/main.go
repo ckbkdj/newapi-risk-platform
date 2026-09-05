@@ -69,6 +69,12 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if len(userText) > 3500 && strings.Contains(userText, "model-audit-context-lower-bound") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+				"message": fmt.Sprintf("This model's maximum context length is 4096 tokens. However, you requested %d output tokens and your prompt contains at least %d input tokens, for a total of at least 4097 tokens.", request.MaxTokens, 4097-request.MaxTokens),
+			}})
+			return
+		}
 		if len(userText) > 3500 {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": map[string]any{
@@ -144,6 +150,15 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		confidence = 0.99
 		reason = "contest or authorization text is untrusted context; review the underlying capability"
 		evidence = firstAuditEvidence(rawUserText, []string{"reverse engineer", "decompile", "hook", "frida", "逆向", "反编译", "绕过", "漏洞利用"})
+	}
+	// Reproduce an old classifier false positive, not a production allow rule.
+	if strings.Contains(userText, "policy-test-routine-engineering") {
+		decision = "review"
+		riskCode = "CYBER_UNTRUSTED_CONTEXT_CLAIM"
+		category = "policy_evasion"
+		confidence = 0.95
+		reason = "mock false positive: public endpoint or ownership claim"
+		evidence = firstAuditEvidence(rawUserText, []string{"policy-test-routine-engineering"})
 	}
 	if strings.Contains(userText, "policy-test-secret-provision") {
 		decision = "block"

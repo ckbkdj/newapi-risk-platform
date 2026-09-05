@@ -354,6 +354,8 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result.AuditChunkCount = callMetadata.ChunkCount
 	result.AuditChunkBytes = callMetadata.ChunkBytes
 	result.AuditRequestedTokens = callMetadata.RequestedTokens
+	result.AuditRequestedTokensLowerBound = callMetadata.RequestedTokensLowerBound
+	result.AuditObservedOutputTokens = callMetadata.ObservedOutputTokens
 	result.AuditContextWindowTokens = callMetadata.ContextWindowTokens
 	result.AuditRetryCount = callMetadata.RetryCount
 	result.AuditModelAttempts = failoverMetadata.AttemptCount
@@ -368,8 +370,8 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result.AuditResponseSource = failoverMetadata.OutputDiagnostics.ResponseSource
 	result.AuditResponsePreview = failoverMetadata.OutputDiagnostics.ResponsePreview
 	result.AuditResponseID = failoverMetadata.OutputDiagnostics.ResponseID
-	if result.AuditRequestedTokens > result.AuditContextWindowTokens && result.AuditContextWindowTokens > 0 {
-		result.AuditTokensOverLimit = result.AuditRequestedTokens - result.AuditContextWindowTokens
+	if result.AuditRequestedTokens+result.AuditObservedOutputTokens > result.AuditContextWindowTokens && result.AuditContextWindowTokens > 0 {
+		result.AuditTokensOverLimit = result.AuditRequestedTokens + result.AuditObservedOutputTokens - result.AuditContextWindowTokens
 	}
 	if err != nil {
 		errorClass, auditHTTPStatus, reason := auditModelErrorDetails(err)
@@ -399,6 +401,8 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		}
 		return result
 	}
+	rawModelDecision := decision
+	result.AuditModelDecision = &rawModelDecision
 	if decision.Decision == DecisionBlock && decision.Confidence < usedProfile.BlockThreshold {
 		decision.Decision = DecisionReview
 		if decision.RiskCode == "" {
@@ -477,7 +481,11 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(
 	if err != nil {
 		return AuditDecision{}, newAuditModelCallError("request_encode", 0, "encode audit model request", err)
 	}
-	timeout := e.auditRequestTimeout(profile, len(text))
+	textBytes := len(text)
+	if originalBytes, ok := ctx.Value(auditOriginalTextBytesKey{}).(int); ok && originalBytes > textBytes {
+		textBytes = originalBytes
+	}
+	timeout := e.auditRequestTimeout(profile, textBytes)
 	requestContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(

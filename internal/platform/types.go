@@ -143,6 +143,11 @@ type AuditAttempt struct {
 
 type AuditResult struct {
 	AuditDecision
+
+	AuditModelDecision             *AuditDecision `json:"audit_model_decision_raw,omitempty"`
+	AuditRequestedTokensLowerBound bool           `json:"audit_requested_tokens_lower_bound,omitempty"`
+	AuditObservedOutputTokens      int            `json:"audit_observed_output_tokens,omitempty"`
+
 	PromptHMAC                  string                      `json:"prompt_hmac"`
 	TextBytes                   int                         `json:"text_bytes"`
 	Latency                     time.Duration               `json:"-"`
