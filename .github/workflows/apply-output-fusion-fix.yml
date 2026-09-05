@@ -60,9 +60,13 @@ jobs:
           bash scripts/upgrade_test.sh
           python3 scripts/test_collect_audit_diagnostics.py
           python3 -m py_compile scripts/collect-audit-diagnostics.py scripts/e2e-audit-fusion.py
-      - name: Commit validated source to repair branch
+      - name: Commit validated application source to repair branch
         run: |
           set -euo pipefail
+          # Workflow files require a separate authorized connector write; this
+          # contents-only job commits application sources, tests and docs only.
+          git restore --source=HEAD --staged --worktree .github/workflows/ci.yml
+          test "$(git diff --cached --name-only | wc -l)" -eq 28
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'fix(audit): resilient output decoding, bounded fusion and private diagnostics'
