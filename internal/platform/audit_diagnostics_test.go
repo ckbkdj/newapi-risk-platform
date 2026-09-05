@@ -20,14 +20,12 @@ Here is the result:
 	}
 }
 
-func TestParseAuditModelResponseContentPrefersFinalPolicyJSON(t *testing.T) {
-	content := `thinking example {"decision":"review","confidence":0.1} final {"decision":"block","risk_code":"CYBER_TEST","category":"test","confidence":0.999,"reason":"final"}`
-	result, err := parseAuditModelResponseContent(content)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Decision != DecisionBlock || result.RiskCode != "CYBER_TEST" {
-		t.Fatalf("unexpected final result: %+v", result)
+func TestParseAuditModelResponseContentRejectsConflictingPolicyJSON(t *testing.T) {
+	content := `thinking example {"decision":"review","confidence":0.1} final {"decision":"allow","risk_code":"","confidence":0.999,"reason":"final"}`
+	_, err := parseAuditModelResponseContent(content)
+	class, _, _ := auditModelErrorDetails(err)
+	if class != "ambiguous_output" {
+		t.Fatalf("multiple policies must not select allow: %v", err)
 	}
 }
 

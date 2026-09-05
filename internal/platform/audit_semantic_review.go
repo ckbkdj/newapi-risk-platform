@@ -12,13 +12,14 @@ const maxAuditSemanticCalls = 32
 const maxAuditSemanticRecords = 16
 
 type AuditSemanticReview struct {
-	Status         string         `json:"status"`
-	Candidate      AuditDecision  `json:"candidate"`
-	CandidateError string         `json:"candidate_error,omitempty"`
-	ProfileID      int64          `json:"profile_id"`
-	Model          string         `json:"model"`
-	Outcome        *AuditDecision `json:"outcome,omitempty"`
-	Attempts       []AuditAttempt `json:"attempts,omitempty"`
+	Status         string             `json:"status"`
+	Fusion         *AuditFusionResult `json:"fusion,omitempty"`
+	Candidate      AuditDecision      `json:"candidate"`
+	CandidateError string             `json:"candidate_error,omitempty"`
+	ProfileID      int64              `json:"profile_id"`
+	Model          string             `json:"model"`
+	Outcome        *AuditDecision     `json:"outcome,omitempty"`
+	Attempts       []AuditAttempt     `json:"attempts,omitempty"`
 }
 
 type auditSemanticStateKey struct{}
@@ -81,16 +82,48 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(ctx context.Context, profi
 
 	review := AuditSemanticReview{Status: "error", Candidate: cleanSemanticDecision(candidate), CandidateError: class}
 	defer func() { state.record(review) }()
+	if _, enabled := auditProfileExtra(profile)["_risk_fusion_profile_ids"]; enabled {
+		verified, fusion, err := e.fuseAuditIntent(ctx, profile, text, evidenceSource, state)
+		review.Fusion = fusion
+		if err != nil {
+			return AuditDecision{}, err
+		}
+		return finishSemanticReview(candidate, verified, &review), nil
+	}
 	verifier, profileErr := e.semanticVerifierProfile(ctx, profile)
 	if profileErr != nil {
 		return AuditDecision{}, profileErr
 	}
 	review.ProfileID, review.Model = verifier.ID, verifier.Model
+	verified, attempts, verifyErr := e.verifyAuditIntent(ctx, verifier, text, evidenceSource, state)
+	review.Attempts = attempts
+	if verifyErr != nil {
+		return AuditDecision{}, verifyErr
+	}
+	return finishSemanticReview(candidate, verified, &review), nil
+}
+
+func finishSemanticReview(candidate, verified AuditDecision, review *AuditSemanticReview) AuditDecision {
+	outcome := cleanSemanticDecision(verified)
+	review.Outcome = &outcome
+	review.Status = "confirmed"
+	if verified.Decision == DecisionAllow && candidate.Decision != DecisionAllow {
+		review.Status = "overturned"
+	}
+	if verified.Decision == DecisionReview {
+		review.Status = "unresolved"
+	}
+	verified.SemanticReview = review
+	return verified
+}
+
+func (e *AuditEngine) verifyAuditIntent(ctx context.Context, verifier AuditProfile, text, evidenceSource string, state *auditSemanticState) (AuditDecision, []AuditAttempt, error) {
+	var attempts []AuditAttempt
 	formatAttempt := 0
 	feedback := ""
 	for attempt := 0; attempt < 2; attempt++ {
 		if !state.reserveReview() {
-			return AuditDecision{}, newAuditModelCallError("semantic_review_budget", 0, "audit semantic verification call budget exhausted", nil)
+			return AuditDecision{}, attempts, newAuditModelCallError("semantic_review_budget", 0, "audit semantic verification call budget exhausted", nil)
 		}
 		plan := e.auditOutputPlan(verifier, formatAttempt)
 		plan.VerifyIntent = true
@@ -117,30 +150,21 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(ctx context.Context, profi
 		record := AuditAttempt{ProfileID: verifier.ID, ProfileName: verifier.Name, Model: verifier.Model, Attempt: attempt + 1, Success: verifyErr == nil, OutputMode: plan.Mode, OutputMaxTokens: plan.MaxTokens, FinishReason: diag.FinishReason, ResponseContentBytes: diag.ResponseContentBytes, ResponseSource: diag.ResponseSource, ResponseID: diag.ResponseID, ResponsePreview: diag.ResponsePreview}
 		if verifyErr == nil {
 			record.Decision, record.RiskCode, record.Confidence, record.Reason, record.Evidence = verified.Decision, verified.RiskCode, verified.Confidence, verified.Reason, verified.Evidence
-			review.Attempts = append(review.Attempts, record)
-			outcome := cleanSemanticDecision(verified)
-			review.Outcome = &outcome
-			review.Status = "confirmed"
-			if verified.Decision == DecisionAllow && candidate.Decision != DecisionAllow {
-				review.Status = "overturned"
-			} else if verified.Decision == DecisionReview {
-				review.Status = "unresolved"
-			}
-			// No self-referential pointers are persisted in the candidate/outcome.
-			verified.SemanticReview = &review
-			return verified, nil
+			record.ConfidenceKind, record.ConfidenceLabel, record.OutputNormalizations = verified.ConfidenceKind, verified.ConfidenceLabel, verified.OutputNormalizations
+			attempts = append(attempts, record)
+			return verified, attempts, nil
 		}
 		record.ErrorClass, record.HTTPStatus, record.Reason = auditModelErrorDetails(verifyErr)
-		review.Attempts = append(review.Attempts, record)
+		attempts = append(attempts, record)
 		if attempt == 1 || (!auditErrorNeedsOutputRecovery(verifyErr) && record.ErrorClass != "invalid_semantic_evidence") {
-			return AuditDecision{}, verifyErr
+			return AuditDecision{}, attempts, verifyErr
 		}
 		if auditErrorNeedsOutputRecovery(verifyErr) {
 			formatAttempt++
 		}
 		feedback = "The previous verification did not satisfy the evidence contract. Return all nine fields. request_evidence must be a literal current-action quote outside embedded history; do not cite platform instructions or assume a historical title is a current command. Keep reference content for adoption assessment."
 	}
-	return AuditDecision{}, newAuditModelCallError("semantic_verification_failed", 0, "semantic verification did not complete", nil)
+	return AuditDecision{}, attempts, newAuditModelCallError("semantic_verification_failed", 0, "semantic verification did not complete", nil)
 }
 
 func cleanSemanticDecision(d AuditDecision) AuditDecision {
@@ -167,6 +191,10 @@ func (e *AuditEngine) semanticVerifierProfile(ctx context.Context, root AuditPro
 			verifier = p
 		}
 	}
+	return governingAuditVerifier(root, verifier), nil
+}
+
+func governingAuditVerifier(root, verifier AuditProfile) AuditProfile {
 	// Endpoint/model/credentials can be independent; the route's governing
 	// policy must not silently change when using a second model.
 	verifier.SystemPrompt = root.SystemPrompt
@@ -180,7 +208,7 @@ func (e *AuditEngine) semanticVerifierProfile(ctx context.Context, root AuditPro
 	extra["_risk_allow_user_provided_secrets"] = policy.AllowUserProvidedSecrets
 	extra["_risk_allow_local_debug_credentials"] = policy.AllowLocalDebugCredentials
 	verifier.Extra, _ = json.Marshal(extra)
-	return verifier, nil
+	return verifier
 }
 
 var semanticHarmTypes = map[string]bool{
@@ -210,7 +238,7 @@ func validateAuditSemanticVerdictWithScope(d AuditDecision, scope auditSourceSco
 		if threshold < .90 {
 			threshold = .90
 		}
-		if d.Confidence < threshold {
+		if !auditConfidenceMeets(d, threshold) {
 			return invalid("semantic allow confidence is below the verification threshold")
 		}
 		d.RiskCode = ""

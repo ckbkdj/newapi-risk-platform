@@ -9,3 +9,8 @@ coverage.out
 .DS_Store
 .idea/
 .vscode/
+
+audit-diagnostics-*.zip
+
+__pycache__/
+*.pyc

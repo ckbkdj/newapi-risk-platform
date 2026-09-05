@@ -283,6 +283,8 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	text := extraction.Text
 	result = AuditResult{
 		AuditInputContract:          auditInputContractVersion,
+		AuditOutputContract:         auditOutputContractVersion,
+		GatewayBuild:                CurrentBuildInformation(),
 		AuditEmbeddedReferenceCount: len(auditReferenceSpans(text)),
 		AuditDecision: AuditDecision{
 			Decision:   DecisionAllow,
@@ -423,7 +425,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		rawModelDecision = decision.SemanticReview.Candidate
 	}
 	result.AuditModelDecision = &rawModelDecision
-	if decision.Decision == DecisionBlock && decision.Confidence < usedProfile.BlockThreshold {
+	if decision.Decision == DecisionBlock && !auditConfidenceMeets(decision, usedProfile.BlockThreshold) {
 		decision.Decision = DecisionReview
 		if decision.RiskCode == "" {
 			decision.RiskCode = "AUDIT_LOW_CONFIDENCE"
@@ -452,15 +454,18 @@ func (e *AuditEngine) DryRun(ctx context.Context, text string, profileID *int64)
 }
 
 type modelAuditResponse struct {
-	Decision         string  `json:"decision"`
-	RiskCode         string  `json:"risk_code"`
-	Category         string  `json:"category"`
-	Confidence       float64 `json:"confidence"`
-	Reason           string  `json:"reason"`
-	Evidence         string  `json:"evidence"`
-	RequestEvidence  string  `json:"request_evidence,omitempty"`
-	EvidenceRelation string  `json:"evidence_relation,omitempty"`
-	HarmType         string  `json:"harm_type,omitempty"`
+	ConfidenceKind       string   `json:"-"`
+	ConfidenceLabel      string   `json:"-"`
+	OutputNormalizations []string `json:"-"`
+	Decision             string   `json:"decision"`
+	RiskCode             string   `json:"risk_code"`
+	Category             string   `json:"category"`
+	Confidence           float64  `json:"confidence"`
+	Reason               string   `json:"reason"`
+	Evidence             string   `json:"evidence"`
+	RequestEvidence      string   `json:"request_evidence,omitempty"`
+	EvidenceRelation     string   `json:"evidence_relation,omitempty"`
+	HarmType             string   `json:"harm_type,omitempty"`
 }
 
 func (e *AuditEngine) callModelOnce(
@@ -553,7 +558,7 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 		return AuditDecision{}, classifyAuditTransportError(err)
 	}
 	defer response.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1024*1024))
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxAuditResponseBytes+1))
 	if err != nil {
 		return AuditDecision{}, newAuditModelCallError("response_read", 0, "read audit model response", err)
 	}
@@ -578,6 +583,9 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 			diagnostics,
 		)
 	}
+	if len(responseBody) > maxAuditResponseBytes {
+		return AuditDecision{}, newAuditModelCallError("response_too_large", response.StatusCode, "audit model response exceeds byte limit", nil)
+	}
 	completion, err := extractAuditCompletionResponse(responseBody)
 	if err != nil {
 		diagnostics := auditOutputDiagnostics{
@@ -599,6 +607,11 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 		completion.ResponseID = responseRequestID
 	}
 	diagnostics := auditOutputDiagnosticsForResponse(outputPlan, completion, false)
+	if isAuditFinishReasonTruncated(completion.FinishReason) {
+		diagnostics.Failed = true
+		recordAuditOutputDiagnostics(ctx, diagnostics)
+		return AuditDecision{}, annotateAuditOutputError(auditInvalidModelOutputError(completion), diagnostics)
+	}
 	modelResult, err := parseAuditModelResponseContent(completion.Content)
 	if err != nil {
 		if errorClass, _, _ := auditModelErrorDetails(err); errorClass == "invalid_json" {
@@ -609,16 +622,19 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 		return AuditDecision{}, annotateAuditOutputError(err, diagnostics)
 	}
 	decision := AuditDecision{
-		Decision:         modelResult.Decision,
-		RiskCode:         strings.TrimSpace(modelResult.RiskCode),
-		Category:         strings.TrimSpace(modelResult.Category),
-		Confidence:       modelResult.Confidence,
-		Reason:           modelResult.Reason,
-		Source:           "model",
-		Evidence:         modelResult.Evidence,
-		RequestEvidence:  modelResult.RequestEvidence,
-		EvidenceRelation: modelResult.EvidenceRelation,
-		HarmType:         modelResult.HarmType,
+		Decision:             modelResult.Decision,
+		RiskCode:             strings.TrimSpace(modelResult.RiskCode),
+		Category:             strings.TrimSpace(modelResult.Category),
+		Confidence:           modelResult.Confidence,
+		ConfidenceKind:       modelResult.ConfidenceKind,
+		ConfidenceLabel:      modelResult.ConfidenceLabel,
+		OutputNormalizations: modelResult.OutputNormalizations,
+		Reason:               modelResult.Reason,
+		Source:               "model",
+		Evidence:             modelResult.Evidence,
+		RequestEvidence:      modelResult.RequestEvidence,
+		EvidenceRelation:     modelResult.EvidenceRelation,
+		HarmType:             modelResult.HarmType,
 	}
 	validated, err := validateAuditDecisionEvidence(decision, evidenceSource)
 	if err != nil {

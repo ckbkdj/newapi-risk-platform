@@ -19,6 +19,7 @@ var (
 )
 
 func main() {
+	platform.SetBuildInformation(version, commit)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 

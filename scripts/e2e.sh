@@ -407,6 +407,13 @@ status="$(curl --silent --show-error -o "${WORKDIR}/model-block.json" -w '%{http
 assert_status 555 "${status}" "${WORKDIR}/model-block.json"
 contains "${WORKDIR}/model-block.json" 'CYBER_MOCK_MODEL_BLOCK'
 
+# Valid JSON with confidence type drift must reach upstream exactly once.
+status="$(curl --silent --show-error -o "${WORKDIR}/qualitative.json" -w '%{http_code}' \
+  "${gateway}" "${gateway_auth[@]}" -H 'X-Request-ID: e2e-output-qualitative' \
+  --data-binary '{"model":"normal","messages":[{"role":"user","content":"output-qualitative-fixture"}]}')"
+assert_status 200 "${status}" "${WORKDIR}/qualitative.json"
+contains "${WORKDIR}/qualitative.json" 'mock provider success'
+
 status="$(curl --silent --show-error -o "${WORKDIR}/audit-thinking.json" -w '%{http_code}' \
   "${gateway}" "${gateway_auth[@]}" \
   --data-binary '{"model":"normal","messages":[{"role":"user","content":"model-audit-thinking-json"}]}')"
@@ -584,6 +591,8 @@ with urllib.request.urlopen(request, timeout=5) as response:
         raise RuntimeError(f"unexpected tracking response {payload}")
 PY
 
+BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" python3 scripts/e2e-audit-fusion.py
+
 trace_ok=0
 for _ in $(seq 1 40); do
   curl --fail --silent --show-error \
@@ -630,6 +639,15 @@ for item in errors:
         raise RuntimeError(f"audit error trace is missing readable reason: {item}")
 if not any(item.get("metadata", {}).get("audit_http_status") == 401 for item in errors):
     raise RuntimeError("audit HTTP status 401 was not persisted")
+qualitative = next((item for item in items if item.get("request_id") == "e2e-output-qualitative"), None)
+assert qualitative and qualitative["http_status"] == 200, "qualitative output failed to forward"
+qm = qualitative["metadata"]
+assert qm["audit_model_confidence_kind"] == "qualitative" and qm["audit_model_confidence_label"] == "high"
+assert qm["audit_model_confidence"] is None and qm["audit_http_calls"] == 1
+assert qm["audit_output_contract"] == "risk_audit_output.v2"
+assert qm["gateway_build"]["audit_engine"] == "output-resilience-fusion.v1"
+assert "allow_none_risk_code" in qm["audit_output_normalizations"]
+
 structured_recovery = next((item for item in items if item.get("request_id") == "e2e-audit-structured-recovery"), None)
 if not structured_recovery:
     raise RuntimeError("structured-output recovery trace is missing")

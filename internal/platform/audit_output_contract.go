@@ -168,6 +168,7 @@ func applyAuditOutputContract(payload map[string]any, plan auditOutputPlan) {
 		delete(payload, key)
 	}
 	payload["stream"] = false
+	payload["n"] = 1
 	payload["temperature"] = 0
 	payload["max_tokens"] = plan.MaxTokens
 
@@ -363,8 +364,8 @@ func looksLikeStructuredOutputUnsupported(value string) bool {
 }
 
 func extractAuditCompletionResponse(body []byte) (auditCompletionResponse, error) {
-	var decoded any
-	if err := json.Unmarshal(body, &decoded); err != nil {
+	decoded, err := decodeAuditJSON(string(body))
+	if err != nil {
 		return auditCompletionResponse{}, fmt.Errorf("decode audit model response: %w", err)
 	}
 
@@ -408,6 +409,9 @@ func extractAuditCompletionResponse(body []byte) (auditCompletionResponse, error
 
 	finishReason := ""
 	if choices, ok := root["choices"].([]any); ok && len(choices) > 0 {
+		if len(choices) != 1 {
+			return auditCompletionResponse{}, errors.New("audit model returned multiple completion choices")
+		}
 		for choiceIndex, rawChoice := range choices {
 			choice, ok := rawChoice.(map[string]any)
 			if !ok {
@@ -417,9 +421,13 @@ func extractAuditCompletionResponse(body []byte) (auditCompletionResponse, error
 				finishReason = auditStringValue(choice["finish_reason"])
 			}
 			if message, ok := choice["message"].(map[string]any); ok {
+				// A present final answer is authoritative even if malformed. Never
+				// replace it with an earlier allow from reasoning/tool output.
+				if final := strings.TrimSpace(flattenAuditResponseText(message["content"])); final != "" {
+					return auditCompletionResponse{Content: final, FinishReason: finishReason, ResponseID: responseID, Source: fmt.Sprintf("choices[%d].message.content", choiceIndex), ContentBytes: len(final), Preview: sanitizeAuditResponsePreview(final)}, nil
+				}
 				appendCandidate(fmt.Sprintf("choices[%d].message.reasoning_content", choiceIndex), message["reasoning_content"])
 				appendCandidate(fmt.Sprintf("choices[%d].message.reasoning", choiceIndex), message["reasoning"])
-				appendCandidate(fmt.Sprintf("choices[%d].message.content", choiceIndex), message["content"])
 				if toolCalls, ok := message["tool_calls"].([]any); ok {
 					for toolIndex, rawToolCall := range toolCalls {
 						toolCall, ok := rawToolCall.(map[string]any)

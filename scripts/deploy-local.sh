@@ -50,6 +50,12 @@ PROBE_URL="http://${PROBE_HOST}:${HTTP_PORT}"
 echo "Validating Docker Compose configuration..."
 docker compose config --quiet
 
+# Export beats stale APP_COMMIT entries in .env; the running binary must identify
+# the actual checkout being built. Source archives remain explicitly unknown.
+if command -v git >/dev/null 2>&1 && git rev-parse --verify HEAD >/dev/null 2>&1; then
+  export APP_COMMIT="$(git rev-parse --verify HEAD)"
+fi
+
 echo "Building and starting PostgreSQL, Redis and the risk platform..."
 if ! docker compose up -d --build; then
   echo "ERROR: docker compose up failed" >&2
@@ -95,7 +101,18 @@ if [[ "${ready}" != "1" ]]; then
   exit 1
 fi
 
-curl --noproxy '*' --fail --silent --show-error "${PROBE_URL}/healthz"
+health="$(curl --noproxy '*' --fail --silent --show-error --max-time 5 "${PROBE_URL}/healthz")"
+printf '%s\n' "${health}"
+if [[ "${APP_COMMIT:-unknown}" != "unknown" ]]; then
+  printf '%s' "${health}" | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("build", {})
+if value.get("commit") != sys.argv[1]:
+    raise SystemExit("Running commit does not match checkout; check stale container or wrong probe route")
+if value.get("input_contract") != "risk_audit_request.v2" or value.get("output_contract") != "risk_audit_output.v2":
+    raise SystemExit("Running audit contract is not the expected version")
+' "${APP_COMMIT}"
+fi
 echo
 echo "Deployment is ready."
 echo "Admin UI: ${PROBE_URL}/admin"

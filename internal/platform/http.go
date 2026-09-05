@@ -143,7 +143,9 @@ func (s *HTTPService) accessLog(next http.Handler) http.Handler {
 }
 
 func (s *HTTPService) health(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
+		"build":  CurrentBuildInformation(),
 		"status": "ok",
 		"time":   time.Now().UTC(),
 	})
