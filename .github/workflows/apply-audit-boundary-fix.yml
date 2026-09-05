@@ -1,0 +1,64 @@
+name: Final audit boundary hardening
+on:
+  push:
+    branches: [fix/audit-evidence-boundaries]
+    paths: [.github/workflows/apply-audit-boundary-fix.yml]
+permissions:
+  contents: write
+concurrency:
+  group: apply-audit-boundary-fix
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'ckbkdj/newapi-risk-platform'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+      - name: Apply hash-verified hardening patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/fix/audit-evidence-boundaries
+          git merge-base --is-ancestor 2e3537ecad3378508abe658db8c15aa8e595acc7 HEAD
+          python3 - <<'PY'
+          import base64, hashlib, json, lzma, os, pathlib, subprocess
+          value = json.loads(subprocess.check_output(['gh', 'api', f'repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs/a74e4a7da4a4132149a8b440f72bfd65fa8f4b0f']))
+          assert value['encoding'] == 'base64'
+          patch = lzma.decompress(base64.b64decode(value['content']))
+          assert hashlib.sha256(patch).hexdigest() == 'd498b045eff20697cb91294d275725e7844f75eb2cf686e89f5ce776f7821286'
+          pathlib.Path('/tmp/audit-hardening.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/audit-hardening.patch
+          git apply --index /tmp/audit-hardening.patch
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l)" -eq 7
+          if git diff --cached --name-only | grep -Ev '^(internal/|docs/)'; then
+            echo 'Unexpected source patch path' >&2
+            exit 1
+          fi
+      - name: Verify hardening before committing
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l cmd internal)"
+          go test -race -count=1 -timeout=10m ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          bash -n scripts/e2e.sh scripts/upgrade.sh scripts/upgrade_test.sh
+          bash scripts/upgrade_test.sh
+          python3 -m py_compile scripts/eval-audit-intent.py
+      - name: Commit validated patch to repair branch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(audit): preserve exact chunk provenance and verify reference-rule candidates'
+          git push origin HEAD:refs/heads/fix/audit-evidence-boundaries
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
