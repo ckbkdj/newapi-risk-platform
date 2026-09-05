@@ -104,6 +104,10 @@ type CyberRule struct {
 }
 
 type AuditDecision struct {
+	ConfidenceKind       string   `json:"confidence_kind,omitempty"`
+	ConfidenceLabel      string   `json:"confidence_label,omitempty"`
+	OutputNormalizations []string `json:"output_normalizations,omitempty"`
+
 	RequestEvidence    string               `json:"request_evidence,omitempty"`
 	EvidenceRelation   string               `json:"evidence_relation,omitempty"`
 	HarmType           string               `json:"harm_type,omitempty"`
@@ -124,6 +128,10 @@ type AuditDecision struct {
 }
 
 type AuditAttempt struct {
+	ConfidenceKind       string   `json:"confidence_kind,omitempty"`
+	ConfidenceLabel      string   `json:"confidence_label,omitempty"`
+	OutputNormalizations []string `json:"output_normalizations,omitempty"`
+
 	ProfileID            int64   `json:"profile_id"`
 	ProfileName          string  `json:"profile_name"`
 	Model                string  `json:"model"`
@@ -146,6 +154,8 @@ type AuditAttempt struct {
 }
 
 type AuditResult struct {
+	AuditOutputContract         string                `json:"audit_output_contract"`
+	GatewayBuild                BuildInformation      `json:"gateway_build"`
 	AuditInputContract          string                `json:"audit_input_contract,omitempty"`
 	AuditEmbeddedReferenceCount int                   `json:"audit_embedded_reference_count,omitempty"`
 	AuditHTTPCalls              int                   `json:"audit_http_calls,omitempty"`

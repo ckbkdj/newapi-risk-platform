@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -125,6 +126,7 @@ func (e *AuditEngine) callModelWithFailover(
 				ResponseID:           outputDiagnostics.ResponseID,
 			}
 			if err == nil {
+				attemptRecord.ConfidenceKind, attemptRecord.ConfidenceLabel, attemptRecord.OutputNormalizations = decision.ConfidenceKind, decision.ConfidenceLabel, decision.OutputNormalizations
 				attemptRecord.Decision = decision.Decision
 				attemptRecord.RiskCode = decision.RiskCode
 				attemptRecord.Confidence = decision.Confidence
@@ -138,6 +140,11 @@ func (e *AuditEngine) callModelWithFailover(
 			lastErr = err
 			attemptRecord.ErrorClass, attemptRecord.HTTPStatus, attemptRecord.Reason = auditModelErrorDetails(err)
 			metadata.Attempts = append(metadata.Attempts, attemptRecord)
+			// A required fusion panel cannot be bypassed by a fallback profile
+			// that has no panel configured. Missing assessments are unresolved.
+			if strings.HasPrefix(attemptRecord.ErrorClass, "fusion_") {
+				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), err
+			}
 			if attempt >= retries || !auditErrorRetryableOnSameProfile(err) {
 				break
 			}
@@ -202,6 +209,8 @@ func auditErrorRetryableOnSameProfile(err error) bool {
 		"response_format",
 		"empty_response",
 		"invalid_json",
+		"invalid_schema",
+		"ambiguous_output",
 		"output_truncated",
 		"structured_output_unsupported",
 		"invalid_decision",

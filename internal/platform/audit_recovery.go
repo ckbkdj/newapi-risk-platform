@@ -89,7 +89,7 @@ func auditDiagnosticsFromError(plan auditOutputPlan, err error) auditOutputDiagn
 func auditErrorNeedsOutputRecovery(err error) bool {
 	class, _, _ := auditModelErrorDetails(err)
 	switch class {
-	case "response_format", "empty_response", "invalid_json", "output_truncated", "structured_output_unsupported", "invalid_decision":
+	case "response_format", "empty_response", "invalid_json", "invalid_schema", "ambiguous_output", "output_truncated", "structured_output_unsupported", "invalid_decision":
 		return true
 	default:
 		return false
@@ -102,6 +102,8 @@ func recordAuditDecisionMetadata(metadata map[string]any, result AuditResult) {
 	}
 	metadata["audit_effective_decision"] = result.Decision
 	metadata["audit_input_contract"] = auditInputContractVersion
+	metadata["audit_output_contract"] = auditOutputContractVersion
+	metadata["gateway_build"] = CurrentBuildInformation()
 	metadata["audit_embedded_reference_count"] = result.AuditEmbeddedReferenceCount
 	metadata["audit_completed"] = result.ErrorClass == "" && result.Source != "platform" && result.Source != "fail_open"
 	metadata["audit_semantic_reviews_truncated"] = result.AuditSemanticReviewCount > len(result.AuditSemanticReviews)
@@ -136,6 +138,14 @@ func recordAuditDecisionMetadata(metadata map[string]any, result AuditResult) {
 	metadata["audit_model_decision"] = raw.Decision
 	metadata["audit_model_risk_code"] = raw.RiskCode
 	metadata["audit_model_confidence"] = raw.Confidence
+	metadata["audit_model_confidence_kind"] = raw.ConfidenceKind
+	metadata["audit_model_confidence_label"] = raw.ConfidenceLabel
+	if raw.ConfidenceKind == "qualitative" {
+		metadata["audit_model_confidence"] = nil
+	}
+	metadata["audit_output_normalizations"] = result.OutputNormalizations
+	metadata["audit_effective_confidence_kind"] = result.ConfidenceKind
+	metadata["audit_effective_confidence_label"] = result.ConfidenceLabel
 	metadata["audit_model_original_reason"] = truncateString(raw.Reason, auditDiagnosticTextLimit)
 	if raw.EvidenceVerified {
 		metadata["audit_model_original_evidence"] = truncateString(raw.Evidence, 1200)

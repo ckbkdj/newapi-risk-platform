@@ -51,6 +51,14 @@ func mockSemanticVerification(w http.ResponseWriter, request chatRequest, text s
 		decision, code, category = "block", "CYBER_CREDENTIAL_EXPOSURE", "credential_access"
 		evidence, requestEvidence, relation, harm = "[USER_PROVIDED_SECRET]", "[USER_PROVIDED_SECRET]", "direct_request", "exfiltration"
 	}
+	if strings.HasPrefix(request.Model, "fusion-allow-") {
+		decision, code, category = "allow", "", "benign"
+		evidence, requestEvidence, relation, harm = "", "model-audit-block", "no_harm", "none"
+	}
+	if request.Model == "fusion-broken" {
+		writeJSON(w, 200, map[string]any{"decision": "allow", "confidence": true})
+		return true
+	}
 	payload := map[string]any{"decision": decision, "risk_code": code, "category": category, "confidence": .99, "reason": reason, "evidence": evidence, "request_evidence": requestEvidence, "evidence_relation": relation, "harm_type": harm}
 	encoded, _ := json.Marshal(payload)
 	writeJSON(w, 200, map[string]any{"id": "semantic-verifier-mock", "choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": string(encoded)}}}})

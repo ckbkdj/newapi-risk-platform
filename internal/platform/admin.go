@@ -35,6 +35,7 @@ func (s *HTTPService) adminDashboard(w http.ResponseWriter, r *http.Request) {
 
 func (s *HTTPService) adminRuntime(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
+		"build":                              CurrentBuildInformation(),
 		"environment":                        s.cfg.Environment,
 		"postgres_healthy":                   s.store.Health(r.Context()) == nil,
 		"redis":                              s.redis.Status(),
@@ -50,6 +51,12 @@ func (s *HTTPService) adminRuntime(w http.ResponseWriter, r *http.Request) {
 		"request_large_body_threshold_bytes": s.cfg.LargeRequestThresholdBytes,
 		"request_large_body_max_concurrency": s.cfg.LargeRequestMaxConcurrency,
 		"audit_text_max_bytes":               s.cfg.AuditTextMaxBytes,
+		"audit_output_max_tokens":            s.cfg.AuditOutputMaxTokens,
+		"audit_disable_thinking":             s.cfg.AuditDisableThinking,
+		"audit_long_context_timeout_ms":      s.cfg.AuditLongContextTimeout.Milliseconds(),
+		"audit_chunk_concurrency":            s.cfg.AuditChunkConcurrency,
+		"audit_fallback_chunk_bytes":         s.cfg.AuditFallbackChunkBytes,
+		"audit_max_chunks":                   s.cfg.AuditMaxChunks,
 		"audit_text_limit_mode":              map[bool]string{true: "automatic_request_hard_ceiling", false: "configured"}[s.cfg.AuditTextMaxBytes == 0],
 		"audit_text_effective_limit_bytes": func() int {
 			value, _ := resolveAuditTextMaxBytes(s.cfg.AuditTextMaxBytes, s.cfg.RequestHardMaxBytes)
@@ -217,6 +224,10 @@ func (s *HTTPService) adminSaveAuditProfile(w http.ResponseWriter, r *http.Reque
 	}
 	if err := s.store.ValidateAuditFallbackProfiles(r.Context(), input.ID, input.FallbackProfileIDs); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_fallback_chain", err.Error())
+		return
+	}
+	if err := validateFusionExtra(input.Extra); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_fusion_configuration", err.Error())
 		return
 	}
 	if input.BlockThreshold < 0 || input.BlockThreshold > 1 || len(input.SystemPrompt) > 64*1024 || len(input.Extra) > 32*1024 {

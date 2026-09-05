@@ -130,6 +130,10 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if strings.Contains(userText, "output-qualitative-fixture") {
+		writeJSON(w, 200, map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": `{"decision":"allow","confidence":"high","risk_code":"NONE","category":"routine_engineering","reason":"synthetic output drift fixture","evidence":""}`}}}})
+		return
+	}
 	if mockSemanticVerification(w, request, rawUserText) {
 		return
 	}
