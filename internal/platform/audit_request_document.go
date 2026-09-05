@@ -112,6 +112,7 @@ type auditSourceScope struct {
 	Anchors    []string
 }
 type auditSourceScopeKey struct{}
+type auditChunkOffsetsKey struct{}
 
 func makeAuditSourceScope(text string) auditSourceScope {
 	scope := auditSourceScope{Text: text, References: auditReferenceSpans(text)}
@@ -150,17 +151,32 @@ func appendAuditAnchors(anchors []string, text string) []string {
 	return anchors
 }
 
-func auditChunkSourceScopes(parent auditSourceScope, chunks []string) []auditSourceScope {
+func auditChunkSourceScopes(parent auditSourceScope, chunks []string, offsets ...int) []auditSourceScope {
 	scopes := make([]auditSourceScope, len(chunks))
 	next := 0
 	for i, chunk := range chunks {
-		relative := strings.Index(parent.Text[next:], chunk)
 		scope := auditSourceScope{Text: chunk, Anchors: parent.Anchors}
-		if relative < 0 {
+		offset := -1
+		if len(offsets) == len(chunks) {
+			start := offsets[i]
+			if start >= 0 && start <= len(parent.Text)-len(chunk) && parent.Text[start:start+len(chunk)] == chunk {
+				offset = start
+			}
+		} else if next <= len(parent.Text) {
+			// Compatibility for direct callers without splitter offsets. An
+			// ambiguous repeated substring must not invent reference provenance.
+			if relative := strings.Index(parent.Text[next:], chunk); relative >= 0 {
+				start := next + relative
+				if !strings.Contains(parent.Text[start+1:], chunk) {
+					offset = start
+				}
+			}
+		}
+		if offset < 0 {
 			scopes[i] = makeAuditSourceScope(chunk)
+			scopes[i].Anchors = parent.Anchors
 			continue
 		}
-		offset := next + relative
 		for _, span := range parent.References {
 			start, end := span.Start-offset, span.End-offset
 			if start < 0 {

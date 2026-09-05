@@ -22,6 +22,7 @@ type AuditSemanticReview struct {
 }
 
 type auditSemanticStateKey struct{}
+type auditRequireIntentVerificationKey struct{}
 type auditSemanticState struct {
 	mu          sync.Mutex
 	httpCalls   int
@@ -70,7 +71,8 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(ctx context.Context, profi
 	ctx, state := withAuditSemanticState(ctx)
 	candidate, err := e.callModelRawWithEvidenceSource(ctx, profile, text, evidenceSource)
 	class, _, _ := auditModelErrorDetails(err)
-	if (err != nil && class != "invalid_evidence") || (err == nil && candidate.Decision == DecisionAllow) {
+	required, _ := ctx.Value(auditRequireIntentVerificationKey{}).(bool)
+	if (err != nil && class != "invalid_evidence") || (err == nil && candidate.Decision == DecisionAllow && !required) {
 		return candidate, err
 	}
 	if ctx.Err() != nil {
@@ -119,7 +121,7 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(ctx context.Context, profi
 			outcome := cleanSemanticDecision(verified)
 			review.Outcome = &outcome
 			review.Status = "confirmed"
-			if verified.Decision == DecisionAllow {
+			if verified.Decision == DecisionAllow && candidate.Decision != DecisionAllow {
 				review.Status = "overturned"
 			} else if verified.Decision == DecisionReview {
 				review.Status = "unresolved"

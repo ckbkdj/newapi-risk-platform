@@ -353,6 +353,11 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		return result
 	}
 
+	if matched != nil && matched.Decision == DecisionReview && result.AuditEmbeddedReferenceCount > 0 {
+		// Reference-format text cannot turn a rule candidate into an unchecked
+		// allow; independently verify adoption even if the primary says allow.
+		ctx = context.WithValue(ctx, auditRequireIntentVerificationKey{}, true)
+	}
 	decision, usedProfile, failoverMetadata, err := e.callModelWithFailover(ctx, profile, text)
 	callMetadata := failoverMetadata.CallMetadata
 	result.Model = usedProfile.Model
@@ -425,7 +430,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		}
 	}
 	if decision.SemanticReview != nil {
-		if decision.Decision == DecisionAllow {
+		if decision.Decision == DecisionAllow && rawModelDecision.Decision != DecisionAllow {
 			result.AuditPolicyAdjustment = &AuditPolicyAdjustment{Code: "SEMANTIC_FALSE_POSITIVE_CORRECTED", Reason: decision.Reason, OriginalDecision: rawModelDecision.Decision, OriginalRiskCode: rawModelDecision.RiskCode, OriginalReason: rawModelDecision.Reason}
 		}
 	} else {
