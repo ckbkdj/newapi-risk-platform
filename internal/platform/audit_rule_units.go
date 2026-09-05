@@ -41,7 +41,7 @@ func splitAuditRuleUnits(text string) []auditRuleUnit {
 	}
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "ROLE=") {
+		if trimmed == "ROLE=USER" || trimmed == "ROLE=USER_REFERENCED" {
 			flush()
 			continue
 		}

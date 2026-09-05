@@ -45,6 +45,7 @@ func (e *AuditEngine) callModel(
 	// Every chunk, including a short tail, inherits the full request's prefill
 	// timeout. The caller's own deadline is still an absolute upper bound.
 	ctx = context.WithValue(ctx, auditOriginalTextBytesKey{}, len(text))
+	ctx = context.WithValue(ctx, auditSourceScopeKey{}, makeAuditSourceScope(text))
 	resume, _ := ctx.Value(auditResumeChunksKey{}).(auditCallMetadata)
 	var lastContextError error
 	chunkBytes := resume.ChunkBytes
@@ -156,7 +157,13 @@ func (e *AuditEngine) callModelChunks(
 			nil,
 		)
 	}
+	parent, _ := ctx.Value(auditSourceScopeKey{}).(auditSourceScope)
+	if parent.Text == "" {
+		parent = makeAuditSourceScope(strings.Join(chunks, ""))
+	}
+	scopes := auditChunkSourceScopes(parent, chunks)
 	if len(chunks) == 1 {
+		ctx = context.WithValue(ctx, auditSourceScopeKey{}, scopes[0])
 		return e.callModelOnceWithEvidenceSource(ctx, profile, decorateAuditChunk(chunks[0], 0, 1), chunks[0])
 	}
 
@@ -187,7 +194,7 @@ func (e *AuditEngine) callModelChunks(
 						return
 					}
 					decision, err := e.callModelOnceWithEvidenceSource(
-						workerContext,
+						context.WithValue(workerContext, auditSourceScopeKey{}, scopes[index]),
 						profile,
 						decorateAuditChunk(chunks[index], index, len(chunks)),
 						chunks[index],

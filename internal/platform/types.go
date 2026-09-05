@@ -104,19 +104,23 @@ type CyberRule struct {
 }
 
 type AuditDecision struct {
-	Decision           string  `json:"decision"`
-	RiskCode           string  `json:"risk_code,omitempty"`
-	Category           string  `json:"category,omitempty"`
-	Confidence         float64 `json:"confidence"`
-	Reason             string  `json:"reason,omitempty"`
-	Source             string  `json:"source"`
-	RuleID             int64   `json:"rule_id,omitempty"`
-	Evidence           string  `json:"evidence,omitempty"`
-	EvidenceContext    string  `json:"evidence_context,omitempty"`
-	EvidenceVerified   bool    `json:"evidence_verified,omitempty"`
-	EvidenceMatchMode  string  `json:"evidence_match_mode,omitempty"`
-	EvidenceChunkIndex int     `json:"evidence_chunk_index,omitempty"`
-	EvidenceChunkCount int     `json:"evidence_chunk_count,omitempty"`
+	RequestEvidence    string               `json:"request_evidence,omitempty"`
+	EvidenceRelation   string               `json:"evidence_relation,omitempty"`
+	HarmType           string               `json:"harm_type,omitempty"`
+	SemanticReview     *AuditSemanticReview `json:"-"`
+	Decision           string               `json:"decision"`
+	RiskCode           string               `json:"risk_code,omitempty"`
+	Category           string               `json:"category,omitempty"`
+	Confidence         float64              `json:"confidence"`
+	Reason             string               `json:"reason,omitempty"`
+	Source             string               `json:"source"`
+	RuleID             int64                `json:"rule_id,omitempty"`
+	Evidence           string               `json:"evidence,omitempty"`
+	EvidenceContext    string               `json:"evidence_context,omitempty"`
+	EvidenceVerified   bool                 `json:"evidence_verified,omitempty"`
+	EvidenceMatchMode  string               `json:"evidence_match_mode,omitempty"`
+	EvidenceChunkIndex int                  `json:"evidence_chunk_index,omitempty"`
+	EvidenceChunkCount int                  `json:"evidence_chunk_count,omitempty"`
 }
 
 type AuditAttempt struct {
@@ -142,6 +146,12 @@ type AuditAttempt struct {
 }
 
 type AuditResult struct {
+	AuditInputContract          string                `json:"audit_input_contract,omitempty"`
+	AuditEmbeddedReferenceCount int                   `json:"audit_embedded_reference_count,omitempty"`
+	AuditHTTPCalls              int                   `json:"audit_http_calls,omitempty"`
+	AuditSemanticReviewCalls    int                   `json:"audit_semantic_review_calls,omitempty"`
+	AuditSemanticReviewCount    int                   `json:"audit_semantic_review_count,omitempty"`
+	AuditSemanticReviews        []AuditSemanticReview `json:"audit_semantic_reviews,omitempty"`
 	AuditDecision
 
 	AuditModelDecision             *AuditDecision `json:"audit_model_decision_raw,omitempty"`

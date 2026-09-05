@@ -87,14 +87,20 @@ func TestAuditRequestTimeoutRaisesOnlyForLongInput(t *testing.T) {
 	}
 }
 
-func TestAuditUserContentAppendsNoThinkForQwen(t *testing.T) {
+func TestAuditUserContentIsOnlyARequestDocument(t *testing.T) {
 	engine := &AuditEngine{disableThinking: true}
-	got := engine.auditUserContent(AuditProfile{Model: "qwen3.8-27b"}, "request")
-	if !strings.Contains(got, "/no_think") {
-		t.Fatalf("Qwen audit content missing /no_think: %q", got)
-	}
-	if got := engine.auditUserContent(AuditProfile{Model: "other"}, "request"); got != "request" {
-		t.Fatalf("non-Qwen content changed: %q", got)
+	for _, model := range []string{"qwen3.8-27b", "other"} {
+		for _, attempt := range []int{0, 1, 2} {
+			text := "request with \"quotes\" and a newline\nend"
+			got := engine.auditUserContentWithPlan(AuditProfile{Model: model}, text, auditOutputPlan{Attempt: attempt})
+			var document auditRequestDocument
+			if json.Unmarshal([]byte(got), &document) != nil || document.Schema != auditInputContractVersion || document.RequestText != text {
+				t.Fatalf("altered user data: %s", got)
+			}
+			if strings.Contains(got, "/no_think") || strings.Contains(got, "FORMAT RECOVERY") || strings.Contains(got, "Return only the compact policy") {
+				t.Fatal("platform instruction leaked into user data")
+			}
+		}
 	}
 }
 

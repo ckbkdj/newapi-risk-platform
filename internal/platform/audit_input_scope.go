@@ -335,11 +335,9 @@ func needsPriorUserContext(text string) bool {
 func normalizeAuditUserText(value string) (string, int, int, int) {
 	value = strings.ToValidUTF8(value, "�")
 	originalLength := len(value)
-	if matches := myRequestMarkerPattern.FindAllStringIndex(value, -1); len(matches) > 0 {
-		value = value[matches[len(matches)-1][1]:]
-	} else if matches := myRequestZHPattern.FindAllStringIndex(value, -1); len(matches) > 0 {
-		value = value[matches[len(matches)-1][1]:]
-	}
+	// A user-controlled "## My request" heading is not a trusted boundary.
+	// Preserve preceding material for intent/adoption assessment; never let a
+	// fabricated heading hide a harmful prefix or erase quoted context.
 	value = fileHeaderPattern.ReplaceAllString(value, "[ATTACHMENT_METADATA]")
 
 	artifacts := 0

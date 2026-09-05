@@ -138,5 +138,8 @@ func indexASCIIEqualFold(haystack string, needle string) int {
 }
 
 func auditModelUserGuidance(category string) string {
+	if category == "audit_uncertainty" {
+		return "请明确本次要执行的动作与目标，并区分引用资料和实际操作；无需改写成防御或取证术语。"
+	}
 	return cyberRuleUserGuidance(CyberRule{Category: strings.TrimSpace(category)})
 }

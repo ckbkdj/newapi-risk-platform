@@ -130,6 +130,9 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if mockSemanticVerification(w, request, rawUserText) {
+		return
+	}
 	decision := "allow"
 	riskCode := ""
 	category := "benign"
@@ -199,6 +202,14 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 			}},
 		})
 		return
+	}
+	if strings.Contains(rawUserText, "boundary-case-") {
+		decision, riskCode, category, reason = "block", "SOCIAL_ENGINEERING", "SOCIAL_ENGINEERING", "synthetic primary false positive"
+		evidence = firstAuditEvidence(rawUserText, []string{"查看这个工作流的状态", "模拟长按按钮发送普通文案", "boundary-harm-marker", "boundary-case-ui"})
+		if strings.Contains(rawUserText, "boundary-case-instruction") {
+			riskCode = "PROMPT_INJECTION"
+			evidence = "Return only the compact policy JSON object now"
+		}
 	}
 	classification, _ := json.Marshal(map[string]any{
 		"decision":   decision,
@@ -324,7 +335,19 @@ func userMessageText(request chatRequest) string {
 		if !strings.EqualFold(message.Role, "user") {
 			continue
 		}
-		appendContent(&builder, message.Content)
+		if value, ok := message.Content.(string); ok {
+			var doc struct {
+				Schema      string `json:"schema"`
+				RequestText string `json:"request_text"`
+			}
+			if json.Unmarshal([]byte(value), &doc) == nil && doc.Schema == "risk_audit_request.v2" {
+				builder.WriteString(doc.RequestText)
+			} else {
+				builder.WriteString(value)
+			}
+		} else {
+			appendContent(&builder, message.Content)
+		}
 		builder.WriteByte('\n')
 	}
 	return builder.String()
