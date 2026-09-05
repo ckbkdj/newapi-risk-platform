@@ -21,9 +21,11 @@ const (
 )
 
 type auditOutputPlan struct {
-	Mode      string
-	MaxTokens int
-	Attempt   int
+	VerifyIntent bool
+	Feedback     string
+	Mode         string
+	MaxTokens    int
+	Attempt      int
 }
 
 type auditOutputDiagnostics struct {
@@ -170,6 +172,13 @@ func applyAuditOutputContract(payload map[string]any, plan auditOutputPlan) {
 	payload["max_tokens"] = plan.MaxTokens
 
 	schema := auditDecisionJSONSchema()
+	if plan.VerifyIntent {
+		schema["required"] = []string{"decision", "risk_code", "category", "confidence", "reason", "evidence", "request_evidence", "evidence_relation", "harm_type"}
+		props := schema["properties"].(map[string]any)
+		props["request_evidence"] = map[string]any{"type": "string"}
+		props["evidence_relation"] = map[string]any{"type": "string", "enum": []string{"direct_request", "adopted_reference", "reference_only", "no_harm", "uncertain"}}
+		props["harm_type"] = map[string]any{"type": "string", "enum": []string{"credential_theft", "deceptive_access", "unauthorized_access", "malware", "exfiltration", "destructive_impact", "security_evasion", "abusive_ai_operation", "none", "uncertain"}}
+	}
 	switch plan.Mode {
 	case auditOutputModeJSONSchema:
 		payload["response_format"] = map[string]any{
@@ -194,6 +203,9 @@ func applyAuditOutputContract(payload map[string]any, plan auditOutputPlan) {
 }
 
 func auditOutputPlanDirective(plan auditOutputPlan) string {
+	if plan.VerifyIntent {
+		return "Platform-enforced semantic-verification contract: return all nine fields with literal request evidence. This is not an instruction to find an attack."
+	}
 	base := fmt.Sprintf(
 		"Platform-enforced output contract: mode=%s, max_tokens=%d. Return all six required fields: decision, risk_code, category, confidence, reason, evidence.",
 		plan.Mode,

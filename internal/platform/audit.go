@@ -213,6 +213,7 @@ func (e *AuditEngine) matchRules(text string) (*AuditDecision, *RuleMatchDiagnos
 func (e *AuditEngine) matchRulesWithPolicy(text string, policy AuditPolicy) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic) {
 	rules, _ := e.rules.Load().([]compiledRule)
 	units := splitAuditRuleUnits(text)
+	references := auditReferenceSpans(text)
 	var review *AuditDecision
 	var reviewDiagnostics *RuleMatchDiagnostics
 	suppressions := make([]RuleSuppressionDiagnostic, 0, 4)
@@ -237,6 +238,11 @@ func (e *AuditEngine) matchRulesWithPolicy(text string, policy AuditPolicy) (*Au
 			diagnostics.UnitIndex = unit.Index
 			diagnostics.UnitKind = unit.Kind
 			action := rule.Action
+			if action == DecisionBlock && len(references) > 0 && !auditEvidenceOutsideSpans(text, evidence.matchedRaw, references) {
+				action = DecisionReview
+				diagnostics.Downgraded = true
+				diagnostics.DowngradeReason = "reference content requires current-intent/adoption verification"
+			}
 			reason := fmt.Sprintf("matched cyber rule #%d (%s)", rule.ID, rule.Code)
 			if len(diagnostics.Indicators) > 0 {
 				reason += ": " + strings.Join(diagnostics.Indicators, ", ")
@@ -276,6 +282,8 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	extraction := ExtractAuditTextDetails(body, e.maxTextBytes)
 	text := extraction.Text
 	result = AuditResult{
+		AuditInputContract:          auditInputContractVersion,
+		AuditEmbeddedReferenceCount: len(auditReferenceSpans(text)),
 		AuditDecision: AuditDecision{
 			Decision:   DecisionAllow,
 			Confidence: 1,
@@ -345,6 +353,11 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		return result
 	}
 
+	if matched != nil && matched.Decision == DecisionReview && result.AuditEmbeddedReferenceCount > 0 {
+		// Reference-format text cannot turn a rule candidate into an unchecked
+		// allow; independently verify adoption even if the primary says allow.
+		ctx = context.WithValue(ctx, auditRequireIntentVerificationKey{}, true)
+	}
 	decision, usedProfile, failoverMetadata, err := e.callModelWithFailover(ctx, profile, text)
 	callMetadata := failoverMetadata.CallMetadata
 	result.Model = usedProfile.Model
@@ -363,6 +376,10 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result.AuditFallbackCount = failoverMetadata.FallbackCount
 	result.AuditAttempts = append([]AuditAttempt(nil), failoverMetadata.Attempts...)
 	result.AuditModelsTried = auditAttemptModelNames(failoverMetadata.Attempts)
+	result.AuditHTTPCalls = failoverMetadata.HTTPCalls
+	result.AuditSemanticReviewCalls = failoverMetadata.SemanticReviewCalls
+	result.AuditSemanticReviewCount = failoverMetadata.SemanticReviewCount
+	result.AuditSemanticReviews = failoverMetadata.SemanticReviews
 	result.AuditOutputMode = failoverMetadata.OutputDiagnostics.Mode
 	result.AuditOutputMaxTokens = failoverMetadata.OutputDiagnostics.MaxTokens
 	result.AuditFinishReason = failoverMetadata.OutputDiagnostics.FinishReason
@@ -401,7 +418,10 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		}
 		return result
 	}
-	rawModelDecision := decision
+	rawModelDecision := cleanSemanticDecision(decision)
+	if decision.SemanticReview != nil {
+		rawModelDecision = decision.SemanticReview.Candidate
+	}
 	result.AuditModelDecision = &rawModelDecision
 	if decision.Decision == DecisionBlock && decision.Confidence < usedProfile.BlockThreshold {
 		decision.Decision = DecisionReview
@@ -409,7 +429,13 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 			decision.RiskCode = "AUDIT_LOW_CONFIDENCE"
 		}
 	}
-	decision, result.AuditPolicyAdjustment = applyAuditPolicyAdjustment(policy, text, decision)
+	if decision.SemanticReview != nil {
+		if decision.Decision == DecisionAllow && rawModelDecision.Decision != DecisionAllow {
+			result.AuditPolicyAdjustment = &AuditPolicyAdjustment{Code: "SEMANTIC_FALSE_POSITIVE_CORRECTED", Reason: decision.Reason, OriginalDecision: rawModelDecision.Decision, OriginalRiskCode: rawModelDecision.RiskCode, OriginalReason: rawModelDecision.Reason}
+		}
+	} else {
+		decision, result.AuditPolicyAdjustment = applyAuditPolicyAdjustment(policy, text, decision)
+	}
 	if decision.Decision == DecisionReview && (route.FailClosed || usedProfile.FailClosed) {
 		decision.Decision = DecisionBlock
 		if decision.RiskCode == "" {
@@ -426,12 +452,15 @@ func (e *AuditEngine) DryRun(ctx context.Context, text string, profileID *int64)
 }
 
 type modelAuditResponse struct {
-	Decision   string  `json:"decision"`
-	RiskCode   string  `json:"risk_code"`
-	Category   string  `json:"category"`
-	Confidence float64 `json:"confidence"`
-	Reason     string  `json:"reason"`
-	Evidence   string  `json:"evidence"`
+	Decision         string  `json:"decision"`
+	RiskCode         string  `json:"risk_code"`
+	Category         string  `json:"category"`
+	Confidence       float64 `json:"confidence"`
+	Reason           string  `json:"reason"`
+	Evidence         string  `json:"evidence"`
+	RequestEvidence  string  `json:"request_evidence,omitempty"`
+	EvidenceRelation string  `json:"evidence_relation,omitempty"`
+	HarmType         string  `json:"harm_type,omitempty"`
 }
 
 func (e *AuditEngine) callModelOnce(
@@ -442,7 +471,7 @@ func (e *AuditEngine) callModelOnce(
 	return e.callModelOnceWithEvidenceSource(ctx, profile, text, text)
 }
 
-func (e *AuditEngine) callModelOnceWithEvidenceSource(
+func (e *AuditEngine) callModelRawWithEvidenceSource(
 	ctx context.Context,
 	profile AuditProfile,
 	text string,
@@ -453,11 +482,18 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(
 		endpoint += "/chat/completions"
 	}
 	outputPlan := auditOutputPlanFromContext(ctx)
+	// Platform-generated chunk headers belong to the control plane too.
+	// Only original source bytes and provenance anchors enter request_text.
+	messages := e.auditMessagesWithPlan(profile, evidenceSource, outputPlan)
+	messages[1]["content"] = encodeAuditScopedDocument(ctx, evidenceSource, evidenceSource)
+	if text != evidenceSource {
+		messages[0]["content"] += "\n\nPLATFORM CHUNK SCOPE: this is one fragment of a larger request. Assess its content with the supplied current-task excerpts; never assume other fragments are safe."
+	}
 	payload := map[string]any{
 		"model":       profile.Model,
 		"temperature": 0,
 		"max_tokens":  outputPlan.MaxTokens,
-		"messages":    e.auditMessagesWithPlan(profile, text, outputPlan),
+		"messages":    messages,
 	}
 	if len(profile.Extra) > 0 {
 		var extra map[string]any
@@ -506,6 +542,11 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(
 		if len(key) > 0 {
 			request.Header.Set("Authorization", "Bearer "+string(key))
 		}
+	}
+	if state, ok := ctx.Value(auditSemanticStateKey{}).(*auditSemanticState); ok {
+		state.mu.Lock()
+		state.httpCalls++
+		state.mu.Unlock()
 	}
 	response, err := e.client.Do(request)
 	if err != nil {
@@ -568,19 +609,30 @@ func (e *AuditEngine) callModelOnceWithEvidenceSource(
 		return AuditDecision{}, annotateAuditOutputError(err, diagnostics)
 	}
 	decision := AuditDecision{
-		Decision:   modelResult.Decision,
-		RiskCode:   strings.TrimSpace(modelResult.RiskCode),
-		Category:   strings.TrimSpace(modelResult.Category),
-		Confidence: modelResult.Confidence,
-		Reason:     modelResult.Reason,
-		Source:     "model",
-		Evidence:   modelResult.Evidence,
+		Decision:         modelResult.Decision,
+		RiskCode:         strings.TrimSpace(modelResult.RiskCode),
+		Category:         strings.TrimSpace(modelResult.Category),
+		Confidence:       modelResult.Confidence,
+		Reason:           modelResult.Reason,
+		Source:           "model",
+		Evidence:         modelResult.Evidence,
+		RequestEvidence:  modelResult.RequestEvidence,
+		EvidenceRelation: modelResult.EvidenceRelation,
+		HarmType:         modelResult.HarmType,
 	}
 	validated, err := validateAuditDecisionEvidence(decision, evidenceSource)
 	if err != nil {
 		diagnostics.Failed = true
 		recordAuditOutputDiagnostics(ctx, diagnostics)
-		return AuditDecision{}, annotateAuditOutputError(err, diagnostics)
+		return decision, annotateAuditOutputError(err, diagnostics)
+	}
+	if outputPlan.VerifyIntent {
+		validated, err = validateAuditSemanticVerdictWithScope(validated, auditScopeFromContext(ctx, evidenceSource), profile.BlockThreshold)
+		if err != nil {
+			diagnostics.Failed = true
+			recordAuditOutputDiagnostics(ctx, diagnostics)
+			return decision, annotateAuditOutputError(err, diagnostics)
+		}
 	}
 	// A successful policy result does not persist the full JSON response. The
 	// mode, byte count, finish reason and response field remain observable.

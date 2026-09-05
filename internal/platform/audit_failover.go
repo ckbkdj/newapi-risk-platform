@@ -14,12 +14,16 @@ const (
 )
 
 type auditFailoverMetadata struct {
-	CallMetadata      auditCallMetadata
-	AttemptCount      int
-	ModelRetryCount   int
-	FallbackCount     int
-	Attempts          []AuditAttempt
-	OutputDiagnostics auditOutputDiagnostics
+	HTTPCalls           int
+	SemanticReviewCalls int
+	SemanticReviewCount int
+	SemanticReviews     []AuditSemanticReview
+	CallMetadata        auditCallMetadata
+	AttemptCount        int
+	ModelRetryCount     int
+	FallbackCount       int
+	Attempts            []AuditAttempt
+	OutputDiagnostics   auditOutputDiagnostics
 }
 
 func (e *AuditEngine) callModelWithFailover(
@@ -27,6 +31,7 @@ func (e *AuditEngine) callModelWithFailover(
 	root AuditProfile,
 	text string,
 ) (AuditDecision, AuditProfile, auditFailoverMetadata, error) {
+	ctx, semanticState := withAuditSemanticState(ctx)
 	metadata := auditFailoverMetadata{
 		Attempts: make([]AuditAttempt, 0, 1+root.RetryCount),
 	}
@@ -52,7 +57,7 @@ func (e *AuditEngine) callModelWithFailover(
 	var lastErr error
 	for profileIndex, profile := range profiles {
 		if ctx.Err() != nil {
-			return AuditDecision{}, usedProfile, metadata, ctx.Err()
+			return AuditDecision{}, usedProfile, semanticState.metadata(metadata), ctx.Err()
 		}
 		if metadata.AttemptCount >= maxAuditTotalAttempts {
 			lastErr = newAuditModelCallError(
@@ -79,7 +84,7 @@ func (e *AuditEngine) callModelWithFailover(
 		var profileChunks auditCallMetadata
 		for attempt := 0; attempt <= retries; attempt++ {
 			if ctx.Err() != nil {
-				return AuditDecision{}, usedProfile, metadata, ctx.Err()
+				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), ctx.Err()
 			}
 			if metadata.AttemptCount >= maxAuditTotalAttempts {
 				lastErr = newAuditModelCallError(
@@ -126,7 +131,7 @@ func (e *AuditEngine) callModelWithFailover(
 				attemptRecord.Reason = decision.Reason
 				attemptRecord.Evidence = decision.Evidence
 				metadata.Attempts = append(metadata.Attempts, attemptRecord)
-				return decision, profile, metadata, nil
+				return decision, profile, semanticState.metadata(metadata), nil
 			}
 
 			err = annotateAuditOutputError(err, outputDiagnostics)
@@ -141,7 +146,7 @@ func (e *AuditEngine) callModelWithFailover(
 			}
 			metadata.ModelRetryCount++
 			if err := waitAuditRetry(ctx, attempt); err != nil {
-				return AuditDecision{}, usedProfile, metadata, err
+				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), err
 			}
 		}
 	}
@@ -149,7 +154,7 @@ func (e *AuditEngine) callModelWithFailover(
 	if lastErr == nil {
 		lastErr = newAuditModelCallError("fallback_unavailable", 0, "no enabled audit fallback model is available", nil)
 	}
-	return AuditDecision{}, usedProfile, metadata, lastErr
+	return AuditDecision{}, usedProfile, semanticState.metadata(metadata), lastErr
 }
 
 func mergeAuditCallMetadata(existing auditCallMetadata, current auditCallMetadata) auditCallMetadata {

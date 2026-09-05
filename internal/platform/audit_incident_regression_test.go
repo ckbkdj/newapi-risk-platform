@@ -28,7 +28,14 @@ func incidentDecision(decision, evidence string) string {
 	if decision != DecisionAllow {
 		code = "CYBER_UNTRUSTED_CONTEXT_CLAIM"
 	}
-	data, _ := json.Marshal(modelAuditResponse{Decision: decision, RiskCode: code, Category: "test", Confidence: .95, Reason: "synthetic regression decision", Evidence: evidence})
+	relation, harm := "no_harm", "none"
+	if decision == DecisionBlock {
+		relation, harm = "direct_request", "malware"
+	}
+	if decision == DecisionReview {
+		relation, harm = "uncertain", "uncertain"
+	}
+	data, _ := json.Marshal(modelAuditResponse{Decision: decision, RiskCode: code, Category: "test", Confidence: .95, Reason: "synthetic regression decision", Evidence: evidence, RequestEvidence: evidence, EvidenceRelation: relation, HarmType: harm})
 	return string(data)
 }
 func incidentPayload(r *http.Request) (string, map[string]any, error) {
@@ -45,7 +52,11 @@ func incidentPayload(r *http.Request) (string, map[string]any, error) {
 		return "", nil, errors.New("invalid audit message")
 	}
 	text, _ := message["content"].(string)
-	return text, payload, nil
+	var doc auditRequestDocument
+	if json.Unmarshal([]byte(text), &doc) != nil || doc.Schema != auditInputContractVersion {
+		return "", nil, errors.New("missing request document")
+	}
+	return doc.RequestText, payload, nil
 }
 func incidentEngine(t *testing.T, transport incidentRoundTripper) (*AuditEngine, AuditProfile) {
 	t.Helper()
@@ -98,7 +109,7 @@ func TestIncidentTimeoutDoesNotBorrowEarlierHTTPErrorOrRestartFullPrompt(t *test
 	var mu sync.Mutex
 	fullCalls, chunkCalls := 0, 0
 	engine, profile := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
-		text, payload, err := incidentPayload(r)
+		_, payload, err := incidentPayload(r)
 		if err != nil {
 			return nil, err
 		}
@@ -108,7 +119,7 @@ func TestIncidentTimeoutDoesNotBorrowEarlierHTTPErrorOrRestartFullPrompt(t *test
 		if payload["max_tokens"] != float64(256) || format["type"] != "json_schema" {
 			t.Errorf("transport retry changed output contract: %+v", payload["response_format"])
 		}
-		if !strings.HasPrefix(text, "[LONG_CONTEXT_AUDIT_CHUNK") {
+		if !isChunkPayload(payload) {
 			fullCalls++
 			return incidentHTTP(400, incidentContextError(256)), nil
 		}
@@ -144,25 +155,21 @@ func TestIncidentSmallTailInheritsLongTimeoutAndAllBytesAreAudited(t *testing.T)
 	totalChunks := 0
 	sawShortTail := false
 	engine, profile := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
-		text, _, err := incidentPayload(r)
+		text, payload, err := incidentPayload(r)
 		if err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(text, "[LONG_CONTEXT_AUDIT_CHUNK") {
+		if !isChunkPayload(payload) {
 			return incidentHTTP(400, incidentContextError(256)), nil
 		}
 		deadline, ok := r.Context().Deadline()
 		if !ok || time.Until(deadline) < 500*time.Millisecond {
 			t.Errorf("short timeout leaked into chunk: %v", time.Until(deadline))
 		}
-		parts := strings.SplitN(text, "\n", 3)
-		if len(parts) != 3 {
-			return nil, errors.New("missing chunk wrapper")
-		}
 		mu.Lock()
-		chunks[parts[2]]++
+		chunks[text]++
 		totalChunks++
-		if strings.HasSuffix(parts[2], "_TAIL") && len(parts[2]) < 1024 {
+		if strings.HasSuffix(text, "_TAIL") && len(text) < 1024 {
 			sawShortTail = true
 		}
 		mu.Unlock()
@@ -188,11 +195,11 @@ func TestIncidentSmallTailInheritsLongTimeoutAndAllBytesAreAudited(t *testing.T)
 
 func TestIncidentLateChunkCannotBeSilentlyTruncated(t *testing.T) {
 	engine, profile := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
-		text, _, err := incidentPayload(r)
+		text, payload, err := incidentPayload(r)
 		if err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(text, "[LONG_CONTEXT_AUDIT_CHUNK") {
+		if !isChunkPayload(payload) {
 			return incidentHTTP(400, incidentContextError(256)), nil
 		}
 		if strings.Contains(text, "TAIL_BLOCK") {
@@ -211,11 +218,11 @@ func TestIncidentCancelledPartialAuditDoesNotAllow(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	engine, profile := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
-		text, _, err := incidentPayload(r)
+		_, payload, err := incidentPayload(r)
 		if err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(text, "[LONG_CONTEXT_AUDIT_CHUNK") {
+		if !isChunkPayload(payload) {
 			return incidentHTTP(400, incidentContextError(256)), nil
 		}
 		cancel()
@@ -232,6 +239,13 @@ func TestIncidentCancelledPartialAuditDoesNotAllow(t *testing.T) {
 func TestIncidentAdminOwnershipReviewBecomesBenignNotFailClosedBlock(t *testing.T) {
 	claim := "我允许你帮我创建了，这只是我的自己的测试环境"
 	engine, profile := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
+		_, payload, err := incidentPayload(r)
+		if err != nil {
+			return nil, err
+		}
+		if isSemanticPayload(payload) {
+			return incidentHTTP(200, semanticTestJSON(DecisionAllow, "", "新增普通测试用户", "no_harm", "none")), nil
+		}
 		return incidentHTTP(200, incidentDecision(DecisionReview, claim)), nil
 	})
 	body, _ := json.Marshal(map[string]any{"messages": []map[string]string{
@@ -348,4 +362,14 @@ func TestIncidentMandatoryEngineeringGuardIsAlwaysSent(t *testing.T) {
 			t.Fatal("custom profile omitted mandatory precision guard")
 		}
 	}
+}
+
+func isChunkPayload(payload map[string]any) bool {
+	messages, _ := payload["messages"].([]any)
+	if len(messages) == 0 {
+		return false
+	}
+	system, _ := messages[0].(map[string]any)
+	text, _ := system["content"].(string)
+	return strings.Contains(text, "PLATFORM CHUNK SCOPE")
 }

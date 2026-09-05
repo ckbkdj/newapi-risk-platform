@@ -45,6 +45,7 @@ func (e *AuditEngine) callModel(
 	// Every chunk, including a short tail, inherits the full request's prefill
 	// timeout. The caller's own deadline is still an absolute upper bound.
 	ctx = context.WithValue(ctx, auditOriginalTextBytesKey{}, len(text))
+	ctx = context.WithValue(ctx, auditSourceScopeKey{}, makeAuditSourceScope(text))
 	resume, _ := ctx.Value(auditResumeChunksKey{}).(auditCallMetadata)
 	var lastContextError error
 	chunkBytes := resume.ChunkBytes
@@ -62,7 +63,7 @@ func (e *AuditEngine) callModel(
 	}
 
 	for retry := 0; retry < auditChunkRetryLimit; retry++ {
-		chunks := splitAuditTextByBytes(text, chunkBytes, e.chunkOverlapBytes)
+		chunks, offsets := splitAuditTextWithOffsets(text, chunkBytes, e.chunkOverlapBytes)
 		metadata.ChunkCount = len(chunks)
 		metadata.ChunkBytes = chunkBytes
 		metadata.RetryCount = retry + 1
@@ -79,7 +80,7 @@ func (e *AuditEngine) callModel(
 			)
 		}
 
-		decision, chunkErr := e.callModelChunks(ctx, profile, chunks)
+		decision, chunkErr := e.callModelChunks(context.WithValue(ctx, auditChunkOffsetsKey{}, offsets), profile, chunks)
 		if chunkErr == nil {
 			return decision, metadata, nil
 		}
@@ -156,7 +157,14 @@ func (e *AuditEngine) callModelChunks(
 			nil,
 		)
 	}
+	parent, _ := ctx.Value(auditSourceScopeKey{}).(auditSourceScope)
+	if parent.Text == "" {
+		parent = makeAuditSourceScope(strings.Join(chunks, ""))
+	}
+	offsets, _ := ctx.Value(auditChunkOffsetsKey{}).([]int)
+	scopes := auditChunkSourceScopes(parent, chunks, offsets...)
 	if len(chunks) == 1 {
+		ctx = context.WithValue(ctx, auditSourceScopeKey{}, scopes[0])
 		return e.callModelOnceWithEvidenceSource(ctx, profile, decorateAuditChunk(chunks[0], 0, 1), chunks[0])
 	}
 
@@ -187,7 +195,7 @@ func (e *AuditEngine) callModelChunks(
 						return
 					}
 					decision, err := e.callModelOnceWithEvidenceSource(
-						workerContext,
+						context.WithValue(workerContext, auditSourceScopeKey{}, scopes[index]),
 						profile,
 						decorateAuditChunk(chunks[index], index, len(chunks)),
 						chunks[index],
@@ -308,11 +316,16 @@ func decorateChunkDecision(decision AuditDecision, index int, total int) AuditDe
 }
 
 func splitAuditTextByBytes(text string, maxBytes int, overlapBytes int) []string {
+	chunks, _ := splitAuditTextWithOffsets(text, maxBytes, overlapBytes)
+	return chunks
+}
+
+func splitAuditTextWithOffsets(text string, maxBytes int, overlapBytes int) ([]string, []int) {
 	if text == "" {
-		return nil
+		return nil, nil
 	}
 	if maxBytes <= 0 || len(text) <= maxBytes {
-		return []string{text}
+		return []string{text}, []int{0}
 	}
 	if overlapBytes < 0 {
 		overlapBytes = 0
@@ -322,6 +335,7 @@ func splitAuditTextByBytes(text string, maxBytes int, overlapBytes int) []string
 	}
 
 	chunks := make([]string, 0, len(text)/maxBytes+2)
+	offsets := make([]int, 0, cap(chunks))
 	for start := 0; start < len(text); {
 		end := start + maxBytes
 		if end >= len(text) {
@@ -347,6 +361,7 @@ func splitAuditTextByBytes(text string, maxBytes int, overlapBytes int) []string
 			}
 		}
 		chunks = append(chunks, text[start:end])
+		offsets = append(offsets, start)
 		if end >= len(text) {
 			break
 		}
@@ -360,5 +375,5 @@ func splitAuditTextByBytes(text string, maxBytes int, overlapBytes int) []string
 		}
 		start = next
 	}
-	return chunks
+	return chunks, offsets
 }
