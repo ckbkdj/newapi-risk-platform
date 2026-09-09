@@ -282,7 +282,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	ctx = context.WithValue(ctx, cyberDenyContextKey{}, true)
 	ctx, cancel := context.WithTimeout(ctx, cyberDenyDeadline)
 	defer cancel()
-	extraction := ExtractAuditTextDetails(body, e.maxTextBytes)
+	extraction := extractCyberAuditText(body, e.maxTextBytes)
 	text := extraction.Text
 	scope := makeAuditSourceScopeWithReferences(text, extraction.ReferenceSpans)
 	ctx = context.WithValue(ctx, auditSourceScopeKey{}, scope)
@@ -319,7 +319,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		result.Latency = time.Since(started)
 	}()
 	result.AuditPolicyMode = cyberDenyMode
-	matched, ruleMatch := e.matchCyberDenyRules(text)
+	matched, ruleMatch := e.matchCyberDenyRules(extraction.ruleText)
 	result.RuleMatch = ruleMatch
 	if matched != nil {
 		result.AuditDecision = *matched
@@ -493,6 +493,9 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 		}
 	}
 	applyAuditOutputContract(payload, outputPlan)
+	if cyberDenyActive(ctx) {
+		enforceCyberAuditPayload(profile, payload)
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return AuditDecision{}, newAuditModelCallError("request_encode", 0, "encode audit model request", err)

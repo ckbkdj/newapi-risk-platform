@@ -17,6 +17,7 @@ const (
 )
 
 type AuditTextExtraction struct {
+	ruleText               string // In-memory raw rule input; never serialized or persisted.
 	CoverageStatus         string
 	CoverageIssues         []string
 	ReferenceSpans         []auditReferenceSpan

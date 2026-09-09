@@ -644,7 +644,7 @@ qm = qualitative["metadata"]
 assert qm["audit_model_confidence_kind"] == "qualitative" and qm["audit_model_confidence_label"] == "high"
 assert qm["audit_model_confidence"] is None and qm["audit_http_calls"] == 1
 assert qm["audit_output_contract"] == "risk_audit_output.v2"
-assert qm["gateway_build"]["audit_engine"] == "cyber-deny-qwen27b.v3"
+assert qm["gateway_build"]["audit_engine"] == "cyber-deny-qwen27b.v4"
 assert "allow_none_risk_code" in qm["audit_output_normalizations"]
 
 structured_recovery = next((item for item in items if item.get("request_id") == "e2e-audit-structured-recovery"), None)
@@ -849,7 +849,7 @@ if not system_context:
 scm = system_context.get("metadata", {})
 if system_context.get("decision") != "allow" or int(system_context.get("http_status", 0)) != 200:
     raise RuntimeError(f"normal coding-agent system prompt was not allowed: {system_context}")
-if scm.get("audit_input_scope") != "end_user_intent_only":
+if scm.get("audit_input_scope") != "cyber_user_history_and_tool_data":
     raise RuntimeError(f"role-aware audit scope missing: {scm}")
 if int(scm.get("audit_ignored_context_bytes", 0)) <= 0:
     raise RuntimeError(f"ignored system/developer context was not diagnosed: {scm}")
@@ -957,5 +957,7 @@ curl --fail --silent --show-error \
   "${BASE_URL}/api/admin/v1/dashboard" \
   "${auth[@]}" >"${WORKDIR}/dashboard.json"
 contains "${WORKDIR}/dashboard.json" '"blocked_requests"'
+
+BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" python3 scripts/e2e-cyber-expanded.py
 
 echo "New API risk platform end-to-end checks passed."

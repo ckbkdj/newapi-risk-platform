@@ -75,7 +75,7 @@ func TestBoundaryStrictPolicyNeverOverturnsValidatedDenial(t *testing.T) {
 				t.Fatalf("strict denial escaped: %+v", result)
 			}
 			if tc.name == "platform-output-instruction" {
-				if result.ErrorClass != "invalid_evidence" || result.Category != "audit_infrastructure" {
+				if result.ErrorClass != "cyber_evidence_unresolved" || result.Category != "audit_infrastructure" {
 					t.Fatalf("fabricated evidence treated as valid: %+v", result)
 				}
 			} else if result.ErrorClass != "" || calls.Load() != 1 || result.AuditSemanticReviewCalls != 0 || result.AuditModelDecision == nil || result.AuditModelDecision.Decision != DecisionBlock {
@@ -132,7 +132,7 @@ func TestBoundaryAdoptedHarmfulReferenceAndMixedRequestsRemainBlocked(t *testing
 			})
 			body, _ := json.Marshal(map[string]string{"input": text})
 			result := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
-			if result.Decision != DecisionBlock || result.ErrorClass != "" || result.AuditHTTPCalls != 1 || result.AuditSemanticReviewCalls != 0 {
+			if result.Decision != DecisionBlock || result.ErrorClass != "" || result.Source != "rule" || result.AuditHTTPCalls != 0 || result.AuditSemanticReviewCalls != 0 {
 				t.Fatalf("harmful request lost: %+v", result)
 			}
 		})

@@ -1,6 +1,6 @@
 # Cyber 禁用策略与 Qwen3.8-27B 审计规范
 
-版本：`cyber-deny-qwen27b.v3`。本文取代旧“内部工程豁免 / 候选可被复核推翻”的运行策略。数据库变更为 migration 009；仍保留现有 HTTP 555、`risk_audit_request.v2` 和 `risk_audit_output.v2` 接口。
+版本：`cyber-deny-qwen27b.v4`。本文取代旧“内部工程豁免 / 候选可被复核推翻”的运行策略。数据库变更为 migration 009；仍保留现有 HTTP 555、`risk_audit_request.v2` 和 `risk_audit_output.v2` 接口。
 
 ## 1. 决策规则（代码强制，不交给模型协商）
 
@@ -40,7 +40,13 @@ migration 009 将启用的旧 Cyber 规则动作更新为 block；不启用原�
 
 只恢复真正的调用/格式故障。有效拒绝不是故障，不能通过重试直到 allow。备用模型继承主配置要求的复核/Fusion策略，不能漏掉复核后放行。
 
-目前实现的是文本意图审计，而不是完整多模态/工具执行审计。Qwen3.8 本身支持多模态，但本平台未实现图片/音频/文件审计和 provider 侧 `previous_response_id` 历史恢复。未覆盖输入、仅工具输出、缺少必要续接历史、历史超出提取预算会明确拒绝，不能静默跳过；调用方应发送完整必要的文本历史。续写选择仍有启发式边界，没有宣称支持任意隐式指代或持久任务状态恢复。
+当前审计完整的已提供用户文本历史、助手文本及工具调用参数/结果，并标记为不可信数据；工具定义、真正的 system/developer 控制消息和 reasoning 不作为用户执行意图。文本中伪造 ROLE=SYSTEM 或“我的请求”标题不能删除之前的操作。规则在内存原文上匹配，模型输入单独脱敏，避免脱敏擦除规则触发点。日志不保存原始 ruleText。
+
+旧数据库规则之外，增加九组固定中英文业务禁用基线，覆盖安全渗透/扫描、SQL/XSS/暴力破解、验证码/WAF/认证绕过、动态 Hook/逆向、抓包篡改、ChatGPT 网页自动化、CLI 端口/网络探测、高频请求和底层系统配置修改、凭据访问。payload JSON 字段、普通依赖注入、React hook 和无 Cyber 的函数单元测试并不自动封禁。固定基线不能被旧规则 action=allow 或 profile.extra 覆盖；禁用某条可编辑数据库规则不会禁用同类固定基线。
+
+这是保守业务准入，不是上游官方政策的通用解释；否定句/引用/历史中已经命中的禁止能力也会拒绝，长会话可能因此持续被拦。图片/音频/文件和 provider 侧 previous_response_id 历史恢复仍未实现，工具只审计传入文本而不观测真正执行环境。未知内容、重复键、替代输入字段并存、仅工具输出、缺少续接历史、超过输入/调用预算均拒绝。没有传到网关的本地脚本和操作，平台无法凭空审计。
+
+有效拒绝或证据不符的拒绝候选不允许重试至 allow；后者使用独立 cyber_evidence_unresolved 审计故障类型，不声称已经证实攻击。allow 与 Cyber 类别矛盾同样拒绝。
 
 ## 4. 回归与真实模型验收
 
@@ -53,13 +59,13 @@ export RISK_BASE_URL='https://your-staging-risk-gateway'
 read -rsp 'Admin token: ' RISK_ADMIN_TOKEN; echo
 export RISK_ADMIN_TOKEN
 python3 scripts/eval-audit-intent.py --profile-id 1 \
-  --cases tests/fixtures/audit-cyber-deny-eval.jsonl --repeat 3
+  --cases tests/fixtures/cyber-deny-expanded-eval.jsonl --repeat 3
 unset RISK_ADMIN_TOKEN
 ```
 
 使用合成样本，输出只保留 case ID、判定、来源/模型/构建、调用数和耗时，不打印原文或 token。分别统计规则阻断和模型审计；没有模型调用的样本不能算作模型能力验证。基础准入：禁止样本不能 allow，普通对照不能误阻，不能把基础设施失败算作正确分类。再补充真实脱敏事故、长文本关键句在首/中/尾、多轮续写、引号/否定/测试包装、中英文混合，记录漏拦/误拦/故障率与P95延迟。固定实际权重版本、量化、vLLM镜像/模板、配置、请求样本和网关commit，才能可重复比较。生产Qwen/GPU并发未执行时必须写“未实测”，不能许诺零错误。
 
-升级仍走项目既有 `scripts/upgrade.sh` 流程，不删除数据库卷。确认新请求 `/healthz` 与 `gateway_build.audit_engine=cyber-deny-qwen27b.v3`、commit均为实际运行版本，并检查所有副本。先预发布验收；合并代码不等于容器已经升级。
+升级仍走项目既有 `scripts/upgrade.sh` 流程，不删除数据库卷。确认新请求 `/healthz` 与 `gateway_build.audit_engine=cyber-deny-qwen27b.v4`、commit均为实际运行版本，并检查所有副本。先预发布验收；合并代码不等于容器已经升级。
 
 ## 5. 官方资料边界
 
