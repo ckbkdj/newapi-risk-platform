@@ -1,0 +1,58 @@
+name: Apply verified strict Cyber repair
+on:
+  push:
+    branches: [fix/audit-intent-coverage-20260909]
+    paths: [.github/workflows/apply-strict-cyber.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'ckbkdj/newapi-risk-platform'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+      - name: Verify exact authored patch
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          encoded = ''.join(Path(f'.strict-repair/part{i}.b64').read_text().strip() for i in range(7))
+          assert len(encoded) == 37628, len(encoded)
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert len(patch) == 109989, len(patch)
+          digest = hashlib.sha256(patch).hexdigest()
+          assert digest == '121a9c95a868b92c0f7167f2b8bd4951689b8845119448bf3b862f1d5f277b35', digest
+          Path('/tmp/strict-cyber.patch').write_bytes(patch)
+          print('Verified authored source patch:', digest)
+          PY
+          git apply --check /tmp/strict-cyber.patch
+          git apply --index /tmp/strict-cyber.patch
+          git rm -r .strict-repair
+          git rm .github/workflows/apply-strict-cyber.yml
+          git diff --cached --check
+      - name: Verify full project and scripts
+        run: |
+          set -euo pipefail
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          bash scripts/upgrade_test.sh
+          python3 scripts/test_collect_audit_diagnostics.py
+          python3 -m py_compile scripts/eval-audit-intent.py scripts/e2e-audit-coverage.py scripts/e2e-audit-fusion.py
+          bash -n scripts/e2e.sh
+      - name: Commit checked source without temporary transport
+        run: |
+          set -euo pipefail
+          test ! -e .strict-repair
+          test ! -e .github/workflows/strict-audit-workspace.yml
+          test ! -e .github/workflows/strict-source-workspace.yml
+          git config user.name 'ckbkdj'
+          git config user.email '9382231+ckbkdj@users.noreply.github.com'
+          git commit -m 'fix(audit): enforce terminal Cyber deny and bounded Qwen 27B assessments'
+          git push origin HEAD:fix/audit-intent-coverage-20260909
