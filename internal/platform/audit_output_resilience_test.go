@@ -19,7 +19,7 @@ func TestOutputIncidentQualitativeAllowDoesNotBecomeInfrastructureFailure(t *tes
 		return incidentHTTP(200, qualitativeIncident), nil
 	})
 	result := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, []byte(`{"input":"整理这次开发任务的记忆"}`))
-	if result.Decision != DecisionAllow || result.ErrorClass != "" || calls.Load() != 1 {
+	if result.Decision != DecisionAllow || result.ErrorClass != "" || calls.Load() != 2 {
 		t.Fatalf("recoverable allow was lost: %+v", result)
 	}
 	if result.ConfidenceKind != "qualitative" || result.ConfidenceLabel != "high" || result.Confidence != 0 {

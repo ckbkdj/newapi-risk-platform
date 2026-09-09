@@ -15,6 +15,10 @@ var naturalContinuationPattern = regexp.MustCompile(`(?i)(?:继续|补齐|剩余
 // task specification is not evidence of missing input.
 var standaloneContinuationPattern = regexp.MustCompile(`(?i)^\s*(?:请\s*)?(?:继续(?:处理)?(?:[。！!\s]|$)|补齐剩余|按(?:照)?(?:之前|前面|上面)|照做|执行上述|修复它|处理它|完成它|(?:continue|go ahead|do it|proceed|finish it|complete it)(?:[.!?\s]|$))`)
 
+// Bare execution/testing follow-ups inherit the operation they exercise.
+// This is not a ban on fully specified ordinary unit tests.
+var executionFollowupPattern = regexp.MustCompile(`(?i)^\s*(?:请\s*)?(?:跑一下(?:测试)?|运行(?:测试|自动化测试|回归测试)|执行(?:测试|脚本)|run (?:the )?(?:tests|script)|rerun (?:the )?tests|test it)\s*[。.!！]?\s*$`)
+
 func auditActiveTurnStart(units []auditUserUnit) int {
 	if len(units) == 0 {
 		return 0

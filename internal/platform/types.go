@@ -104,9 +104,10 @@ type CyberRule struct {
 }
 
 type AuditDecision struct {
-	ConfidenceKind       string   `json:"confidence_kind,omitempty"`
-	ConfidenceLabel      string   `json:"confidence_label,omitempty"`
-	OutputNormalizations []string `json:"output_normalizations,omitempty"`
+	policyOriginalDecision string   // Code-owned provenance for strict review-to-deny; not a model field.
+	ConfidenceKind         string   `json:"confidence_kind,omitempty"`
+	ConfidenceLabel        string   `json:"confidence_label,omitempty"`
+	OutputNormalizations   []string `json:"output_normalizations,omitempty"`
 
 	RequestEvidence    string               `json:"request_evidence,omitempty"`
 	EvidenceRelation   string               `json:"evidence_relation,omitempty"`

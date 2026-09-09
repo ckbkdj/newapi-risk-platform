@@ -18,17 +18,17 @@ deny=profile('fusion-deny')['id']
 broken=profile('fusion-broken')['id']
 root=0
 for name,panel,arbiter,decision,status,error in [
-    ('consensus',[a,b],None,'allow','consensus',''),
-    ('disagreement',[a,deny],None,'block','unresolved',''),
-    ('adjudication',[a,deny],b,'allow','adjudicated',''),
+    ('consensus',[a,b],None,'allow','all_allow',''),
+    ('disagreement',[a,deny],None,'block','deny_override',''),
+    ('adjudication',[a,deny],b,'block','deny_override',''),
     ('incomplete',[a,broken],None,'block','error','fusion_incomplete'),
 ]:
     extra={'_risk_policy_mode':'internal_engineering','_risk_fusion_profile_ids':panel}
     if arbiter:extra['_risk_fusion_adjudicator_profile_id']=arbiter
     root=profile('fusion-primary',extra,root)['id']
-    result=post('/api/admin/v1/audit/dry-run',{'profile_id':root,'text':'model-audit-block'})['result']
+    result=post('/api/admin/v1/audit/dry-run',{'profile_id':root,'text':'fusion-case'})['result']
     assert result['decision']==decision,(name,result)
     assert result.get('error_class','')==error,(name,result)
     assert result['audit_semantic_reviews'][0]['fusion']['status']==status,(name,result)
-    assert result['gateway_build']['audit_engine']=='intent-coverage-guard.v2'
-print('Fusion consensus, disagreement, adjudication and invalid vote E2E passed')
+    assert result['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v3'
+print('Strict Fusion all-allow, deny override, arbiter non-override and invalid vote E2E passed')

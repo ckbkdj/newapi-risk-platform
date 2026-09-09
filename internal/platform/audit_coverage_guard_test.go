@@ -45,7 +45,7 @@ func TestCoverageGuardReviewRuleCannotTrustPrimaryAllow(t *testing.T) {
 					return incidentHTTP(200, semanticTestJSON(DecisionAllow, "", tc.text, "no_harm", "none")), nil
 				}
 			})
-			// A credential keyword candidate is not itself a positive label.
+			// Under the requested business policy, an enabled Cyber rule is terminal.
 			action := DecisionReview
 			if tc.name == "benign-local-reproduction" {
 				action = DecisionBlock
@@ -53,19 +53,10 @@ func TestCoverageGuardReviewRuleCannotTrustPrimaryAllow(t *testing.T) {
 			engine.rules.Store([]compiledRule{testCompiledRule("CYBER_CREDENTIAL_ACCESS_REVIEW", "credential_access", `(?i)(?:credentials|API key|token)`, action)})
 			body, _ := json.Marshal(map[string]string{"input": tc.text})
 			got := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
-			if got.Decision != tc.want || got.ErrorClass != tc.class || got.AuditSemanticReviewCalls < 1 || calls.Load() < 2 || calls.Load() > 3 {
-				t.Fatalf("review was bypassed or unbounded: %+v calls=%d", got, calls.Load())
+			if got.Decision != DecisionBlock || got.ErrorClass != "" || calls.Load() != 0 || got.AuditSemanticReviewCalls != 0 || got.RuleMatch == nil {
+				t.Fatalf("rule hit did not terminate before model: %+v", got)
 			}
-			if tc.verification == "block" && (got.AuditModelDecision == nil || got.AuditModelDecision.Decision != DecisionAllow || got.SemanticReview == nil || got.SemanticReview.Status != "escalated") {
-				t.Fatalf("primary allow/verified block provenance lost: %+v", got)
-			}
-			if tc.class != "" {
-				meta := map[string]any{}
-				recordAuditDecisionMetadata(meta, got)
-				if meta["audit_completed"] != false {
-					t.Fatal("failed verification recorded as completed")
-				}
-			}
+
 		})
 	}
 }
@@ -99,9 +90,7 @@ func TestCoverageGuardIncompleteInputsRespectFailurePolicy(t *testing.T) {
 				}
 				got := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: closed}, []byte(tc.body))
 				want, source := DecisionBlock, "platform"
-				if !closed {
-					want, source = DecisionAllow, "fail_open"
-				}
+				// Strict business policy cannot be weakened by legacy fail-open flags.
 				if got.Decision != want || got.Source != source || got.ErrorClass != "input_coverage" || got.AuditCoverageStatus != "incomplete" || got.AuditHTTPCalls != 0 || !strings.Contains(strings.Join(got.AuditCoverageIssues, " "), tc.issue) {
 					t.Fatalf("coverage silently accepted: %+v", got)
 				}
@@ -214,7 +203,7 @@ func TestCoverageGuardFusionAlsoReviewsPrimaryAllow(t *testing.T) {
 	}
 	raw, _ := json.Marshal(map[string]string{"input": text})
 	got := engine.Audit(context.Background(), Route{AuditProfileID: &root.ID, FailClosed: true}, raw)
-	if got.Decision != DecisionAllow || calls.Load() != 3 || got.AuditSemanticReviewCalls != 2 || len(got.AuditSemanticReviews) != 1 || got.AuditSemanticReviews[0].Fusion == nil || got.AuditSemanticReviews[0].Fusion.Status != "consensus" {
+	if got.Decision != DecisionAllow || calls.Load() != 3 || got.AuditSemanticReviewCalls != 2 || len(got.AuditSemanticReviews) != 1 || got.AuditSemanticReviews[0].Fusion == nil || got.AuditSemanticReviews[0].Fusion.Status != "all_allow" {
 		t.Fatalf("primary allow skipped fusion: %+v calls=%d", got, calls.Load())
 	}
 	root.Extra = json.RawMessage(`{"_risk_fusion_profile_ids":[1,1]}`)

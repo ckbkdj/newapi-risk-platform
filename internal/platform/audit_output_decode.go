@@ -98,6 +98,12 @@ func readAuditJSONValue(decoder *json.Decoder, depth int) (any, error) {
 // Zero is only a compatibility placeholder when ConfidenceKind is qualitative.
 func decodeAuditPolicyObject(object map[string]any) (modelAuditResponse, error) {
 	var result modelAuditResponse
+	result.contractFieldsPresent = true
+	for _, key := range []string{"decision", "risk_code", "category", "confidence", "reason", "evidence"} {
+		if _, ok := object[key]; !ok {
+			result.contractFieldsPresent = false
+		}
+	}
 	for key := range object {
 		lower := strings.ToLower(key)
 		if lower != key {

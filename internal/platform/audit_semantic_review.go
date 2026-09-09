@@ -69,6 +69,9 @@ func (s *auditSemanticState) metadata(m auditFailoverMetadata) auditFailoverMeta
 // review (and for a parsed verdict with invalid evidence). Rule enforcement is
 // unaffected. Invalid/missing verification never becomes an implicit allow.
 func (e *AuditEngine) callModelOnceWithEvidenceSource(ctx context.Context, profile AuditProfile, text, evidenceSource string) (AuditDecision, error) {
+	if cyberDenyActive(ctx) {
+		return e.callCyberDenyModel(ctx, profile, text, evidenceSource)
+	}
 	ctx, state := withAuditSemanticState(ctx)
 	candidate, err := e.callModelRawWithEvidenceSource(ctx, profile, text, evidenceSource)
 	class, _, _ := auditModelErrorDetails(err)

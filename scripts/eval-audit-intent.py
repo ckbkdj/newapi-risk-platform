@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import sys
+import math
 import time
 import urllib.error
 import urllib.parse
@@ -23,26 +24,32 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile-id", type=int, required=True)
-    parser.add_argument("--cases", type=Path, default=Path(__file__).resolve().parents[1] / "tests/fixtures/audit-intent-eval.jsonl")
+    parser.add_argument("--cases", type=Path, default=Path(__file__).resolve().parents[1] / "tests/fixtures/audit-cyber-deny-eval.jsonl")
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--repeat", type=int, default=1, choices=range(1,21))
     args = parser.parse_args()
     base = os.environ.get("RISK_BASE_URL", "").rstrip("/")
     token = os.environ.get("RISK_ADMIN_TOKEN", "")
     url = urllib.parse.urlsplit(base)
-    if args.profile_id < 1 or args.timeout <= 0 or not token or url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query or url.fragment:
+    if args.profile_id < 1 or (not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 600) or not token or url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query or url.fragment:
         parser.error("Supply a positive profile ID, RISK_BASE_URL and RISK_ADMIN_TOKEN; URL credentials/query/fragment are not allowed")
     if url.scheme == "http" and url.hostname not in {"localhost", "127.0.0.1", "::1"}:
         parser.error("Use HTTPS except for a loopback gateway")
+    if args.cases.stat().st_size > 1024*1024:
+        parser.error("Case file exceeds 1 MiB")
     cases = [json.loads(line) for line in args.cases.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if not cases or any(not isinstance(c.get("id"),str) or c.get("expected") not in {"allow", "block"} or not isinstance(c.get("text"), str) or not c["text"].strip() for c in cases):
+    if not cases or len(cases)>500 or any(not isinstance(c.get("id"),str) or c.get("expected") not in {"allow", "block"} or not isinstance(c.get("text"), str) or not c["text"].strip() for c in cases):
         parser.error("Each case needs nonempty text and an allow/block expectation")
+    cases = [dict(c, repeat=n+1) for n in range(args.repeat) for c in cases]
     opener = urllib.request.build_opener(NoRedirect)
     report = {"cases": len(cases), "false_blocks": 0, "false_allows": 0, "unresolved": 0, "infrastructure_errors": 0}
+    sources = {"rule":0, "model":0, "other":0}
+    latencies = []
     for case in cases:
         payload = json.dumps({"profile_id": args.profile_id, "text": case["text"]}).encode()
         request = urllib.request.Request(base + "/api/admin/v1/audit/dry-run", data=payload, headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"}, method="POST")
         started = time.monotonic()
-        record = {"id": case["id"], "expected": case["expected"]}
+        record = {"id": case["id"], "expected": case["expected"], "repeat":case["repeat"]}
         try:
             with opener.open(request, timeout=args.timeout) as response:
                 data = response.read(4 * 1024 * 1024 + 1)
@@ -50,6 +57,10 @@ def main() -> int:
                 raise ValueError("oversized response")
             result = json.loads(data)["result"]
             decision = result["decision"]
+            source=result.get("source","")
+            sources["rule" if source=="rule" else "model" if source.startswith("model") else "other"]+=1
+            record.update(source=source, model=result.get("model",""), build=result.get("gateway_build",{}),
+                          policy=result.get("audit_policy_mode",""), http_calls=result.get("audit_http_calls",0))
             record.update(decision=decision, error_class=result.get("error_class", ""), review_calls=result.get("audit_semantic_review_calls", 0))
             if result.get("error_class") or result.get("category") == "audit_infrastructure":
                 report["infrastructure_errors"] += 1
@@ -66,8 +77,9 @@ def main() -> int:
             # Do not log server response bodies or authentication headers.
             record["error_class"] = type(exc).__name__
         record["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+        latencies.append(record["elapsed_ms"])
         print(json.dumps(record, ensure_ascii=False), flush=True)
-    print(json.dumps({"summary": report}, ensure_ascii=False))
+    print(json.dumps({"summary": report, "sources":sources, "latency_p95_ms":sorted(latencies)[math.ceil(len(latencies)*.95)-1]}, ensure_ascii=False))
     return int(any(report[k] for k in report if k != "cases"))
 
 

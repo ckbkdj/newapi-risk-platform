@@ -24,8 +24,8 @@ def call(path, payload=None, token=TOKEN, request_id=None):
         return error.code, json.load(error)
 
 
-# Create a candidate-only rule, never a final truth label. Mock primary returns
-# allow; only the fresh semantic verifier interprets the synthetic harm marker.
+# Both enabled Cyber rule triggers deny, regardless of the mock's safe label.
+# A separate rule-free marker tests model-only allow-to-deny escalation.
 status, rule = call('/api/admin/v1/cyber-rules', {
     'id': 0, 'code': 'CYBER_COVERAGE_GUARD_REVIEW', 'name': 'E2E coverage review',
     'category': 'credential_access', 'description': 'Synthetic review regression',
@@ -35,7 +35,9 @@ status, rule = call('/api/admin/v1/cyber-rules', {
 assert status == 200, (status, rule)
 requests = [
     ('e2e-coverage-positive', {'messages': [{'role':'user', 'content':'coverage-guard-unsafe'}]}, 555),
-    ('e2e-coverage-negative', {'messages': [{'role':'user', 'content':'coverage-guard-safe'}]}, 200),
+    ('e2e-coverage-rule-safe', {'messages': [{'role':'user', 'content':'coverage-guard-safe'}]}, 555),
+    ('e2e-coverage-negative', {'messages': [{'role':'user', 'content':'Change a button label'}]}, 200),
+    ('e2e-coverage-model', {'messages': [{'role':'user', 'content':'coverage-model-only-unsafe'}]}, 555),
     ('e2e-coverage-image', {'messages': [{'role':'user', 'content':[{'type':'image_url','image_url':{'url':'https://image.invalid/synthetic.png'}}]}]}, 555),
     ('e2e-coverage-mixed', {'messages': [{'role':'user','content':[{'type':'text','text':'Explain this'},{'type':'image_url','image_url':{'url':'https://image.invalid/synthetic.png'}}]}]}, 555),
     ('e2e-coverage-tool', {'input':[{'type':'function_call_output','call_id':'synthetic','output':'done'}]}, 555),
@@ -44,7 +46,7 @@ for request_id, payload, expected in requests:
     payload['model'] = 'normal'
     status, response = call('/gateway/mock-main/v1/chat/completions', payload, ROUTE_KEY, request_id)
     assert status == expected, (request_id, status, response)
-    if request_id not in ('e2e-coverage-positive', 'e2e-coverage-negative'):
+    if request_id in ('e2e-coverage-image','e2e-coverage-mixed','e2e-coverage-tool'):
         assert 'AUDIT_INPUT_COVERAGE_INCOMPLETE' in json.dumps(response), (request_id, response)
 
 # Trace persistence is asynchronous. Poll only the disposable local stack.
@@ -66,10 +68,12 @@ for request_id in expected_ids:
         assert meta['audit_semantic_review_calls'] == 1, meta
     else:
         assert meta.get('upstream_started') is False, meta
-        if request_id == 'e2e-coverage-positive':
+        if request_id == 'e2e-coverage-model':
             assert meta['audit_model_decision'] == 'allow', meta
             assert meta['audit_semantic_review_status'] == 'escalated', meta
             assert meta['audit_http_calls'] == 2, meta
+        elif request_id in ('e2e-coverage-positive','e2e-coverage-rule-safe'):
+            assert meta['audit_source'] == 'rule' and meta['audit_http_calls'] == 0, meta
         else:
             assert meta['audit_coverage_status'] == 'incomplete', meta
             assert meta['audit_completed'] is False and meta['audit_http_calls'] == 0, meta

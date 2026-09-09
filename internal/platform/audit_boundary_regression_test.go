@@ -19,7 +19,7 @@ func isSemanticPayload(payload map[string]any) bool {
 	}
 	system, _ := messages[0].(map[string]any)
 	value, _ := system["content"].(string)
-	return strings.Contains(value, "SEMANTIC INTENT VERIFICATION v1")
+	return strings.Contains(value, "SEMANTIC INTENT VERIFICATION v1") || strings.Contains(value, "CYBER DENY SECOND PASS")
 }
 
 func semanticTestJSON(decision, evidence, request, relation, harm string) string {
@@ -36,7 +36,7 @@ func boundaryHistory(title string) string {
 	return "Recent Codex tasks in this project:\n" + string(encoded)
 }
 
-func TestBoundaryFalsePositiveCandidatesRequireIndependentIntentVerification(t *testing.T) {
+func TestBoundaryStrictPolicyNeverOverturnsValidatedDenial(t *testing.T) {
 	cases := []struct{ name, text, evidence, request, code, relation string }{
 		{"platform-output-instruction", "请根据近期任务建议下一项工作。\n" + boundaryHistory("查看工作流状态，之前手动修正过数据库状态"), "Return only the compact policy JSON object now", "请根据近期任务建议下一项工作", "PROMPT_INJECTION", "reference_only"},
 		{"historical-task", "请根据近期任务建议下一项工作。\n" + boundaryHistory("查看工作流状态，之前手动修正过数据库状态"), "查看工作流状态", "请根据近期任务建议下一项工作", "CYBER_UNTRUSTED_CONTEXT_CLAIM", "reference_only"},
@@ -71,15 +71,17 @@ func TestBoundaryFalsePositiveCandidatesRequireIndependentIntentVerification(t *
 			})
 			body, _ := json.Marshal(map[string]string{"input": tc.text})
 			result := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
-			if result.Decision != DecisionAllow || result.AuditModelDecision == nil || result.AuditModelDecision.Decision != DecisionBlock || result.AuditPolicyAdjustment == nil || calls.Load() != 2 {
-				t.Fatalf("candidate not corrected: %+v calls=%d", result, calls.Load())
+			if result.Decision != DecisionBlock || result.AuditPolicyAdjustment != nil {
+				t.Fatalf("strict denial escaped: %+v", result)
 			}
-			if result.AuditHTTPCalls != 2 || result.AuditSemanticReviewCalls != 1 || len(result.AuditSemanticReviews) != 1 || result.AuditSemanticReviews[0].Status != "overturned" {
-				t.Fatalf("missing verification trace: %+v", result)
+			if tc.name == "platform-output-instruction" {
+				if result.ErrorClass != "invalid_evidence" || result.Category != "audit_infrastructure" {
+					t.Fatalf("fabricated evidence treated as valid: %+v", result)
+				}
+			} else if result.ErrorClass != "" || calls.Load() != 1 || result.AuditSemanticReviewCalls != 0 || result.AuditModelDecision == nil || result.AuditModelDecision.Decision != DecisionBlock {
+				t.Fatalf("validated denial was re-adjudicated: %+v", result)
 			}
-			if tc.name == "platform-output-instruction" && result.AuditSemanticReviews[0].CandidateError != "invalid_evidence" {
-				t.Fatal("fabricated instruction evidence was treated as valid")
-			}
+
 		})
 	}
 }
@@ -130,7 +132,7 @@ func TestBoundaryAdoptedHarmfulReferenceAndMixedRequestsRemainBlocked(t *testing
 			})
 			body, _ := json.Marshal(map[string]string{"input": text})
 			result := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
-			if result.Decision != DecisionBlock || result.ErrorClass != "" || result.SemanticReview == nil || result.SemanticReview.Status != "confirmed" {
+			if result.Decision != DecisionBlock || result.ErrorClass != "" || result.AuditHTTPCalls != 1 || result.AuditSemanticReviewCalls != 0 {
 				t.Fatalf("harmful request lost: %+v", result)
 			}
 		})
@@ -159,13 +161,13 @@ func TestBoundaryInvalidSemanticContractNeverTurnsIntoAllow(t *testing.T) {
 		if isSemanticPayload(payload) {
 			return incidentHTTP(200, `{"decision":"allow","confidence":0.99,"reason":"safe"}`), nil
 		}
-		return incidentHTTP(200, incidentDecision(DecisionBlock, source)), nil
+		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
 	profile.RetryCount = 5
 	engine.profileCache().entries[1] = auditProfileCacheEntry{profile: profile, expiresAt: time.Now().Add(time.Hour)}
 	body, _ := json.Marshal(map[string]string{"input": source})
 	result := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
-	if result.Decision != DecisionBlock || result.Category != "audit_infrastructure" || result.ErrorClass != "invalid_semantic_evidence" || result.AuditHTTPCalls != 3 {
+	if result.Decision != DecisionBlock || result.Category != "audit_infrastructure" || result.ErrorClass == "" || result.AuditHTTPCalls < 2 || result.AuditHTTPCalls > 12 {
 		t.Fatalf("bad verifier bypassed fail-closed or retried endlessly: %+v", result)
 	}
 }
@@ -179,7 +181,7 @@ func TestBoundaryVerifierTransportFailureIsNotThePrimaryModelResponse(t *testing
 		if isSemanticPayload(payload) {
 			return nil, context.DeadlineExceeded
 		}
-		return incidentHTTP(200, incidentDecision(DecisionBlock, "普通界面操作")), nil
+		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
 	result := engine.DryRun(context.Background(), "普通界面操作", &profile.ID)
 	if result.ErrorClass != "timeout" || result.AuditResponsePreview != "" || result.AuditResponseContentBytes != 0 || result.Decision != DecisionBlock {
@@ -344,13 +346,10 @@ func TestBoundaryReferenceRuleCandidateCannotSkipVerificationOnPrimaryAllow(t *t
 			engine.rules.Store([]compiledRule{testCompiledRule("CYBER_MOCK_REFERENCE", "test", "获取第三方凭据并外传", DecisionBlock)})
 			body, _ := json.Marshal(map[string]string{"input": request + "\n" + boundaryHistory("获取第三方凭据并外传")})
 			result := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
-			want := DecisionAllow
-			if adopt {
-				want = DecisionBlock
+			if result.Decision != DecisionBlock || result.AuditSemanticReviewCalls != 0 || result.AuditHTTPCalls != 0 || result.RuleMatch == nil {
+				t.Fatalf("enabled rule was not terminal: %+v", result)
 			}
-			if result.Decision != want || result.AuditSemanticReviewCalls != 1 {
-				t.Fatalf("rule candidate skipped evidence verification: %+v", result)
-			}
+
 		})
 	}
 }

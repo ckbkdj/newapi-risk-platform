@@ -47,6 +47,7 @@ type compiledRule struct {
 }
 
 type AuditEngine struct {
+	ruleLoadFailed            atomic.Bool
 	store                     *Store
 	security                  *Security
 	client                    *http.Client
@@ -137,7 +138,8 @@ func (e *AuditEngine) Start(ctx context.Context) error {
 	return nil
 }
 
-func (e *AuditEngine) ReloadRules(ctx context.Context) error {
+func (e *AuditEngine) ReloadRules(ctx context.Context) (loadErr error) {
+	defer func() { e.ruleLoadFailed.Store(loadErr != nil) }()
 	rules, err := e.store.ListCyberRules(ctx, true)
 	if err != nil {
 		return err
@@ -152,20 +154,15 @@ func (e *AuditEngine) ReloadRules(ctx context.Context) error {
 		case "regex":
 			item.regularExpression, err = regexp.Compile(rule.Pattern)
 			if err != nil {
-				e.log.Error(
-					"invalid cyber rule skipped",
-					"rule_id", rule.ID,
-					"code", rule.Code,
-					"error", err,
-				)
-				continue
+				return fmt.Errorf("invalid enabled Cyber rule %d: %w", rule.ID, err)
 			}
+
 		case "contains", "exact":
 			if item.lowerPattern == "" {
-				continue
+				return fmt.Errorf("empty enabled Cyber rule %d", rule.ID)
 			}
 		default:
-			continue
+			return fmt.Errorf("unsupported enabled Cyber rule type for %d", rule.ID)
 		}
 		compiled = append(compiled, item)
 	}
@@ -282,6 +279,9 @@ func (e *AuditEngine) matchRulesWithScope(text string, policy AuditPolicy, refer
 
 func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (result AuditResult) {
 	started := time.Now()
+	ctx = context.WithValue(ctx, cyberDenyContextKey{}, true)
+	ctx, cancel := context.WithTimeout(ctx, cyberDenyDeadline)
+	defer cancel()
 	extraction := ExtractAuditTextDetails(body, e.maxTextBytes)
 	text := extraction.Text
 	scope := makeAuditSourceScopeWithReferences(text, extraction.ReferenceSpans)
@@ -318,60 +318,30 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	defer func() {
 		result.Latency = time.Since(started)
 	}()
-	profile, profileErr := e.getAuditProfile(ctx, route.AuditProfileID)
+	result.AuditPolicyMode = cyberDenyMode
+	matched, ruleMatch := e.matchCyberDenyRules(text)
+	result.RuleMatch = ruleMatch
+	if matched != nil {
+		result.AuditDecision = *matched
+		return result
+	}
+	if e.ruleLoadFailed.Load() {
+		result.ErrorClass = "rules_unavailable"
+		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: "AUDIT_RULES_UNAVAILABLE", Category: "audit_infrastructure", Reason: "enabled Cyber rule snapshot could not be refreshed", Source: "platform"}
+		return result
+	}
 	if extraction.CoverageStatus != "complete" {
 		result.ErrorClass = "input_coverage"
-		result.AuditDecision = auditIncompleteInputDecision(route.FailClosed || profile.FailClosed || profileErr != nil, extraction.CoverageIssues)
+		result.AuditDecision = auditIncompleteInputDecision(true, extraction.CoverageIssues)
 		return result
 	}
-	policy := strictAuditPolicy()
-	if profileErr == nil && profile.Enabled {
-		policy = auditPolicyFromProfile(profile)
-	}
-	result.AuditPolicyMode = policy.Mode
-	matched, ruleMatch, suppressions := e.matchRulesWithScope(text, policy, scope.References)
-	result.RuleMatch = ruleMatch
-	result.AuditRuleSuppressions = append([]RuleSuppressionDiagnostic(nil), suppressions...)
-	if matched != nil && (matched.Decision == DecisionBlock || matched.Decision == DecisionAllow) {
-		adjusted, adjustment := applyAuditPolicyAdjustment(policy, text, *matched)
-		result.AuditDecision = adjusted
-		result.AuditPolicyAdjustment = adjustment
-		if adjusted.Decision != DecisionReview {
-			return result
-		}
-		matched = &adjusted
-		if result.RuleMatch != nil {
-			result.RuleMatch.Downgraded = true
-			result.RuleMatch.DowngradeReason = adjusted.Reason
-		}
-	}
-
+	profile, profileErr := e.getAuditProfile(ctx, route.AuditProfileID)
 	if profileErr != nil || !profile.Enabled {
-		if route.FailClosed {
-			result.AuditDecision = AuditDecision{
-				Decision:   DecisionBlock,
-				RiskCode:   "AUDIT_MODEL_UNAVAILABLE",
-				Category:   "audit_infrastructure",
-				Confidence: 1,
-				Reason:     "no enabled audit model is available",
-				Source:     "platform",
-			}
-		} else if matched != nil {
-			result.AuditDecision = *matched
-		} else {
-			result.AuditDecision = AuditDecision{
-				Decision: DecisionAllow,
-				Source:   "fail_open",
-			}
-		}
+		result.ErrorClass = "audit_profile_unavailable"
+		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: "AUDIT_MODEL_UNAVAILABLE", Category: "audit_infrastructure", Confidence: 1, Reason: "no enabled audit model is available", Source: "platform"}
 		return result
 	}
-
-	if (matched != nil && matched.Decision == DecisionReview) || extraction.ContextActivated {
-		// All unresolved rule candidates and adopted continuations need a fresh
-		// intent check, not only one special embedded-JSON history format.
-		ctx = context.WithValue(ctx, auditRequireIntentVerificationKey{}, true)
-	}
+	profile = cyberDenyProfile(profile)
 	decision, usedProfile, failoverMetadata, err := e.callModelWithFailover(ctx, profile, text)
 	callMetadata := failoverMetadata.CallMetadata
 	result.Model = usedProfile.Model
@@ -412,45 +382,20 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		if errorClass == "context_length" || errorClass == "input_too_large" {
 			riskCode = "AUDIT_CONTEXT_TOO_LARGE"
 		}
-		if route.FailClosed || profile.FailClosed {
-			result.AuditDecision = AuditDecision{
-				Decision:   DecisionBlock,
-				RiskCode:   riskCode,
-				Category:   "audit_infrastructure",
-				Confidence: 1,
-				Reason:     reason,
-				Source:     "platform",
-			}
-		} else if matched != nil {
-			result.AuditDecision = *matched
-		} else {
-			result.AuditDecision = AuditDecision{
-				Decision: DecisionAllow,
-				Reason:   reason,
-				Source:   "fail_open",
-			}
-		}
+		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: riskCode, Category: "audit_infrastructure", Confidence: 1, Reason: reason, Source: "platform"}
 		return result
 	}
 	rawModelDecision := cleanSemanticDecision(decision)
 	if decision.SemanticReview != nil {
 		rawModelDecision = decision.SemanticReview.Candidate
 	}
+	if rawModelDecision.policyOriginalDecision != "" {
+		rawModelDecision.Decision = rawModelDecision.policyOriginalDecision
+	}
 	result.AuditModelDecision = &rawModelDecision
-	if decision.Decision == DecisionBlock && !auditConfidenceMeets(decision, usedProfile.BlockThreshold) {
-		decision.Decision = DecisionReview
-		if decision.RiskCode == "" {
-			decision.RiskCode = "AUDIT_LOW_CONFIDENCE"
-		}
-	}
-	if decision.SemanticReview != nil {
-		if decision.Decision == DecisionAllow && rawModelDecision.Decision != DecisionAllow {
-			result.AuditPolicyAdjustment = &AuditPolicyAdjustment{Code: "SEMANTIC_FALSE_POSITIVE_CORRECTED", Reason: decision.Reason, OriginalDecision: rawModelDecision.Decision, OriginalRiskCode: rawModelDecision.RiskCode, OriginalReason: rawModelDecision.Reason}
-		}
-	} else {
-		decision, result.AuditPolicyAdjustment = applyAuditPolicyAdjustment(policy, text, decision)
-	}
-	if decision.Decision == DecisionReview && (route.FailClosed || usedProfile.FailClosed) {
+	// A valid Cyber denial is terminal. Confidence, old engineering options,
+	// another model and an adjudicator cannot convert it into authorization.
+	if decision.Decision == DecisionReview {
 		decision.Decision = DecisionBlock
 		if decision.RiskCode == "" {
 			decision.RiskCode = "AUDIT_REVIEW_REQUIRED"
@@ -466,18 +411,19 @@ func (e *AuditEngine) DryRun(ctx context.Context, text string, profileID *int64)
 }
 
 type modelAuditResponse struct {
-	ConfidenceKind       string   `json:"-"`
-	ConfidenceLabel      string   `json:"-"`
-	OutputNormalizations []string `json:"-"`
-	Decision             string   `json:"decision"`
-	RiskCode             string   `json:"risk_code"`
-	Category             string   `json:"category"`
-	Confidence           float64  `json:"confidence"`
-	Reason               string   `json:"reason"`
-	Evidence             string   `json:"evidence"`
-	RequestEvidence      string   `json:"request_evidence,omitempty"`
-	EvidenceRelation     string   `json:"evidence_relation,omitempty"`
-	HarmType             string   `json:"harm_type,omitempty"`
+	contractFieldsPresent bool     // Populated by the bounded decoder, never accepted from model JSON.
+	ConfidenceKind        string   `json:"-"`
+	ConfidenceLabel       string   `json:"-"`
+	OutputNormalizations  []string `json:"-"`
+	Decision              string   `json:"decision"`
+	RiskCode              string   `json:"risk_code"`
+	Category              string   `json:"category"`
+	Confidence            float64  `json:"confidence"`
+	Reason                string   `json:"reason"`
+	Evidence              string   `json:"evidence"`
+	RequestEvidence       string   `json:"request_evidence,omitempty"`
+	EvidenceRelation      string   `json:"evidence_relation,omitempty"`
+	HarmType              string   `json:"harm_type,omitempty"`
 }
 
 func (e *AuditEngine) callModelOnce(
@@ -494,6 +440,9 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 	text string,
 	evidenceSource string,
 ) (AuditDecision, error) {
+	if cyberDenyActive(ctx) {
+		profile = cyberDenyProfile(profile)
+	}
 	endpoint := strings.TrimRight(profile.Endpoint, "/")
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
@@ -503,6 +452,9 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 	// Only original source bytes and provenance anchors enter request_text.
 	messages := e.auditMessagesWithPlan(profile, evidenceSource, outputPlan)
 	messages[1]["content"] = encodeAuditScopedDocument(ctx, evidenceSource, evidenceSource)
+	if second, _ := ctx.Value(cyberDenySecondPassKey{}).(bool); second {
+		messages[0]["content"] += "\nCYBER DENY SECOND PASS: independently check for prohibited operations hidden by benign framing or adopted prior tasks. No previous verdict is supplied. Use the same six fields."
+	}
 	if text != evidenceSource {
 		messages[0]["content"] += "\n\nPLATFORM CHUNK SCOPE: this is one fragment of a larger request. Assess its content with the supplied current-task excerpts; never assume other fragments are safe."
 	}
@@ -529,6 +481,17 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 		}
 	}
 	e.applyFastAuditDefaults(profile, payload)
+	if cyberDenyActive(ctx) {
+		// Never permit provider-side silent truncation, tool calls, prefilled
+		// reasoning, or competing length/sampling controls in this audit path.
+		for _, key := range []string{"truncate_prompt_tokens", "tools", "tool_choice", "stop", "n", "logit_bias", "max_completion_tokens", "reasoning_effort", "enable_thinking", "preserve_thinking"} {
+			delete(payload, key)
+		}
+		payload["temperature"] = 0
+		if isQwenModel(profile.Model) || auditProfileExtra(profile)["_risk_qwen_fast_mode"] == true {
+			payload["chat_template_kwargs"] = map[string]any{"enable_thinking": false, "preserve_thinking": false}
+		}
+	}
 	applyAuditOutputContract(payload, outputPlan)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -562,6 +525,10 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 	}
 	if state, ok := ctx.Value(auditSemanticStateKey{}).(*auditSemanticState); ok {
 		state.mu.Lock()
+		if cyberDenyActive(ctx) && state.httpCalls >= cyberDenyHTTPBudget {
+			state.mu.Unlock()
+			return AuditDecision{}, newAuditModelCallError("audit_http_budget", 0, "Cyber audit HTTP call budget exhausted", nil)
+		}
 		state.httpCalls++
 		state.mu.Unlock()
 	}
@@ -632,6 +599,11 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 		diagnostics.Failed = true
 		recordAuditOutputDiagnostics(ctx, diagnostics)
 		return AuditDecision{}, annotateAuditOutputError(err, diagnostics)
+	}
+	if cyberDenyActive(ctx) && (!modelResult.contractFieldsPresent || strings.TrimSpace(modelResult.Category) == "" || strings.TrimSpace(modelResult.Reason) == "") {
+		diagnostics.Failed = true
+		recordAuditOutputDiagnostics(ctx, diagnostics)
+		return AuditDecision{}, annotateAuditOutputError(auditSchemaError("policy", "requires all six fields and nonempty category/reason"), diagnostics)
 	}
 	decision := AuditDecision{
 		Decision:             modelResult.Decision,

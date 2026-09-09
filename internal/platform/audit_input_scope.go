@@ -121,7 +121,7 @@ func ExtractAuditTextDetails(body []byte, maximumBytes int) AuditTextExtraction 
 	if collector.remoteContext {
 		result.addCoverageIssue("unresolved_previous_response")
 	}
-	if contextActivated && activeStart == 0 && len(collector.assistantUnits) == 0 && len(collector.userUnits) == 1 && len(auditReferenceSpans(collector.userUnits[0].Text)) == 0 && standaloneContinuationPattern.MatchString(collector.userUnits[0].Text) {
+	if contextActivated && activeStart == 0 && len(collector.assistantUnits) == 0 && len(collector.userUnits) == 1 && len(auditReferenceSpans(collector.userUnits[0].Text)) == 0 && (standaloneContinuationPattern.MatchString(collector.userUnits[0].Text) || executionFollowupPattern.MatchString(collector.userUnits[0].Text)) {
 		result.addCoverageIssue("missing_continuation_context")
 	}
 	referenceBytes := 0
@@ -431,7 +431,7 @@ func needsPriorUserContext(text string) bool {
 	}
 	// A reset phrase is not a trusted boundary: a subsequent adoption request
 	// still needs its operational context.
-	if naturalContinuationPattern.MatchString(text) {
+	if naturalContinuationPattern.MatchString(text) || executionFollowupPattern.MatchString(text) {
 		return true
 	}
 	if newTopicPattern.MatchString(text) {
