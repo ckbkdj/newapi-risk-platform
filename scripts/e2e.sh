@@ -642,7 +642,10 @@ qualitative = next((item for item in items if item.get("request_id") == "e2e-out
 assert qualitative and qualitative["http_status"] == 200, "qualitative output failed to forward"
 qm = qualitative["metadata"]
 assert qm["audit_model_confidence_kind"] == "qualitative" and qm["audit_model_confidence_label"] == "high"
-assert qm["audit_model_confidence"] is None and qm["audit_http_calls"] == 1
+# Strict allow requires one primary call plus one fresh semantic verification.
+assert qm["audit_model_confidence"] is None
+assert qm["audit_http_calls"] == 2, "qualitative allow must include the fresh verifier call"
+assert qm["audit_semantic_review_calls"] == 1, "qualitative allow verification was skipped"
 assert qm["audit_output_contract"] == "risk_audit_output.v2"
 assert qm["gateway_build"]["audit_engine"] == "cyber-deny-qwen27b.v4"
 assert "allow_none_risk_code" in qm["audit_output_normalizations"]
