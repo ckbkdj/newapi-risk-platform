@@ -1,0 +1,327 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index e88c575..251ac3f 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -1,3 +1,7 @@
++# 2026-09-09 准确度补充（最新用户要求）
++
++禁用的是实际 Cyber 操作，不是孤立包名、版本号、文件列表或源码搜索词。明确操作规则和完成位置/操作归因的模型阻断仍不可降级；仅引用被动材料的模型候选不等于有效阻断，允许一次有界归因纠正，失败保持审计故障拒绝。严禁全局工程/命令白名单或重试直到 allow。细节见 docs/audit-accuracy-grounding-20260909.md。本段优先于早期“引用匹配即有效”的解释。
++
+ # 当前业务边界（2026-09-09 用户明确要求）
+ 
+ 所有启用的 Cyber 规则命中必须终止转发并返回既有 HTTP 555；旧 action=review/allow 也不能形成白名单。自动化测试、授权、本人资产、内部工程、日志排障、CTF 等均不能豁免已经触发的 Cyber 能力。已通过输出/证据校验的模型 block/review 不得被后续模型或 Fusion 翻为 allow。普通非 Cyber 开发仍需负例回归；不得把所有测试或所有公网地址一律叫恶意。
+diff --git a/cmd/mockprovider/accuracy.go b/cmd/mockprovider/accuracy.go
+new file mode 100644
+index 0000000..0cba16f
+--- /dev/null
++++ b/cmd/mockprovider/accuracy.go
+@@ -0,0 +1,42 @@
++package main
++
++import (
++	"encoding/json"
++	"net/http"
++	"strings"
++)
++
++// Deliberate false primary/verifier outputs for gateway regression only. These
++// synthetic markers are never part of the production classifier or rules.
++func mockAccuracyVerification(w http.ResponseWriter, request chatRequest, text string) bool {
++	if !strings.Contains(text, "accuracy-fixture-") {
++		return false
++	}
++	var doc struct {
++		RequestText string `json:"request_text"`
++	}
++	if json.Unmarshal([]byte(text), &doc) != nil {
++		return false
++	}
++	evidence := "/workspace/magisk/install_magisk.sh"
++	if strings.Contains(text, "accuracy-fixture-search") {
++		at := strings.Index(doc.RequestText, "rg -n")
++		if at < 0 {
++			return false
++		}
++		evidence = strings.SplitN(doc.RequestText[at:], "\n", 2)[0]
++	}
++	system := messageText(request)
++	correction := strings.Contains(system, "OPERATION GROUNDING CHECK")
++	deny := strings.Contains(system, "CYBER DENY SECOND PASS") && !correction
++	if strings.Contains(text, "accuracy-fixture-unresolved") && correction {
++		deny = true
++	}
++	if deny {
++		writeStrictCyberFixture(w, evidence, "synthetic mistaken association from passive evidence")
++		return true
++	}
++	content, _ := json.Marshal(map[string]any{"decision": "allow", "risk_code": "", "category": "ordinary_analysis", "confidence": .99, "reason": "synthetic classification control", "evidence": ""})
++	writeJSON(w, 200, map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": string(content)}}}})
++	return true
++}
+diff --git a/cmd/mockprovider/strict_cyber.go b/cmd/mockprovider/strict_cyber.go
+index 3c13559..c0e7ee3 100644
+--- a/cmd/mockprovider/strict_cyber.go
++++ b/cmd/mockprovider/strict_cyber.go
+@@ -8,6 +8,9 @@ import (
+ )
+ 
+ func mockStrictCyberVerification(w http.ResponseWriter, request chatRequest, text string) bool {
++	if mockAccuracyVerification(w, request, text) {
++		return true
++	}
+ 	// Legacy replay/persistence cases exercise a MODEL Cyber hit, just like
+ 	// policy-test-routine-engineering. These exact fixture texts deliberately
+ 	// simulate a classifier verdict; ordinary event replay/data persistence
+diff --git a/docs/audit-accuracy-grounding-20260909.md b/docs/audit-accuracy-grounding-20260909.md
+new file mode 100644
+index 0000000..2958380
+--- /dev/null
++++ b/docs/audit-accuracy-grounding-20260909.md
+@@ -0,0 +1,34 @@
++# 审计准确度修复：依赖名、文件列表和只读源码搜索
++
++基线：main 91ea4d1。针对用户提供的三份审计日志修复；测试输入是脱敏的事故片段组合，未取得完整原始请求，不宣称重放了完整业务历史。
++
++## 执行边界
++
++- `"xss":"1.0.15"` 不再由内置的独立 XSS 词分支当成漏洞利用。新的 XSS 操作规则保留明确载荷生成、攻击、注入测试的阻断。旧数据库中管理员自己启用的规则仍保留否决权；未偷偷修改数据库策略。
++- 包名、版本号、文件列表中的安装脚本路径不等于请求执行。SIM/carrier/radio 源码文本搜索不等于网络扫描或配置写入。主审计和复核均使用相同的实际操作要求，复核不是“尽量找出攻击”。所有原始文本仍然送审，没有整个文件/命令/工程白名单。
++- 在主模型或复核的引用精确匹配后，若完整所在行只能支持文件路径列表、依赖声明或窄范围 rg 文本搜索，则该候选尚未完成操作归因。最多增加一次六字段归因检查，不提供上一判断的理由或危险类别。只允许得到有效、完整的新判断；检查再次引用弱证据、失败、取消、预算耗尽均停止转发。真实操作证据、规则命中、缺失或编造引用不进入这种纠正。
++- rg 识别拒绝 shell 拼接、扩展、未知旗标、外部预处理器和凭据搜索；识别成功也仅触发归因检查，绝不是确定性放行。有效禁用操作即终态拒绝，测试/授权不能豁免。
++
++## 证据契约
++
++输出 schema 限制 evidence 120 字符，提示仍建议 80。兼容服务忽略 schema 时，内部最多核验 1024 Unicode 字符/4096 UTF-8 字节的连续引用，必须完整存在于源文。一次双反斜杠规范化也必须以完整匹配为条件，记录 match_mode。长引用验证成功之后才压缩展示至120字符，记录 `evidence_verified_then_compacted`；不能先截取再匹配，不把相同前缀的虚构引用当真。操作归因使用原始完整引用及所在行，而非压缩后的显示片段。
++
++## 可观察性
++
++`gateway_build.accuracy_revision=operation-grounding.v1`；业务引擎仍为 `cyber-deny-qwen27b.v4`，输入/输出契约仍为 v2。用新的 commit 和 accuracy_revision 核对所有副本。
++
++`audit_coverage_details` 最多32条，提供解析器控制的字段路径、角色和有界内容类型，不导出正文或媒体地址。未支持输入仍失败关闭。本次没有凭日志猜测并忽略未知输入类型。
++
++`audit_decision_completed` 表示已形成终态策略结果；`audit_completed` 在输入覆盖不完整时为 false，避免规则已阻断被误读为完整输入均已审过。`grounding_corrected` 和 `candidate_error=cyber_operation_ungrounded` 记录弱证据校验后的纠正，额外调用计入原64次HTTP/32次复核/120秒总预算。
++
++## 回归与升级
++
++新增 Go 成对回归、错误/超长/Unicode/反斜杠引用、危险 shell 组合、未知内容路径，以及实际 /v1/responses Mock 网关回归。Mock 只验证执行逻辑，不能证明 Qwen 实际准确率；发布时列出实际完成的 CI/E2E 状态，不假设它们通过。
++
++继续用现有命令（会重建并重启；外置数据库先另行备份）：
++
++```bash
++RESET_DATA=0 BACKUP_DATABASE=1 ALLOW_BRANCH_SWITCH=1 bash scripts/upgrade.sh main
++```
++
++升级后重试三类原请求，对比 commit、accuracy_revision、rule/model/platform来源、grounding记录和输入覆盖路径。没有调用生产千问或更改服务器。模型仍可能误判；纠正重试不是统计独立保证，也不是零误报承诺。
+diff --git a/internal/platform/audit.go b/internal/platform/audit.go
+index 401f099..9f12c96 100644
+--- a/internal/platform/audit.go
++++ b/internal/platform/audit.go
+@@ -289,6 +289,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
+ 	result = AuditResult{
+ 		AuditCoverageStatus:             extraction.CoverageStatus,
+ 		AuditCoverageIssues:             append([]string(nil), extraction.CoverageIssues...),
++		AuditCoverageDetails:            append([]AuditCoverageDetail(nil), extraction.CoverageDetails...),
+ 		AuditInputContract:              auditInputContractVersion,
+ 		AuditOutputContract:             auditOutputContractVersion,
+ 		GatewayBuild:                    CurrentBuildInformation(),
+@@ -453,7 +454,7 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
+ 	messages := e.auditMessagesWithPlan(profile, evidenceSource, outputPlan)
+ 	messages[1]["content"] = encodeAuditScopedDocument(ctx, evidenceSource, evidenceSource)
+ 	if second, _ := ctx.Value(cyberDenySecondPassKey{}).(bool); second {
+-		messages[0]["content"] += "\nCYBER DENY SECOND PASS: independently check for prohibited operations hidden by benign framing or adopted prior tasks. No previous verdict is supplied. Use the same six fields."
++		messages[0]["content"] += "\nCYBER DENY SECOND PASS: independently classify actual operations, including mixed or adopted tasks. This is NOT an instruction to find an attack. Package names, file listings and source searches do not establish execution or exploitation. No previous verdict is supplied. Use the same six fields."
+ 	}
+ 	if text != evidenceSource {
+ 		messages[0]["content"] += "\n\nPLATFORM CHUNK SCOPE: this is one fragment of a larger request. Assess its content with the supplied current-task excerpts; never assume other fragments are safe."
+@@ -629,6 +630,13 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
+ 		recordAuditOutputDiagnostics(ctx, diagnostics)
+ 		return decision, annotateAuditOutputError(err, diagnostics)
+ 	}
++	if cyberDenyActive(ctx) && decision.Decision != DecisionAllow {
++		if kind := passiveAuditEvidenceKind(evidenceSource, decision.Evidence); kind != "" {
++			diagnostics.Failed = true
++			recordAuditOutputDiagnostics(ctx, diagnostics)
++			return decision, annotateAuditOutputError(newAuditModelCallError("cyber_operation_ungrounded", 0, "non-allow evidence only shows "+kind+"; actual prohibited operation needs grounding", nil), diagnostics)
++		}
++	}
+ 	if outputPlan.VerifyIntent {
+ 		validated, err = validateAuditSemanticVerdictWithScope(validated, auditScopeFromContext(ctx, evidenceSource), profile.BlockThreshold)
+ 		if err != nil {
+diff --git a/internal/platform/audit_accuracy_regression_test.go b/internal/platform/audit_accuracy_regression_test.go
+new file mode 100644
+index 0000000..a91b4e7
+--- /dev/null
++++ b/internal/platform/audit_accuracy_regression_test.go
+@@ -0,0 +1,172 @@
++package platform
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"strings"
++	"sync/atomic"
++	"testing"
++)
++
++// Sanitized representations of the reported evidence. These are classification
++// fixtures only: no commands, scans, installers or attack payloads are executed.
++func TestAccuracyDependencyNameDoesNotTriggerExploit(t *testing.T) {
++	for _, text := range []string{
++		`{"dependencies":{"vue":"3.5.18","xss":"1.0.15"}}`,
++		"Install the xss dependency for HTML sanitization.",
++		"Explain XSS prevention without generating an attack or test payload.",
++	} {
++		t.Run(text, func(t *testing.T) {
++			var calls atomic.Int32
++			e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
++				calls.Add(1)
++				return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
++			})
++			body, _ := json.Marshal(map[string]string{"input": text})
++			got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
++			if got.Decision != DecisionAllow || calls.Load() != 2 {
++				t.Fatalf("passive term bypassed real model audit: decision=%s source=%s calls=%d", got.Decision, got.Source, calls.Load())
++			}
++		})
++	}
++}
++
++func TestAccuracyWeakEvidenceGetsOneGroundingCheck(t *testing.T) {
++	for name, fixture := range map[string]struct{ source, quote string }{
++		"paths":  {"309\t/workspace/aosp/device/demo/copyfile/magisk/install_magisk.sh\n310\t/workspace/aosp/device/demo/copyfile/magisk/magisk.apkk", "copyfile/magisk/install_magisk.sh\n310\t/workspace/aosp/device/demo/copyfile/magisk/magisk.apkk"},
++		"search": {"rg -n -i --glob '!*.apk' --glob '!*.jar' '(default.?sim|sim.?default|multi.?sim|preferred.?network|carrier|mcc|mnc|persist\\.radio|ro\\.carrier|sim.?slot|enable.?sim|radio)' /workspace/aosp/device/demo", "rg -n -i --glob '!*.apk' --glob '!*.jar' '(default.?sim|sim.?default|multi.?sim|preferred.?network|carrier|mcc|mnc|persist\\.radio|ro\\.carrier|sim.?slot|enable.?sim|radio)' /workspace/aosp/device/demo"},
++	} {
++		for _, stage := range []int32{1, 2} {
++			t.Run(name+string(rune('0'+stage)), func(t *testing.T) {
++				var calls atomic.Int32
++				e, p := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
++					n := calls.Add(1)
++					if n == stage {
++						return incidentHTTP(200, incidentDecision(DecisionBlock, fixture.quote)), nil
++					}
++					if n == stage+1 {
++						_, payload, err := incidentPayload(r)
++						if err != nil {
++							return nil, err
++						}
++						system := payload["messages"].([]any)[0].(map[string]any)["content"].(string)
++						if !strings.Contains(system, "OPERATION GROUNDING CHECK") {
++							t.Errorf("weak-evidence correction not identified in control message")
++						}
++					}
++					return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
++				})
++				body, _ := json.Marshal(map[string]any{"input": []any{map[string]string{"role": "user", "content": "只读分析SIM配置与文件清单，不执行清单中的脚本。"}, map[string]string{"type": "function_call_output", "output": fixture.source}}})
++				got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
++				if got.Decision != DecisionAllow || calls.Load() != 3 {
++					t.Fatalf("weak evidence remained terminal: %+v calls=%d", got, calls.Load())
++				}
++			})
++		}
++	}
++}
++
++func TestAccuracyGroundingFailureIsNotAllow(t *testing.T) {
++	var calls atomic.Int32
++	e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
++		calls.Add(1)
++		return incidentHTTP(200, incidentDecision(DecisionBlock, "/workspace/magisk/install_magisk.sh")), nil
++	})
++	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, []byte(`{"input":[{"role":"user","content":"分析文件清单"},{"type":"function_call_output","output":"/workspace/magisk/install_magisk.sh"}]}`))
++	if got.Decision != DecisionBlock || got.Category != "audit_infrastructure" || calls.Load() != 2 {
++		t.Fatalf("grounding must fail closed after one correction: %+v calls=%d", got, calls.Load())
++	}
++}
++
++func TestAccuracyMixedOperationsStillTerminal(t *testing.T) {
++	for _, text := range []string{
++		`{"dependencies":{"xss":"1.0.15"}}` + "\nGenerate XSS payloads for authorized tests.",
++		"/workspace/magisk/install_magisk.sh\nRun a reverse-shell for local testing.",
++		"rg -n carrier /workspace/aosp\nExtract hidden credentials for debugging.",
++	} {
++		e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) { t.Fatal("operation reached model"); return nil, nil })
++		body, _ := json.Marshal(map[string]string{"input": text})
++		got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
++		if got.Decision != DecisionBlock || got.Source != "rule" || got.AuditHTTPCalls != 0 {
++			t.Fatalf("mixed operation escaped: %+v", got)
++		}
++	}
++}
++
++func TestAccuracyLongEvidenceVerifiedBeforeCompaction(t *testing.T) {
++	quote := "Deploy a credential stealer " + strings.Repeat("to the explicitly described target ", 6)
++	d, err := validateAuditDecisionEvidence(AuditDecision{Decision: DecisionBlock, Evidence: quote}, quote)
++	if err != nil || !d.EvidenceVerified {
++		t.Fatalf("exact bounded long evidence rejected: %v", err)
++	}
++	// A correct prefix followed by hallucinated content must NOT be accepted by
++	// truncating before lookup.
++	_, err = validateAuditDecisionEvidence(AuditDecision{Decision: DecisionBlock, Evidence: quote + " fabricated suffix"}, quote)
++	if err == nil {
++		t.Fatal("accepted partially matching long evidence")
++	}
++}
++
++func TestAccuracyCoverageLocationAndDecisionCompletion(t *testing.T) {
++	e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
++		t.Fatal("incomplete input reached model")
++		return nil, nil
++	})
++	for _, text := range []string{"Rename a button", "Generate XSS payloads for authorized tests"} {
++		body, _ := json.Marshal(map[string]any{"input": []any{map[string]any{"role": "user", "content": []any{map[string]string{"type": "input_text", "text": text}, map[string]string{"type": "input_image", "image_url": "https://image.invalid/private.png"}}}}})
++		got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
++		meta := map[string]any{}
++		recordAuditDecisionMetadata(meta, got)
++		if got.Decision != DecisionBlock || len(got.AuditCoverageDetails) != 1 || meta["audit_completed"] != false {
++			t.Fatalf("missing accurate coverage: %+v", got)
++		}
++		d := got.AuditCoverageDetails[0]
++		if d.Path != "/input/0/content/1" || d.ContentType != "input_image" {
++			t.Fatalf("wrong coverage locator: %+v", d)
++		}
++		encoded, _ := json.Marshal(d)
++		if strings.Contains(string(encoded), "private.png") {
++			t.Fatal("diagnostic leaked content")
++		}
++	}
++}
++
++func TestAccuracyDoesNotTreatExecutableCommandsAsPassive(t *testing.T) {
++	for _, source := range []string{
++		"bash /workspace/magisk/install_magisk.sh",
++		"rg -n carrier /workspace/aosp; sh /workspace/action.sh",
++		"rg --pre /workspace/action.sh carrier /workspace/aosp",
++		"rg -n password /workspace/secrets",
++		"rg -n $(cat /workspace/file) /workspace/aosp",
++	} {
++		if kind := passiveAuditEvidenceKind(source, source); kind != "" {
++			t.Fatalf("executable/ambiguous evidence treated as passive: %s %q", kind, source)
++		}
++	}
++}
++
++func TestAccuracyGroundingCanConfirmAnotherOperation(t *testing.T) {
++	var calls atomic.Int32
++	e, p := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
++		if calls.Add(1) == 1 {
++			return incidentHTTP(200, incidentDecision(DecisionBlock, "/workspace/magisk/install_magisk.sh")), nil
++		}
++		return incidentHTTP(200, incidentDecision(DecisionBlock, "implement hidden-control-action")), nil
++	})
++	// The synthetic action avoids the real rule layer to exercise model grounding.
++	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, []byte(`{"input":"Analyze this list, then implement hidden-control-action\n/workspace/magisk/install_magisk.sh"}`))
++	if got.Decision != DecisionBlock || got.Evidence != "implement hidden-control-action" || calls.Load() != 2 {
++		t.Fatalf("grounding overruled concrete evidence: %+v calls=%d", got, calls.Load())
++	}
++}
++
++func TestAccuracyLongEvidenceUnicodeAndUnescape(t *testing.T) {
++	for _, q := range []string{strings.Repeat("检查", 100), strings.Repeat("normal evidence ", 12) + `persist\.radio`} {
++		escaped := strings.ReplaceAll(q, `\`, `\\`)
++		got, err := validateAuditDecisionEvidence(AuditDecision{Decision: DecisionBlock, Evidence: escaped}, q)
++		if err != nil || !got.EvidenceVerified || !strings.Contains(q, got.Evidence) {
++			t.Fatalf("bounded normalization failed: %v %+v", err, got)
++		}
++	}
++}
