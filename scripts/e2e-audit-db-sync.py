@@ -64,7 +64,7 @@ for name, body, expected, calls in cases:
     meta=trace_for(rid)
     assert meta['audit_http_calls']==calls,(name,meta)
     assert meta['upstream_started']==(expected==200),(name,meta)
-    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v7',meta
+    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v8',meta
     assert 'fixture-not-a-real-secret' not in json.dumps(meta), 'credential leaked in trace'
     if expected==200:
         assert meta['audit_completed'] is True and meta['audit_chunks_completed']==1,meta

@@ -158,18 +158,19 @@ type AuditAttempt struct {
 }
 
 type AuditResult struct {
-	AuditConversationReferenceCount int                   `json:"audit_conversation_reference_count"`
-	AuditCoverageStatus             string                `json:"audit_coverage_status"`
-	AuditCoverageIssues             []string              `json:"audit_coverage_issues,omitempty"`
-	AuditCoverageDetails            []AuditCoverageDetail `json:"audit_coverage_details,omitempty"`
-	AuditOutputContract             string                `json:"audit_output_contract"`
-	GatewayBuild                    BuildInformation      `json:"gateway_build"`
-	AuditInputContract              string                `json:"audit_input_contract,omitempty"`
-	AuditEmbeddedReferenceCount     int                   `json:"audit_embedded_reference_count,omitempty"`
-	AuditHTTPCalls                  int                   `json:"audit_http_calls,omitempty"`
-	AuditSemanticReviewCalls        int                   `json:"audit_semantic_review_calls,omitempty"`
-	AuditSemanticReviewCount        int                   `json:"audit_semantic_review_count,omitempty"`
-	AuditSemanticReviews            []AuditSemanticReview `json:"audit_semantic_reviews,omitempty"`
+	AuditConversationReferenceCount int                          `json:"audit_conversation_reference_count"`
+	AuditCoverageStatus             string                       `json:"audit_coverage_status"`
+	AuditCoverageIssues             []string                     `json:"audit_coverage_issues,omitempty"`
+	AuditCoverageDetails            []AuditCoverageDetail        `json:"audit_coverage_details,omitempty"`
+	AuditOutputContract             string                       `json:"audit_output_contract"`
+	GatewayBuild                    BuildInformation             `json:"gateway_build"`
+	AuditInputContract              string                       `json:"audit_input_contract,omitempty"`
+	AuditEmbeddedReferenceCount     int                          `json:"audit_embedded_reference_count,omitempty"`
+	AuditModelInputs                []AuditModelInputDiagnostics `json:"audit_model_inputs,omitempty"`
+	AuditHTTPCalls                  int                          `json:"audit_http_calls,omitempty"`
+	AuditSemanticReviewCalls        int                          `json:"audit_semantic_review_calls,omitempty"`
+	AuditSemanticReviewCount        int                          `json:"audit_semantic_review_count,omitempty"`
+	AuditSemanticReviews            []AuditSemanticReview        `json:"audit_semantic_reviews,omitempty"`
 	AuditDecision
 
 	AuditModelDecision             *AuditDecision `json:"audit_model_decision_raw,omitempty"`

@@ -57,4 +57,17 @@ class DiagnosticsPrivacyTests(unittest.TestCase):
         self.assertEqual(result["audit_semantic_reviews"][0]["status"],"grounding_corrected")
         self.assertEqual(result["audit_policy_mode"],"cyber_deny")
 
+    def test_model_inputs_export_only_shape_and_keyed_fingerprints(self):
+        secret = "SOURCE_AND_SECRET_SENTINEL"
+        result = diag.trace_view({"audit_model_inputs_truncated": True, "audit_model_inputs":[
+            {"call":1, "phase":"evidence_repair", "request_text_bytes":7656, "evidence_source_bytes":7656,
+             "source_matches_request_text":True, "document_hmac":"a"*64, "request_text":secret, "endpoint":secret},
+            {"phase":secret, "document_hmac":secret}, secret],
+             "audit_semantic_reviews":[{"status":"evidence_repair_corrected", "candidate_error":"invalid_evidence"}]})
+        self.assertNotIn(secret, json.dumps(result))
+        self.assertEqual(result["audit_model_inputs"][0]["request_text_bytes"],7656)
+        self.assertEqual(result["audit_model_inputs"][0]["document_hmac"],"a"*64)
+        self.assertTrue(result["audit_model_inputs_truncated"])
+        self.assertEqual(result["audit_semantic_reviews"][0]["status"],"evidence_repair_corrected")
+
 if __name__=='__main__':unittest.main()

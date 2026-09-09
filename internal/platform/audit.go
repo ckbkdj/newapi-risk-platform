@@ -362,6 +362,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result.AuditFallbackCount = failoverMetadata.FallbackCount
 	result.AuditAttempts = append([]AuditAttempt(nil), failoverMetadata.Attempts...)
 	result.AuditModelsTried = auditAttemptModelNames(failoverMetadata.Attempts)
+	result.AuditModelInputs = failoverMetadata.ModelInputs
 	result.AuditHTTPCalls = failoverMetadata.HTTPCalls
 	result.AuditHTTPBudget = failoverMetadata.HTTPBudget
 	result.AuditReviewBudget = failoverMetadata.ReviewBudget
@@ -504,6 +505,13 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 	if err != nil {
 		return AuditDecision{}, newAuditModelCallError("request_encode", 0, "encode audit model request", err)
 	}
+	var inputDiag AuditModelInputDiagnostics
+	if cyberDenyActive(ctx) {
+		inputDiag, err = e.auditModelInputDiagnostics(ctx, profile, messages, evidenceSource, len(encoded))
+		if err != nil {
+			return AuditDecision{}, err
+		}
+	}
 	textBytes := len(text)
 	if originalBytes, ok := ctx.Value(auditOriginalTextBytesKey{}).(int); ok && originalBytes > textBytes {
 		textBytes = originalBytes
@@ -541,6 +549,10 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 			return AuditDecision{}, newAuditModelCallError("audit_http_budget", 0, "Cyber audit HTTP call budget exhausted", nil)
 		}
 		state.httpCalls++
+		if cyberDenyActive(ctx) && len(state.modelInputs) < maxAuditModelInputRecords {
+			inputDiag.Call = state.httpCalls
+			state.modelInputs = append(state.modelInputs, inputDiag)
+		}
 		state.mu.Unlock()
 	}
 	response, err := e.client.Do(request)
