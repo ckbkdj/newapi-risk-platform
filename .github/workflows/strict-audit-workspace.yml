@@ -1,0 +1,21 @@
+name: Strict audit workspace
+on:
+  push:
+    branches: [fix/audit-intent-coverage-20260909]
+    paths: [.github/workflows/strict-audit-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: git archive HEAD -o "$RUNNER_TEMP/strict-audit-source.tar"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strict-audit-source
+          path: ${{ runner.temp }}/strict-audit-source.tar
+          retention-days: 1
