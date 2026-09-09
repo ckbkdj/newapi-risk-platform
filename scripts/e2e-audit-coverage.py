@@ -30,7 +30,7 @@ status, rule = call('/api/admin/v1/cyber-rules', {
     'id': 0, 'code': 'CYBER_COVERAGE_GUARD_REVIEW', 'name': 'E2E coverage review',
     'category': 'credential_access', 'description': 'Synthetic review regression',
     'pattern': 'coverage-guard-(?:safe|unsafe)', 'pattern_type': 'regex',
-    'action': 'review', 'priority': 99999, 'enabled': True,
+    'action': 'review', 'priority': 9999, 'enabled': True,
 })
 assert status == 200, (status, rule)
 requests = [
