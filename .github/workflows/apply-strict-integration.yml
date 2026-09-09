@@ -31,7 +31,10 @@ jobs:
           git apply --unidiff-zero --check /tmp/integration.patch
           git apply --unidiff-zero --index /tmp/integration.patch
           git rm -r .strict-integration
-          git rm .github/workflows/apply-strict-integration.yml
+          # Actions contents token cannot amend workflows. The connected
+          # repository writer applies CI changes and removes temporary
+          # workflows in a separate commit after this source validation.
+          git restore --source=HEAD --staged --worktree .github/workflows
           git diff --cached --check
       - name: Full validation
         run: |
@@ -44,11 +47,11 @@ jobs:
           python3 scripts/test_collect_audit_diagnostics.py
           python3 -m py_compile scripts/e2e-cyber-expanded.py scripts/eval-audit-intent.py
           bash -n scripts/e2e.sh
-      - name: Commit validated source and remove temporary workflow
+      - name: Commit validated source without workflow changes
         run: |
           set -euo pipefail
           test ! -e .strict-integration
-          test ! -e .github/workflows/strict-reconcile-source.yml
+          git diff --cached --exit-code -- .github/workflows
           git config user.name 'ckbkdj'
           git config user.email '9382231+ckbkdj@users.noreply.github.com'
           git commit -m 'fix(audit): cover testing, web automation, CLI and tool-data Cyber intents'
