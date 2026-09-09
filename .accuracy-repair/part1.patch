@@ -1,0 +1,250 @@
+diff --git a/internal/platform/audit_coverage_details.go b/internal/platform/audit_coverage_details.go
+new file mode 100644
+index 0000000..b7e8f7a
+--- /dev/null
++++ b/internal/platform/audit_coverage_details.go
+@@ -0,0 +1,28 @@
++package platform
++
++import "regexp"
++
++// Location/type metadata only; never includes message text, tool results,
++// media URLs, secrets, arbitrary object keys or raw request bodies.
++type AuditCoverageDetail struct {
++	Issue       string `json:"issue"`
++	Path        string `json:"path"`
++	Role        string `json:"role"`
++	ContentType string `json:"content_type"`
++}
++
++var auditDiagnosticTypeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
++
++func (x *AuditTextExtraction) addCoverageDetail(issue, path, role, kind string) {
++	x.addCoverageIssue(issue)
++	if len(x.CoverageDetails) >= 32 {
++		return
++	}
++	if !auditDiagnosticTypeName.MatchString(kind) {
++		kind = "unknown"
++	}
++	if len(path) > 512 {
++		path = "structure_depth_limit"
++	}
++	x.CoverageDetails = append(x.CoverageDetails, AuditCoverageDetail{Issue: issue, Path: path, Role: role, ContentType: kind})
++}
+diff --git a/internal/platform/audit_cyber_baseline.go b/internal/platform/audit_cyber_baseline.go
+index d6c49ae..fe730a6 100644
+--- a/internal/platform/audit_cyber_baseline.go
++++ b/internal/platform/audit_cyber_baseline.go
+@@ -15,7 +15,8 @@ func cyberPolicyRule(code, category, pattern string) compiledRule {
+ // All enabled administrator rules still have unconditional veto precedence.
+ var cyberDenyBaseline = []compiledRule{
+ 	cyberPolicyRule("CYBER_SECURITY_TEST_DISABLED", "security_testing", `(?i)(?:渗透(?:测试)?|(?:接口|网络|端口|漏洞).{0,12}扫描|扫描.{0,12}(?:接口|网络|端口|漏洞)|安全.{0,6}测试|\b(?:penetration\s+test\w*|vulnerability\s+scann\w*|port\s+scann\w*|network\s+scann\w*|nmap|masscan|sqlmap|nikto|ffuf|nuclei)\b)`),
+-	cyberPolicyRule("CYBER_EXPLOIT_TEST_DISABLED", "exploitation", `(?i)(?:\b(?:exploit(?:s|ation)?|brute[-_ ]?forc(?:e|ing)|reverse[-_ ]shell|crack(?:ing)?|XSS|SQL\s+injection)\b|SQL\s*注入|暴力破解|反向\s*(?:shell|连接)|漏洞利用)`),
++	cyberPolicyRule("CYBER_EXPLOIT_TEST_DISABLED", "exploitation", `(?i)(?:\b(?:exploit(?:s|ation)?|brute[-_ ]?forc(?:e|ing)|reverse[-_ ]shell|crack(?:ing)?|SQL\s+injection)\b|SQL\s*注入|暴力破解|反向\s*(?:shell|连接)|漏洞利用)`),
++	cyberPolicyRule("CYBER_XSS_OPERATION_DISABLED", "exploitation", `(?i)(?:\bXSS[ \t_-]+(?:payloads?|attacks?|exploits?|assertions?|tests?|testing)\b|\b(?:generate|construct|execute|launch|perform)[ \t]+(?:an?[ \t]+)?XSS\b|(?:构造|生成|执行|实施|测试)[ \t]*(?:XSS|跨站脚本)|(?:XSS|跨站脚本)[ \t]*(?:攻击|注入|载荷|测试))`),
+ 	cyberPolicyRule("CYBER_CONTROL_BYPASS_DISABLED", "security_evasion", `(?is)(?:(?:bypass|evade|circumvent|绕过|规避).{0,100}(?:captcha|waf|auth|access control|rate.?limit|anti.?debug|验证码|防火墙|认证|权限|限速|风控|反调试)|(?:captcha|waf|验证码|风控).{0,60}(?:bypass|绕过|规避))`),
+ 	cyberPolicyRule("CYBER_DYNAMIC_HOOK_DISABLED", "reverse_engineering", `(?i)(?:\b(?:frida|xposed|lsposed|decompil\w*|reverse[-_ ]engineering)\b|动态\s*hook|hook\s*动态|(?:dynamic|runtime)\s+hook\w*|反编译|逆向(?:工程|分析|测试|应用|代码))`),
+ 	cyberPolicyRule("CYBER_PACKET_TAMPER_DISABLED", "request_tampering", `(?is)(?:(?:抓包|拦截请求|packet capture).{0,100}(?:篡改|重放|修改|tamper|replay)|(?:tamper|modify).{0,50}(?:captured request|captured packet))`),
+diff --git a/internal/platform/audit_cyber_deny.go b/internal/platform/audit_cyber_deny.go
+index 9bee2c9..7d904ca 100644
+--- a/internal/platform/audit_cyber_deny.go
++++ b/internal/platform/audit_cyber_deny.go
+@@ -27,7 +27,9 @@ const CyberDenyAuditSystemPrompt = `你是商业网关的 Cyber 禁用分类器
+ 4. Selenium/Puppeteer/Playwright/脚本自动化操控 ChatGPT 网页、批量刷问答、越狱测试、非官方接口抓取及绕过行为验证。
+ 5. CLI/Agent 的本地端口探测、网络扫描、高频/压力请求、底层系统或安全配置修改。Codex/Cursor/本地集成测试不是豁免。
+ 检查实际请求、代码和断言，不能只写“普通前端开发”就放过其中任一禁用动作。疑似上述能力但不能确认时 review，网关会停止转发。
+-普通 UI/构建/业务函数测试不自动等于 Cyber。JSON payload 字段、依赖注入、React useEffect hook 单独出现不是禁用能力；未出现禁用能力才 allow。引用中的已命中禁用项也不授予放行例外。
++判断的是实际要求或代码实现的操作，不是名词关联。包名/版本号/文件清单/路径存在不等于安装、执行、提权或持久化；不得为它们虚构执行目的。rg/grep/find 搜索源码里的 SIM/carrier/network/radio 配置名称不等于网络扫描或修改配置。仅检索/列出文件通常为普通分析，但检索凭据、攻击脚本内容、随后要求实施禁用行为仍必须检查。不要因为出现“只读”就免审整个请求。
++例如依赖 "xss":"1.0.15" 是依赖声明，不是 XSS 攻击；文件清单 /project/magisk/install_magisk.sh 不等于请求执行它。生成 XSS 攻击载荷、执行提权/持久化操作仍 block，包括测试用途。具体执行代码、用户采纳的操作和相关上下文必须一起核对；不要将其他分块里的正常目的当豁免。
++普通 UI/构建/业务函数测试、JSON payload 字段、依赖注入、React useEffect hook 本身不是 Cyber。block/review 的 evidence 应支持实际禁用操作或具体未决风险，不能仅引用包名、文件路径、配置名称。确实没有禁用操作则 allow；真实禁用操作不因出现在引用中而获豁免。
+ 只输出一个六字段 JSON：decision=allow|block|review, risk_code=CYBER_*或空, category=类别, confidence=0到1数字, reason=不超过80字的分类依据, evidence=从 request_text 逐字复制的一处连续原文(不超过80字)。block/review 必须有 evidence，allow 必须为空。不要输出思维链、解释正文、Markdown 或 <think>。`
+ 
+ func cyberDenyActive(ctx context.Context) bool {
+@@ -106,7 +108,7 @@ func cyberDenyVerdict(d AuditDecision) (AuditDecision, error) {
+ 
+ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfile, text, source string) (AuditDecision, error) {
+ 	ctx, state := withAuditSemanticState(ctx)
+-	candidate, err := e.callModelRawWithEvidenceSource(ctx, profile, text, source)
++	candidate, err := e.callCyberGroundedAssessment(ctx, profile, text, source)
+ 	if class, _, _ := auditModelErrorDetails(err); class == "invalid_evidence" {
+ 		return candidate, annotateAuditOutputError(newAuditModelCallError("cyber_evidence_unresolved", 0, "non-allow evidence is unresolved; cannot retry until allow", err), auditDiagnosticsFromError(auditOutputPlanFromContext(ctx), err))
+ 	}
+@@ -149,7 +151,7 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
+ 		}
+ 		plan.VerifyIntent = false
+ 		callCtx, outputState := withAuditOutputAttempt(verifyCtx, plan)
+-		d, callErr := e.callModelRawWithEvidenceSource(callCtx, p, text, source)
++		d, callErr := e.callCyberGroundedAssessment(callCtx, p, text, source)
+ 		if class, _, _ := auditModelErrorDetails(callErr); class == "invalid_evidence" {
+ 			callErr = newAuditModelCallError("cyber_evidence_unresolved", 0, "non-allow verifier evidence is unresolved", callErr)
+ 		}
+diff --git a/internal/platform/audit_cyber_input.go b/internal/platform/audit_cyber_input.go
+index 7302552..a58d0d4 100644
+--- a/internal/platform/audit_cyber_input.go
++++ b/internal/platform/audit_cyber_input.go
+@@ -4,6 +4,7 @@ import (
+ 	"bytes"
+ 	"encoding/json"
+ 	"io"
++	"strconv"
+ 	"strings"
+ 	"unicode/utf8"
+ )
+@@ -62,8 +63,8 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+ 			out.ReferenceSpans = append(out.ReferenceSpans, auditReferenceSpan{Start: start, End: b.Len(), Kind: "untrusted_conversation_data"})
+ 		}
+ 	}
+-	var collect func(any, string, int)
+-	collect = func(v any, role string, depth int) {
++	var collect func(any, string, int, string)
++	collect = func(v any, role string, depth int, path string) {
+ 		if depth > 32 {
+ 			out.addCoverageIssue("input_structure_depth")
+ 			return
+@@ -72,8 +73,8 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+ 		case string:
+ 			appendText(role, x, role != "USER")
+ 		case []any:
+-			for _, item := range x {
+-				collect(item, role, depth+1)
++			for index, item := range x {
++				collect(item, role, depth+1, path+"/"+strconv.Itoa(index))
+ 			}
+ 		case map[string]any:
+ 			kind, _ := x["type"].(string)
+@@ -93,7 +94,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+ 					out.IgnoredContextBytes += countContextTextBytes(x, "")
+ 					return
+ 				default:
+-					out.addCoverageIssue("unsupported_role")
++					out.addCoverageDetail("unsupported_role", path, "UNKNOWN", kind)
+ 					return
+ 				}
+ 			}
+@@ -106,7 +107,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+ 				role = "TOOL_DATA"
+ 			case "", "message", "input_text", "text", "output_text":
+ 			default:
+-				out.addCoverageIssue("unsupported_input_content")
++				out.addCoverageDetail("unsupported_input_content", path, role, kind)
+ 				return
+ 			}
+ 			found := false
+@@ -119,22 +120,22 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+ 						} else {
+ 							data, err := json.Marshal(child)
+ 							if err != nil {
+-								out.addCoverageIssue("unsupported_input_content")
++								out.addCoverageDetail("unsupported_input_content", path, role, "")
+ 							} else {
+ 								appendText(role, string(data), true)
+ 							}
+ 						}
+ 					} else {
+-						collect(child, role, depth+1)
++						collect(child, role, depth+1, path+"/"+key)
+ 					}
+ 				}
+ 			}
+ 			if !found {
+-				out.addCoverageIssue("unsupported_input_content")
++				out.addCoverageDetail("unsupported_input_content", path, role, "")
+ 			}
+ 		case nil:
+ 		default:
+-			out.addCoverageIssue("unsupported_input_content")
++			out.addCoverageDetail("unsupported_input_content", path, role, "")
+ 		}
+ 	}
+ 	if obj, ok := root.(map[string]any); ok {
+@@ -157,7 +158,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+ 				continue
+ 			}
+ 			n++
+-			collect(v, "USER", 0)
++			collect(v, "USER", 0, "/"+key)
+ 		}
+ 		if n > 1 {
+ 			out.addCoverageIssue("ambiguous_input_fields")
+@@ -169,7 +170,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+ 			}
+ 		}
+ 	} else {
+-		collect(root, "USER", 0)
++		collect(root, "USER", 0, "")
+ 	}
+ 	out.ContextActivated = out.ActiveUserMessages > 1 || len(out.ReferenceSpans) > 0
+ 	out.Text = b.String()
+diff --git a/internal/platform/audit_input_scope.go b/internal/platform/audit_input_scope.go
+index 04f0eea..7e71bda 100644
+--- a/internal/platform/audit_input_scope.go
++++ b/internal/platform/audit_input_scope.go
+@@ -20,6 +20,7 @@ type AuditTextExtraction struct {
+ 	ruleText               string // In-memory raw rule input; never serialized or persisted.
+ 	CoverageStatus         string
+ 	CoverageIssues         []string
++	CoverageDetails        []AuditCoverageDetail
+ 	ReferenceSpans         []auditReferenceSpan
+ 	Text                   string
+ 	Scope                  string
+diff --git a/internal/platform/audit_model_evidence.go b/internal/platform/audit_model_evidence.go
+index 531760c..44aa650 100644
+--- a/internal/platform/audit_model_evidence.go
++++ b/internal/platform/audit_model_evidence.go
+@@ -7,8 +7,10 @@ import (
+ )
+ 
+ const (
+-	auditModelEvidenceMaxRunes = 120
+-	auditModelEvidenceMaxBytes = 512
++	auditModelEvidenceMaxRunes      = 120
++	auditModelEvidenceMaxBytes      = 512
++	auditEvidenceValidationMaxRunes = 1024
++	auditEvidenceValidationMaxBytes = 4096
+ )
+ 
+ // validateAuditDecisionEvidence makes model blocks explainable and prevents a
+@@ -38,17 +40,25 @@ func validateAuditDecisionEvidence(decision AuditDecision, sourceText string) (A
+ 			nil,
+ 		)
+ 	}
+-	if len(candidate) > auditModelEvidenceMaxBytes || utf8.RuneCountInString(candidate) > auditModelEvidenceMaxRunes {
++	if len(candidate) > auditEvidenceValidationMaxBytes || utf8.RuneCountInString(candidate) > auditEvidenceValidationMaxRunes {
+ 		return AuditDecision{}, newAuditModelCallError(
+ 			"invalid_evidence",
+ 			0,
+-			fmt.Sprintf("audit model evidence exceeds the %d-character safety limit", auditModelEvidenceMaxRunes),
++			fmt.Sprintf("audit model evidence exceeds the %d-character validation limit", auditEvidenceValidationMaxRunes),
+ 			nil,
+ 		)
+ 	}
+ 
+ 	start := strings.Index(sourceText, candidate)
+ 	matchMode := "exact"
++	// Some compatible models double JSON backslashes inside an already decoded
++	// string. One bounded unescape is accepted ONLY if the whole result exists.
++	if start < 0 && strings.Contains(candidate, `\\`) {
++		unescaped := strings.ReplaceAll(candidate, `\\`, `\`)
++		if index := strings.Index(sourceText, unescaped); index >= 0 {
++			candidate, start, matchMode = unescaped, index, "json_backslash_unescaped"
++		}
++	}
+ 	if start < 0 && isASCIIText(candidate) {
+ 		start = indexASCIIEqualFold(sourceText, candidate)
+ 		if start >= 0 {
+@@ -73,6 +83,14 @@ func validateAuditDecisionEvidence(decision AuditDecision, sourceText string) (A
+ 		)
+ 	}
+ 
++	if utf8.RuneCountInString(candidate) > auditModelEvidenceMaxRunes || len(candidate) > auditModelEvidenceMaxBytes {
++		// The entire candidate matched above. Never accept a matching prefix of
++		// an otherwise fabricated quote. Only compact the persisted display.
++		prefix := string([]rune(candidate)[:auditModelEvidenceMaxRunes])
++		end = start + len(prefix)
++		decision.OutputNormalizations = append(decision.OutputNormalizations, "evidence_verified_then_compacted")
++		matchMode += "_compacted"
++	}
+ 	decision.Evidence = redactCyberTraceText(sourceText[start:end])
+ 	decision.EvidenceContext = cyberRuleContext(sourceText, start, end)
+ 	decision.EvidenceVerified = true
