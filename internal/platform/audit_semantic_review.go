@@ -32,6 +32,7 @@ type auditSemanticState struct {
 	reviewCalls  int
 	reviews      int
 	records      []AuditSemanticReview
+	modelInputs  []AuditModelInputDiagnostics
 }
 
 func withAuditSemanticState(ctx context.Context) (context.Context, *auditSemanticState) {
@@ -66,6 +67,7 @@ func (s *auditSemanticState) record(r AuditSemanticReview) {
 func (s *auditSemanticState) metadata(m auditFailoverMetadata) auditFailoverMetadata {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	m.ModelInputs = append([]AuditModelInputDiagnostics(nil), s.modelInputs...)
 	m.HTTPCalls, m.SemanticReviewCalls, m.SemanticReviewCount = s.httpCalls, s.reviewCalls, s.reviews
 	m.HTTPBudget = max(cyberDenyHTTPBudget, s.httpBudget)
 	m.ReviewBudget = max(maxAuditSemanticCalls, s.reviewBudget)

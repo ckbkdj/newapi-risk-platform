@@ -118,6 +118,8 @@ func recordAuditDecisionMetadata(metadata map[string]any, result AuditResult) {
 	metadata["audit_chunks_completed"] = result.AuditChunksCompleted
 	metadata["audit_completed"] = finalized && result.AuditCoverageStatus != "incomplete" && (result.AuditChunkCount == 0 || result.AuditChunksCompleted == result.AuditChunkCount)
 	metadata["audit_semantic_reviews_truncated"] = result.AuditSemanticReviewCount > len(result.AuditSemanticReviews)
+	metadata["audit_model_inputs"] = result.AuditModelInputs
+	metadata["audit_model_inputs_truncated"] = result.AuditHTTPCalls > len(result.AuditModelInputs)
 	metadata["audit_http_calls"] = result.AuditHTTPCalls
 	metadata["audit_http_budget"] = result.AuditHTTPBudget
 	metadata["audit_review_budget"] = result.AuditReviewBudget

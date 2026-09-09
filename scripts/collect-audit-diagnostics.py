@@ -31,10 +31,10 @@ ROOT = Path(__file__).resolve().parents[1]
 LIMIT = 8 * 1024 * 1024
 HEX = re.compile(r"^[a-f0-9]{7,64}$")
 DECISIONS = {"allow", "review", "block"}
-CONTRACTS = {"risk_audit_request.v2", "risk_audit_output.v2", "output-resilience-fusion.v1", "intent-coverage-guard.v2", "cyber-deny-qwen27b.v4", "cyber-deny-qwen27b.v5", "cyber-deny-qwen27b.v6", "cyber-deny-qwen27b.v7"}
+CONTRACTS = {"risk_audit_request.v2", "risk_audit_output.v2", "output-resilience-fusion.v1", "intent-coverage-guard.v2", "cyber-deny-qwen27b.v4", "cyber-deny-qwen27b.v5", "cyber-deny-qwen27b.v6", "cyber-deny-qwen27b.v7", "cyber-deny-qwen27b.v8"}
 LABELS = {"high", "medium", "low", "numeric", "numeric_string", "qualitative"}
 COVERAGE_ISSUES = {"ambiguous_input_fields", "unsupported_role", "input_structure_depth", "invalid_request_json", "reference_context_limit", "unsupported_input_content", "missing_continuation_context", "unresolved_previous_response", "input_text_truncated", "no_auditable_user_intent"}
-ERRORS = {"audit_http_budget", "cyber_evidence_unresolved", "cyber_operation_unresolved", "non_operational_evidence", "cyber_output_conflict", "audit_uncertain_allow", "input_coverage", "invalid_json", "invalid_schema", "invalid_evidence", "invalid_semantic_evidence", "ambiguous_output", "timeout", "connection", "response_read", "response_format", "response_too_large", "output_limits", "output_truncated", "empty_response", "invalid_decision", "structured_output_unsupported", "context_length", "input_too_large", "authentication", "endpoint_or_model_not_found", "rate_limited", "audit_server_error", "http_status", "fusion_incomplete", "fusion_configuration", "fusion_profile_unavailable", "semantic_review_budget", "semantic_verifier_configuration", "semantic_verifier_unavailable", "retry_budget_exhausted", "unknown"}
+ERRORS = {"cyber_input_integrity", "audit_http_budget", "cyber_evidence_unresolved", "cyber_operation_unresolved", "non_operational_evidence", "cyber_output_conflict", "audit_uncertain_allow", "input_coverage", "invalid_json", "invalid_schema", "invalid_evidence", "invalid_semantic_evidence", "ambiguous_output", "timeout", "connection", "response_read", "response_format", "response_too_large", "output_limits", "output_truncated", "empty_response", "invalid_decision", "structured_output_unsupported", "context_length", "input_too_large", "authentication", "endpoint_or_model_not_found", "rate_limited", "audit_server_error", "http_status", "fusion_incomplete", "fusion_configuration", "fusion_profile_unavailable", "semantic_review_budget", "semantic_verifier_configuration", "semantic_verifier_unavailable", "retry_budget_exhausted", "unknown"}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -107,14 +107,14 @@ def trace_view(obj, depth=0):
     if not isinstance(obj, dict) or depth > 6:
         return {}
     numeric = ("audit_conversation_reference_count", "audit_embedded_reference_count", "audit_profile_id", "profile_id", "attempt", "audit_http_calls", "audit_http_budget", "audit_review_budget", "audit_semantic_review_calls", "audit_model_attempts", "audit_model_retries", "audit_chunk_count", "audit_chunks_completed", "audit_chunk_bytes", "audit_intent_bytes", "audit_input_tokens", "audit_context_window_tokens", "output_max_tokens", "response_content_bytes", "http_status", "audit_output_max_tokens", "timeline_duration_ms", "audit_latency_ms", "text_bytes")
-    out = select(obj, numeric, ("success", "upstream_started", "audit_completed", "audit_decision_finalized", "audit_decision_adjusted", "audit_model_evidence_verified", "disagreement"), {
+    out = select(obj, numeric, ("audit_model_inputs_truncated", "success", "upstream_started", "audit_completed", "audit_decision_finalized", "audit_decision_adjusted", "audit_model_evidence_verified", "disagreement"), {
         "decision": DECISIONS, "audit_effective_decision": DECISIONS, "audit_model_decision": DECISIONS,
         "error_class": ERRORS, "audit_error_class": ERRORS, "candidate_error": ERRORS,
         "audit_input_contract": CONTRACTS, "audit_output_contract": CONTRACTS,
         "confidence_kind": LABELS, "confidence_label": LABELS, "audit_model_confidence_kind": LABELS, "audit_model_confidence_label": LABELS,
         "audit_coverage_status": {"complete", "incomplete"},
-        "status": {"grounding_corrected", "grounding_confirmed", "grounding_error", "see_attempts", "escalated", "confirmed", "overturned", "unresolved", "error", "consensus", "adjudicated"},
-        "audit_semantic_review_status": {"grounding_corrected", "grounding_confirmed", "grounding_error", "see_attempts", "escalated", "confirmed", "overturned", "unresolved", "error", "consensus", "adjudicated"},
+        "status": {"evidence_repair_corrected", "evidence_repair_confirmed", "evidence_repair_error", "grounding_corrected", "grounding_confirmed", "grounding_error", "see_attempts", "escalated", "confirmed", "overturned", "unresolved", "error", "consensus", "adjudicated"},
+        "audit_semantic_review_status": {"evidence_repair_corrected", "evidence_repair_confirmed", "evidence_repair_error", "grounding_corrected", "grounding_confirmed", "grounding_error", "see_attempts", "escalated", "confirmed", "overturned", "unresolved", "error", "consensus", "adjudicated"},
         "audit_policy_mode": {"strict", "internal_engineering", "cyber_deny"},
         "finish_reason": {"stop", "length", "max_tokens", "tool_calls"},
         "output_mode": {"json_schema", "json_object", "vllm_structured_json", "guided_json", "prompt_only"},
@@ -132,6 +132,17 @@ def trace_view(obj, depth=0):
                 safe["path"] = path
             details.append(safe)
         out["audit_coverage_details"] = details
+    if isinstance(obj.get("audit_model_inputs"), list):
+        out["audit_model_inputs"] = []
+        for item in obj["audit_model_inputs"][:32]:
+            safe = select(item, ("call", "profile_id", "request_text_bytes", "evidence_source_bytes", "request_context_bytes", "request_context_count", "payload_bytes"),
+                          ("source_matches_request_text",), {"phase": {"primary", "verifier", "evidence_repair", "grounding"}})
+            # Export keyed fingerprints only, never payload text or arbitrary labels.
+            for key in ("document_hmac", "request_text_hmac"):
+                value = item.get(key) if isinstance(item, dict) else None
+                if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value):
+                    safe[key] = value
+            out["audit_model_inputs"].append(safe)
     for k in ("response_preview", "audit_response_preview"):
         if k in obj:
             out[k + "_shape"] = output_shape(obj[k])

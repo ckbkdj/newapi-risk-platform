@@ -92,15 +92,16 @@ func TestCyberExpandedAmbiguousInputsFailClosed(t *testing.T) {
 func TestCyberExpandedInvalidEvidenceCannotRetryIntoAllow(t *testing.T) {
 	var calls atomic.Int32
 	e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
-		if calls.Add(1) == 1 {
+		if calls.Add(1) <= 2 {
 			return incidentHTTP(200, incidentDecision(DecisionBlock, "absent quote")), nil
 		}
 		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
+	// A hypothetical third-call allow must never be reached after two invalid quotes.
 	p.RetryCount = 5
 	e.profileCache().entries[p.ID] = auditProfileCacheEntry{profile: p, expiresAt: time.Now().Add(time.Hour)}
 	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, []byte(`{"input":"ordinary task"}`))
-	if got.Decision != DecisionBlock || got.ErrorClass != "cyber_evidence_unresolved" || calls.Load() != 1 {
+	if got.Decision != DecisionBlock || got.ErrorClass != "cyber_evidence_unresolved" || calls.Load() != 2 {
 		t.Fatalf("invalid evidence retried into allow: %+v calls=%d", got, calls.Load())
 	}
 }

@@ -16,6 +16,7 @@ const (
 )
 
 type auditFailoverMetadata struct {
+	ModelInputs         []AuditModelInputDiagnostics
 	HTTPCalls           int
 	HTTPBudget          int
 	ReviewBudget        int
