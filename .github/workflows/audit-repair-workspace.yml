@@ -1,0 +1,39 @@
+name: Audit repair workspace
+
+on:
+  push:
+    branches: [fix/audit-intent-coverage-20260909]
+    paths: [.github/workflows/audit-repair-workspace.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+      - name: Export tracked source and verified dependency sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          go mod download
+          go mod verify
+          go mod vendor
+          mkdir -p "$RUNNER_TEMP/audit-repair-source"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/audit-repair-source"
+          cp -a vendor "$RUNNER_TEMP/audit-repair-source/vendor"
+          git rev-parse HEAD > "$RUNNER_TEMP/audit-repair-source/WORKSPACE_COMMIT"
+          tar -czf "$RUNNER_TEMP/audit-repair-source.tar.gz" -C "$RUNNER_TEMP/audit-repair-source" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-repair-source
+          path: ${{ runner.temp }}/audit-repair-source.tar.gz
+          retention-days: 1
+          if-no-files-found: error
