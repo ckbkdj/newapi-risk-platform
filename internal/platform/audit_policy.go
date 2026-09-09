@@ -26,6 +26,8 @@ type AuditPolicyAdjustment struct {
 }
 
 var (
+	secretIntentClauseBoundary   = regexp.MustCompile(`(?i)[.!?。！？;；,，\r\n]+|\b(?:and|but|however|then|also|instead)\b|(?:但是|然而|然后|并且|并)`)
+	defensiveSecretClausePrefix  = regexp.MustCompile(`(?i)^\s*(?:[-*+]\s*)?(?:please\s+|请)?(?:do not\b|don['’]t\b|never\b|avoid\b|prevent\b|detect\b|scan\b|check\b|audit\b|redact\b|mask\b|rotate\b|revoke\b|不要|禁止|避免|防止|检测|检查|审计|扫描|脱敏|掩码|轮换|撤销)`)
 	secretTermPattern            = regexp.MustCompile(`(?i)(?:\[USER_PROVIDED_SECRET\]|api[ _-]?key|access[ _-]?token|refresh[ _-]?token|authorization|bearer|credential|cookie|password|secret|密钥|令牌|凭据|密码|Cookie)`)
 	secretConfigurationPattern   = regexp.MustCompile(`(?i)(?:configure|configuration|integrate|integration|connect|connection|use|set|add|replace|switch|provider|endpoint|llm|model|配置|填写|接入|集成|连接|调用|使用|新增|替换|切换|模型|接口|内部开发)`)
 	secretHarmVerbPattern        = regexp.MustCompile(`(?i)(?:steal|harvest|exfiltrat|dump|grab|scrape|phish|leak|publish|post publicly|commit to|upload to|send to|窃取|盗取|外传|抓取|钓取|泄露|公开|发布|提交到|上传到|发送到)`)
@@ -103,11 +105,11 @@ func applyAuditPolicyAdjustment(policy AuditPolicy, text string, decision AuditD
 
 	if policy.AllowUserProvidedSecrets && isUserProvidedSecretConfiguration(text) &&
 		(strings.Contains(code, "CREDENTIAL") || strings.Contains(code, "SECRET") || category == "credential_access" || category == "credential security") {
-		return adjustedAllowDecision(decision, "INTERNAL_SECRET_CONFIGURATION", "platform-controlled internal engineering policy allows requester-provided API credentials for configuration without treating the literal as theft or exposure")
+		return credentialPolicyReview(decision, "INTERNAL_SECRET_CONFIGURATION_REVIEW_REQUIRED")
 	}
 	if policy.AllowLocalDebugCredentials && isLocalDebugCredentialUse(text) &&
 		(strings.Contains(code, "CREDENTIAL") || strings.Contains(code, "TOKEN") || category == "credential_access") {
-		return adjustedAllowDecision(decision, "LOCAL_DEBUG_CREDENTIAL_REPRODUCTION", "platform-controlled internal engineering policy recognizes local log credential reuse for debugging with no third-party target or exfiltration sink")
+		return credentialPolicyReview(decision, "LOCAL_DEBUG_CREDENTIAL_REVIEW_REQUIRED")
 	}
 	if strings.Contains(code, "SESSION_HIJACK") && benignReplayPattern.MatchString(text) && !authMaterialPattern.MatchString(text) {
 		return adjustedAllowDecision(decision, "ENGINEERING_REPLAY_SEMANTICS", "event/message replay pipeline semantics do not request authenticated-session takeover")
@@ -119,6 +121,17 @@ func applyAuditPolicyAdjustment(policy AuditPolicy, text string, decision AuditD
 		return adjustedAllowDecision(decision, "EPHEMERAL_ARTIFACT_NOT_C2", "temporary artifact identifiers and generic server troubleshooting do not request command-and-control infrastructure")
 	}
 	return decision, nil
+}
+
+// A lexical engineering hint cannot discharge a credential candidate. Keep
+// the candidate and require semantic verification; never invent a safe verdict.
+func credentialPolicyReview(original AuditDecision, code string) (AuditDecision, *AuditPolicyAdjustment) {
+	adjustment := &AuditPolicyAdjustment{Code: code, Reason: "credential engineering context requires semantic review, not a mechanical allow", OriginalDecision: original.Decision, OriginalRiskCode: original.RiskCode, OriginalReason: original.Reason}
+	decision := original
+	decision.Decision = DecisionReview
+	decision.Source = "policy_review"
+	decision.Reason = adjustment.Reason
+	return decision, adjustment
 }
 
 func adjustedAllowDecision(original AuditDecision, code string, reason string) (AuditDecision, *AuditPolicyAdjustment) {
@@ -150,15 +163,21 @@ func hasDangerousSecretIntent(text string) bool {
 	if !secretTermPattern.MatchString(text) {
 		return false
 	}
-	harmfulAction := secretHarmVerbPattern.MatchString(text)
-	if thirdPartyTargetPattern.MatchString(text) && (harmfulAction || localCredentialOperationPattern.MatchString(text)) {
-		return true
+	// This is a guard on mechanical engineering exceptions, not a semantic
+	// classifier. Only a locally defensive clause can suppress its own verbs.
+	// A trailing disclaimer, another sentence, or another coordinated action
+	// must never exempt a positive disclosure/theft operation. Ambiguity stays
+	// with the rule/model verifier instead of receiving a blanket allow.
+	for _, clause := range secretIntentClauseBoundary.Split(text, -1) {
+		clause = strings.TrimSpace(clause)
+		if defensiveSecretClausePrefix.MatchString(clause) && defensiveSecretIntentPattern.MatchString(clause) {
+			continue
+		}
+		harmfulAction := secretHarmVerbPattern.MatchString(clause)
+		if harmfulAction || publicSecretSinkPattern.MatchString(clause) ||
+			(thirdPartyTargetPattern.MatchString(clause) && localCredentialOperationPattern.MatchString(clause)) {
+			return true
+		}
 	}
-	if defensiveSecretIntentPattern.MatchString(text) {
-		return false
-	}
-	if publicSecretSinkPattern.MatchString(text) {
-		return true
-	}
-	return harmfulAction
+	return false
 }

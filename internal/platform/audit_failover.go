@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -71,6 +72,22 @@ func (e *AuditEngine) callModelWithFailover(
 		}
 		if profileIndex > 0 {
 			metadata.FallbackCount++
+		}
+		if cyberDenyActive(ctx) {
+			// Fallback can repair infrastructure, never relax the root's required
+			// panel/verifier policy or recover by bypassing a failed verification.
+			extra := auditProfileExtra(profile)
+			if extra == nil {
+				extra = map[string]any{}
+			}
+			for _, key := range []string{"_risk_fusion_profile_ids", "_risk_fusion_adjudicator_profile_id", "_risk_verifier_profile_id"} {
+				delete(extra, key)
+				if v, ok := auditProfileExtra(root)[key]; ok {
+					extra[key] = v
+				}
+			}
+			profile.Extra, _ = json.Marshal(extra)
+			profile = cyberDenyProfile(profile)
 		}
 		usedProfile = profile
 		retries := profile.RetryCount
@@ -142,7 +159,7 @@ func (e *AuditEngine) callModelWithFailover(
 			metadata.Attempts = append(metadata.Attempts, attemptRecord)
 			// A required fusion panel cannot be bypassed by a fallback profile
 			// that has no panel configured. Missing assessments are unresolved.
-			if strings.HasPrefix(attemptRecord.ErrorClass, "fusion_") {
+			if strings.HasPrefix(attemptRecord.ErrorClass, "cyber_") || strings.HasPrefix(attemptRecord.ErrorClass, "fusion_") || (cyberDenyActive(ctx) && (strings.HasPrefix(attemptRecord.ErrorClass, "semantic_verifier_") || attemptRecord.ErrorClass == "audit_http_budget" || attemptRecord.ErrorClass == "semantic_review_budget")) {
 				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), err
 			}
 			if attempt >= retries || !auditErrorRetryableOnSameProfile(err) {

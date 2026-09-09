@@ -42,6 +42,13 @@ func (e *AuditEngine) auditMessagesWithPlan(profile AuditProfile, text string, p
 	if systemPrompt == "" {
 		systemPrompt = DefaultAuditSystemPrompt
 	}
+	if auditProfileExtra(profile)["_risk_policy_mode"] == cyberDenyMode {
+		systemPrompt = CyberDenyAuditSystemPrompt + "\n" + auditOutputPlanDirective(plan)
+		if plan.Feedback != "" {
+			systemPrompt += "\nPLATFORM VALIDATION FEEDBACK: " + plan.Feedback
+		}
+		return []map[string]string{{"role": "system", "content": systemPrompt}, {"role": "user", "content": encodeAuditRequestDocument(text)}}
+	}
 	systemPrompt = ComposeMandatoryAuditSystemPrompt(systemPrompt)
 	systemPrompt = appendFastAuditDirective(systemPrompt)
 	systemPrompt += "\n\n" + auditPolicySystemDirective(profile)

@@ -69,11 +69,15 @@ func (s *auditSemanticState) metadata(m auditFailoverMetadata) auditFailoverMeta
 // review (and for a parsed verdict with invalid evidence). Rule enforcement is
 // unaffected. Invalid/missing verification never becomes an implicit allow.
 func (e *AuditEngine) callModelOnceWithEvidenceSource(ctx context.Context, profile AuditProfile, text, evidenceSource string) (AuditDecision, error) {
+	if cyberDenyActive(ctx) {
+		return e.callCyberDenyModel(ctx, profile, text, evidenceSource)
+	}
 	ctx, state := withAuditSemanticState(ctx)
 	candidate, err := e.callModelRawWithEvidenceSource(ctx, profile, text, evidenceSource)
 	class, _, _ := auditModelErrorDetails(err)
 	required, _ := ctx.Value(auditRequireIntentVerificationKey{}).(bool)
-	if (err != nil && class != "invalid_evidence") || (err == nil && candidate.Decision == DecisionAllow && !required) {
+	_, fusionEnabled := auditProfileExtra(profile)["_risk_fusion_profile_ids"]
+	if (err != nil && class != "invalid_evidence") || (err == nil && candidate.Decision == DecisionAllow && !required && !fusionEnabled) {
 		return candidate, err
 	}
 	if ctx.Err() != nil {
@@ -109,6 +113,9 @@ func finishSemanticReview(candidate, verified AuditDecision, review *AuditSemant
 	review.Status = "confirmed"
 	if verified.Decision == DecisionAllow && candidate.Decision != DecisionAllow {
 		review.Status = "overturned"
+	}
+	if candidate.Decision == DecisionAllow && verified.Decision == DecisionBlock {
+		review.Status = "escalated"
 	}
 	if verified.Decision == DecisionReview {
 		review.Status = "unresolved"

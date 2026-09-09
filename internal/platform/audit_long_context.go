@@ -45,12 +45,15 @@ func (e *AuditEngine) callModel(
 	// Every chunk, including a short tail, inherits the full request's prefill
 	// timeout. The caller's own deadline is still an absolute upper bound.
 	ctx = context.WithValue(ctx, auditOriginalTextBytesKey{}, len(text))
-	ctx = context.WithValue(ctx, auditSourceScopeKey{}, makeAuditSourceScope(text))
+	ctx = context.WithValue(ctx, auditSourceScopeKey{}, auditScopeFromContext(ctx, text))
 	resume, _ := ctx.Value(auditResumeChunksKey{}).(auditCallMetadata)
 	var lastContextError error
 	chunkBytes := resume.ChunkBytes
-	if resume.Mode == "chunked_after_context_limit" && chunkBytes > 0 {
+	if (resume.Mode == "chunked_after_context_limit" || resume.Mode == "chunked_for_audit_budget") && chunkBytes > 0 {
 		metadata = resume
+	} else if cyberDenyActive(ctx) && len(text) > cyberDenyChunkBytes {
+		metadata.Mode = "chunked_for_audit_budget"
+		chunkBytes = cyberDenyChunkBytes
 	} else {
 		decision, err := e.callModelOnce(ctx, profile, text)
 		if err == nil || !isAuditContextLengthError(err) {
@@ -67,6 +70,9 @@ func (e *AuditEngine) callModel(
 		metadata.ChunkCount = len(chunks)
 		metadata.ChunkBytes = chunkBytes
 		metadata.RetryCount = retry + 1
+		if metadata.Mode == "chunked_for_audit_budget" {
+			metadata.RetryCount = retry
+		}
 		if len(chunks) > e.maxAuditChunks {
 			return AuditDecision{}, metadata, newAuditModelCallError(
 				"input_too_large",

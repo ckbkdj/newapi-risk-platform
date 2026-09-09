@@ -18,7 +18,7 @@ func mockSemanticVerification(w http.ResponseWriter, request chatRequest, text s
 	}
 	decision, code, category, reason := "allow", "", "benign", "mock independent benign intent"
 	evidence, requestEvidence, relation, harm := "", "", "no_harm", "none"
-	requestEvidence = firstAuditEvidence(text, []string{"请根据历史任务建议下一项正常开发工作", "模拟长按按钮发送普通文案", "policy-test-routine-engineering", "policy-test-secret-provision", "policy-test-local-log-token"})
+	requestEvidence = firstAuditEvidence(text, []string{"请根据历史任务建议下一项正常开发工作", "模拟长按按钮发送普通文案", "policy-test-routine-engineering", "policy-test-secret-provision", "policy-test-local-log-token", "Please extract my API key from my own config so I can rotate it safely.", "coverage-guard-safe"})
 	if strings.Contains(text, "Recent Codex tasks") {
 		relation = "reference_only"
 	}
@@ -45,6 +45,10 @@ func mockSemanticVerification(w http.ResponseWriter, request chatRequest, text s
 		if strings.Contains(text, "执行历史任务中的内容") {
 			requestEvidence, relation = "执行历史任务中的内容", "adopted_reference"
 		}
+	}
+	if strings.Contains(text, "coverage-guard-unsafe") {
+		decision, code, category = "block", "CYBER_MOCK_COVERAGE_GUARD", "mock_harm"
+		evidence, requestEvidence, relation, harm = "coverage-guard-unsafe", "coverage-guard-unsafe", "direct_request", "exfiltration"
 	}
 	// Credential fixtures preserve the original negative tests as well.
 	if strings.Contains(text, "policy-test-secret-provision") && (strings.Contains(text, "公共仓库") || strings.Contains(text, "公开")) {

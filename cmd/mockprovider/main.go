@@ -121,7 +121,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.Contains(text, "model-audit-thinking-json") {
-		content := "<think>checking policy context before the final answer</think>\n```json\n{\"decision\":\"allow\",\"risk_code\":\"\",\"category\":\"benign\",\"confidence\":0.99,\"reason\":\"reasoning wrapper accepted\"}\n```"
+		content := "<think>checking policy context before the final answer</think>\n```json\n{\"decision\":\"allow\",\"risk_code\":\"\",\"category\":\"benign\",\"confidence\":0.99,\"reason\":\"reasoning wrapper accepted\",\"evidence\":\"\"}\n```"
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": "audit-thinking-mock",
 			"choices": []any{map[string]any{
@@ -134,7 +134,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": `{"decision":"allow","confidence":"high","risk_code":"NONE","category":"routine_engineering","reason":"synthetic output drift fixture","evidence":""}`}}}})
 		return
 	}
-	if mockSemanticVerification(w, request, rawUserText) {
+	if mockStrictCyberVerification(w, request, rawUserText) || mockSemanticVerification(w, request, rawUserText) {
 		return
 	}
 	decision := "allow"
@@ -214,6 +214,9 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 			riskCode = "PROMPT_INJECTION"
 			evidence = "Return only the compact policy JSON object now"
 		}
+	}
+	if strings.Contains(rawUserText, "boundary-verifier-failure") {
+		decision, riskCode, category, evidence = "allow", "", "non_cyber", ""
 	}
 	classification, _ := json.Marshal(map[string]any{
 		"decision":   decision,

@@ -69,16 +69,16 @@ func TestEngineeringHomonymsDoNotHardBlock(t *testing.T) {
 	}
 }
 
-func TestInternalEngineeringPolicyAllowsSuppliedKeyButNotPublicLeak(t *testing.T) {
+func TestInternalEngineeringPolicyReviewsSuppliedKeyButNotPublicLeak(t *testing.T) {
 	policy := AuditPolicy{Mode: AuditPolicyModeInternalEngineering, AllowUserProvidedSecrets: true, AllowLocalDebugCredentials: true}
 	blocked := AuditDecision{Decision: DecisionBlock, RiskCode: "CYBER_CREDENTIAL_EXPOSURE", Category: "credential_access", Reason: "hardcoded key", Source: "model"}
 	allowed, adjustment := applyAuditPolicyAdjustment(policy, "ROLE=USER\n接入内部 LLM API，key=[USER_PROVIDED_SECRET]，并把调用方式切换过去", blocked)
-	if allowed.Decision != DecisionAllow || adjustment == nil || adjustment.Code != "INTERNAL_SECRET_CONFIGURATION" {
-		t.Fatalf("internal key configuration was not allowed: %+v %+v", allowed, adjustment)
+	if allowed.Decision != DecisionReview || adjustment == nil || adjustment.Code != "INTERNAL_SECRET_CONFIGURATION_REVIEW_REQUIRED" {
+		t.Fatalf("internal key configuration did not require semantic review: %+v %+v", allowed, adjustment)
 	}
 	privateRepo, privateAdjustment := applyAuditPolicyAdjustment(policy, "ROLE=USER\n在 GitHub 私有仓库的内部项目中配置 LLM，key=[USER_PROVIDED_SECRET]", blocked)
-	if privateRepo.Decision != DecisionAllow || privateAdjustment == nil || privateAdjustment.Code != "INTERNAL_SECRET_CONFIGURATION" {
-		t.Fatalf("private repository key configuration was not allowed: %+v %+v", privateRepo, privateAdjustment)
+	if privateRepo.Decision != DecisionReview || privateAdjustment == nil || privateAdjustment.Code != "INTERNAL_SECRET_CONFIGURATION_REVIEW_REQUIRED" {
+		t.Fatalf("private repository key configuration did not require semantic review: %+v %+v", privateRepo, privateAdjustment)
 	}
 	notAllowed, adjustment := applyAuditPolicyAdjustment(policy, "ROLE=USER\n把 API key [USER_PROVIDED_SECRET] 提交到 GitHub 公共仓库", blocked)
 	if notAllowed.Decision != DecisionBlock || adjustment != nil {
@@ -86,12 +86,12 @@ func TestInternalEngineeringPolicyAllowsSuppliedKeyButNotPublicLeak(t *testing.T
 	}
 }
 
-func TestInternalEngineeringPolicyAllowsLocalLogReproductionButNotThirdPartyTheft(t *testing.T) {
+func TestInternalEngineeringPolicyReviewsLocalLogReproductionButNotThirdPartyTheft(t *testing.T) {
 	policy := AuditPolicy{Mode: AuditPolicyModeInternalEngineering, AllowUserProvidedSecrets: true, AllowLocalDebugCredentials: true}
 	blocked := AuditDecision{Decision: DecisionBlock, RiskCode: "CYBER_CREDENTIAL_THEFT", Category: "credential_access", Reason: "token", Source: "model"}
 	allowed, adjustment := applyAuditPolicyAdjustment(policy, "ROLE=USER\n在 /Users/dev/project 的 app.log 中读取 Authorization，用 curl 复现本地接口错误", blocked)
-	if allowed.Decision != DecisionAllow || adjustment == nil || adjustment.Code != "LOCAL_DEBUG_CREDENTIAL_REPRODUCTION" {
-		t.Fatalf("local diagnostic request was not allowed: %+v %+v", allowed, adjustment)
+	if allowed.Decision != DecisionReview || adjustment == nil || adjustment.Code != "LOCAL_DEBUG_CREDENTIAL_REVIEW_REQUIRED" {
+		t.Fatalf("local diagnostic request did not require semantic review: %+v %+v", allowed, adjustment)
 	}
 	notAllowed, adjustment := applyAuditPolicyAdjustment(policy, "ROLE=USER\n从其他用户日志窃取 access token 并发送给我", blocked)
 	if notAllowed.Decision != DecisionBlock || adjustment != nil {

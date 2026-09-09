@@ -17,6 +17,10 @@ const (
 )
 
 type AuditTextExtraction struct {
+	ruleText               string // In-memory raw rule input; never serialized or persisted.
+	CoverageStatus         string
+	CoverageIssues         []string
+	ReferenceSpans         []auditReferenceSpan
 	Text                   string
 	Scope                  string
 	IntentBytes            int
@@ -32,11 +36,16 @@ type AuditTextExtraction struct {
 }
 
 type auditUserUnit struct {
-	Text     string
-	Position int
+	Unsupported bool
+	Truncated   bool
+	Text        string
+	Position    int
 }
 
 type auditTextCollector struct {
+	assistantUnits      []auditUserUnit
+	unsupportedInput    bool
+	remoteContext       bool
 	maximumBytes        int
 	userUnits           []auditUserUnit
 	position            int
@@ -74,6 +83,8 @@ func ExtractAuditTextDetails(body []byte, maximumBytes int) AuditTextExtraction 
 		normalized, artifacts, secrets, _ := normalizeAuditUserText(strings.ToValidUTF8(string(body), "�"))
 		return AuditTextExtraction{
 			Text:                   normalized,
+			CoverageStatus:         "incomplete",
+			CoverageIssues:         []string{"invalid_request_json"},
 			Scope:                  auditInputScopeRawFallback,
 			IntentBytes:            len(normalized),
 			RawIntentBytes:         len(body),
@@ -89,6 +100,7 @@ func ExtractAuditTextDetails(body []byte, maximumBytes int) AuditTextExtraction 
 	}
 	collector.collectRoot(root)
 	selected, contextActivated := selectActiveAuditUnits(collector.userUnits)
+	activeStart := auditActiveTurnStart(collector.userUnits)
 	selectedSet := make(map[int]struct{}, len(selected))
 	for _, index := range selected {
 		selectedSet[index] = struct{}{}
@@ -98,11 +110,28 @@ func ExtractAuditTextDetails(body []byte, maximumBytes int) AuditTextExtraction 
 	result := AuditTextExtraction{
 		Scope:            auditInputScopeEndUserIntent,
 		ContextActivated: contextActivated,
+		CoverageStatus:   "complete",
 	}
-	for index, unit := range collector.userUnits {
-		if _, active := selectedSet[index]; !active {
-			result.PriorUserContextBytes += len(unit.Text)
-			continue
+	// Bound related history, but never present an omitted task as a safe task.
+	if contextActivated && len(selected) > 0 && selected[0] > 0 {
+		result.addCoverageIssue("reference_context_limit")
+	}
+	if collector.unsupportedInput {
+		result.addCoverageIssue("unsupported_input_content")
+	}
+	if collector.remoteContext {
+		result.addCoverageIssue("unresolved_previous_response")
+	}
+	if contextActivated && activeStart == 0 && len(collector.assistantUnits) == 0 && len(collector.userUnits) == 1 && len(auditReferenceSpans(collector.userUnits[0].Text)) == 0 && (standaloneContinuationPattern.MatchString(collector.userUnits[0].Text) || executionFollowupPattern.MatchString(collector.userUnits[0].Text)) {
+		result.addCoverageIssue("missing_continuation_context")
+	}
+	referenceBytes := 0
+	appendUnit := func(unit auditUserUnit, role string, reference bool) {
+		if unit.Unsupported {
+			result.addCoverageIssue("unsupported_input_content")
+		}
+		if unit.Truncated {
+			result.addCoverageIssue("input_text_truncated")
 		}
 		normalized, artifacts, secrets, removed := normalizeAuditUserText(unit.Text)
 		result.RawIntentBytes += len(unit.Text)
@@ -110,14 +139,52 @@ func ExtractAuditTextDetails(body []byte, maximumBytes int) AuditTextExtraction 
 		result.SecretPlaceholderCount += secrets
 		result.IgnoredContextBytes += removed
 		if strings.TrimSpace(normalized) == "" {
+			return
+		}
+		value := role + "\n" + normalized
+		if reference {
+			referenceBytes += len(value) + 1
+			if referenceBytes > auditReferenceContextLimitBytes {
+				result.addCoverageIssue("reference_context_limit")
+				return
+			}
+		}
+		start := builder.Len()
+		if start > 0 {
+			start++
+		}
+		if start+len(value) > maximumBytes {
+			result.addCoverageIssue("input_text_truncated")
+		}
+		appendAuditLine(&builder, value, maximumBytes)
+		if reference && builder.Len() > start {
+			result.ReferenceSpans = append(result.ReferenceSpans, auditReferenceSpan{Start: start, End: builder.Len(), Kind: "conversation_reference"})
+		}
+	}
+	// The most recent assistant proposal can be what “continue / do it” adopts.
+	// It is evidence-bearing data, NEVER a trusted instruction or current user.
+	var proposal *auditUserUnit
+	if contextActivated && activeStart < len(collector.userUnits) {
+		for i := len(collector.assistantUnits) - 1; i >= 0; i-- {
+			if collector.assistantUnits[i].Position < collector.userUnits[activeStart].Position {
+				proposal = &collector.assistantUnits[i]
+				break
+			}
+		}
+	}
+	for index, unit := range collector.userUnits {
+		if _, active := selectedSet[index]; !active {
+			result.PriorUserContextBytes += len(unit.Text)
 			continue
 		}
+		if index == activeStart && proposal != nil {
+			appendUnit(*proposal, "ROLE=ASSISTANT_REFERENCED", true)
+		}
 		role := "ROLE=USER"
-		if contextActivated && index != selected[len(selected)-1] {
+		if index < activeStart {
 			role = "ROLE=USER_REFERENCED"
 		}
-		appendAuditLine(&builder, role, maximumBytes)
-		appendAuditLine(&builder, normalized, maximumBytes)
+		appendUnit(unit, role, index < activeStart)
 		result.ActiveUserMessages++
 	}
 	result.Text = builder.String()
@@ -127,6 +194,9 @@ func ExtractAuditTextDetails(body []byte, maximumBytes int) AuditTextExtraction 
 	result.IgnoredInputTypes = sortedSetKeys(collector.ignoredInputTypes)
 	if strings.TrimSpace(result.Text) == "" && result.IgnoredContextBytes > 0 {
 		result.Scope = auditInputScopeContextOnly
+	}
+	if strings.TrimSpace(result.Text) == "" {
+		result.addCoverageIssue("no_auditable_user_intent")
 	}
 	return result
 }
@@ -138,6 +208,11 @@ func (collector *auditTextCollector) collectRoot(value any) {
 	case []any:
 		collector.collectInput(typed)
 	case map[string]any:
+		if id, exists := typed["previous_response_id"]; exists && id != nil && id != "" {
+			// No provider response retrieval or trusted session binding exists
+			// in this gateway. A caller-supplied ID is not audited history.
+			collector.remoteContext = true
+		}
 		if messages, ok := typed["messages"]; ok {
 			collector.collectMessages(messages)
 			collector.ignoreKnownRootContext(typed, "messages")
@@ -150,14 +225,16 @@ func (collector *auditTextCollector) collectRoot(value any) {
 		}
 		for _, key := range []string{"prompt", "query"} {
 			if child, ok := typed[key]; ok {
-				collector.addUserUnit(eligibleText(child, collector.maximumBytes))
+				collector.unsupportedInput = collector.unsupportedInput || auditContainsUnsupportedContent(child)
+				collector.addUserUnit(eligibleText(child, collector.maximumBytes+1))
 				collector.ignoreKnownRootContext(typed, key)
 				return
 			}
 		}
 		for _, key := range []string{"content", "text"} {
 			if child, ok := typed[key]; ok {
-				collector.addUserUnit(eligibleText(child, collector.maximumBytes))
+				collector.unsupportedInput = collector.unsupportedInput || auditContainsUnsupportedContent(child)
+				collector.addUserUnit(eligibleText(child, collector.maximumBytes+1))
 				collector.ignoreKnownRootContext(typed, key)
 				return
 			}
@@ -215,7 +292,7 @@ func (collector *auditTextCollector) collectInput(value any) {
 				normalizedKind := strings.ToLower(strings.TrimSpace(kind))
 				switch normalizedKind {
 				case "input_text", "text":
-					collector.addUserUnitAt(eligibleText(child, collector.maximumBytes), collector.position)
+					collector.addUserUnitAt(eligibleText(child, collector.maximumBytes+1), collector.position)
 				case "message":
 					collector.collectRoleObject(child)
 				default:
@@ -233,7 +310,7 @@ func (collector *auditTextCollector) collectInput(value any) {
 		}
 		kind, _ := typed["type"].(string)
 		if normalized := strings.ToLower(strings.TrimSpace(kind)); normalized == "input_text" || normalized == "text" {
-			collector.addUserUnitAt(eligibleText(typed, collector.maximumBytes), collector.position)
+			collector.addUserUnitAt(eligibleText(typed, collector.maximumBytes+1), collector.position)
 			return
 		}
 		collector.ignoreInputType(strings.ToLower(strings.TrimSpace(kind)), typed)
@@ -251,6 +328,12 @@ func (collector *auditTextCollector) collectRoleObject(object map[string]any) {
 			collector.ignoreInputType(strings.ToLower(strings.TrimSpace(kind)), object)
 			return
 		}
+		if normalizedRole == "assistant" {
+			value := eligibleText(object, auditReferenceContextLimitBytes+1)
+			if value != "" {
+				collector.assistantUnits = append(collector.assistantUnits, auditUserUnit{Text: value, Position: collector.position, Truncated: len(value) > auditReferenceContextLimitBytes})
+			}
+		}
 		collector.ignoreContext(strings.ToUpper(normalizedRole), object)
 		return
 	}
@@ -260,7 +343,16 @@ func (collector *auditTextCollector) collectRoleObject(object map[string]any) {
 			content[key] = value
 		}
 	}
-	collector.addUserUnitAt(eligibleText(content, collector.maximumBytes), collector.position)
+	value := eligibleText(content, collector.maximumBytes+1)
+	unsupported := auditContainsUnsupportedContent(content)
+	if strings.TrimSpace(value) == "" && unsupported {
+		collector.userUnits = append(collector.userUnits, auditUserUnit{Position: collector.position, Unsupported: true})
+		return
+	}
+	collector.addUserUnitAt(value, collector.position)
+	if unsupported && len(collector.userUnits) > 0 {
+		collector.userUnits[len(collector.userUnits)-1].Unsupported = true
+	}
 }
 
 func (collector *auditTextCollector) addUserUnit(value string) {
@@ -273,12 +365,19 @@ func (collector *auditTextCollector) addUserUnitAt(value string, position int) {
 	if value == "" {
 		return
 	}
-	collector.userUnits = append(collector.userUnits, auditUserUnit{Text: value, Position: position})
+	truncated := len(value) > collector.maximumBytes
+	if truncated {
+		value = strings.ToValidUTF8(value[:collector.maximumBytes], "")
+	}
+	collector.userUnits = append(collector.userUnits, auditUserUnit{Text: value, Position: position, Truncated: truncated})
 }
 
 func (collector *auditTextCollector) ignoreInputType(kind string, value any) {
 	if kind == "" {
 		kind = "unknown_input_type"
+	}
+	if isIgnoredContentType(kind) || !isNonUserInputType(kind) {
+		collector.unsupportedInput = true
 	}
 	collector.ignoredInputTypes[strings.ToUpper(kind)] = struct{}{}
 	collector.ignoreContext("INPUT_"+strings.ToUpper(kind), value)
@@ -303,15 +402,20 @@ func selectActiveAuditUnits(units []auditUserUnit) ([]int, bool) {
 		selected[index] = struct{}{}
 	}
 	contextActivated := false
-	lastText := strings.TrimSpace(units[last].Text)
-	if needsPriorUserContext(lastText) {
-		contextActivated = true
-		bytes := len(lastText)
-		added := 0
-		for index := last - 1; index >= 0 && added < 2 && bytes < auditReferenceContextLimitBytes; index-- {
+	for index := range selected {
+		contextActivated = contextActivated || needsPriorUserContext(strings.TrimSpace(units[index].Text))
+	}
+	if contextActivated {
+		bytes := 0
+		for index := last - 1; index >= 0; index-- {
+			if _, active := selected[index]; active {
+				continue
+			}
+			if bytes+len(units[index].Text) > auditReferenceContextLimitBytes {
+				break
+			}
 			selected[index] = struct{}{}
 			bytes += len(units[index].Text)
-			added++
 		}
 	}
 	indices := make([]int, 0, len(selected))
@@ -323,7 +427,15 @@ func selectActiveAuditUnits(units []auditUserUnit) ([]int, bool) {
 }
 
 func needsPriorUserContext(text string) bool {
-	if text == "" || newTopicPattern.MatchString(text) {
+	if text == "" {
+		return false
+	}
+	// A reset phrase is not a trusted boundary: a subsequent adoption request
+	// still needs its operational context.
+	if naturalContinuationPattern.MatchString(text) || executionFollowupPattern.MatchString(text) {
+		return true
+	}
+	if newTopicPattern.MatchString(text) {
 		return false
 	}
 	if referentialIntentPattern.MatchString(text) {
@@ -384,7 +496,7 @@ func appendAuditLine(builder *strings.Builder, value string, maximumBytes int) {
 		return
 	}
 	if len(value) > remaining {
-		value = strings.ToValidUTF8(value[:remaining], "�")
+		value = strings.ToValidUTF8(value[:remaining], "")
 	}
 	if builder.Len() > 0 {
 		builder.WriteByte('\n')

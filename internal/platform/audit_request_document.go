@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -115,7 +116,26 @@ type auditSourceScopeKey struct{}
 type auditChunkOffsetsKey struct{}
 
 func makeAuditSourceScope(text string) auditSourceScope {
-	scope := auditSourceScope{Text: text, References: auditReferenceSpans(text)}
+	return makeAuditSourceScopeWithReferences(text, nil)
+}
+
+func makeAuditSourceScopeWithReferences(text string, extra []auditReferenceSpan) auditSourceScope {
+	spans := append(auditReferenceSpans(text), extra...)
+	sort.Slice(spans, func(i, j int) bool { return spans[i].Start < spans[j].Start })
+	merged := make([]auditReferenceSpan, 0, len(spans))
+	for _, span := range spans {
+		if span.Start < 0 || span.End > len(text) || span.Start >= span.End {
+			continue
+		}
+		if len(merged) > 0 && span.Start <= merged[len(merged)-1].End {
+			if span.End > merged[len(merged)-1].End {
+				merged[len(merged)-1].End = span.End
+			}
+			continue
+		}
+		merged = append(merged, span)
+	}
+	scope := auditSourceScope{Text: text, References: merged}
 	if len(scope.References) == 0 {
 		return scope
 	}

@@ -162,13 +162,13 @@ func (s *Store) Bootstrap(ctx context.Context, cfg Config, security *Security) e
 			"SELECT EXISTS(SELECT 1 FROM audit_profiles WHERE is_default=TRUE)").Scan(&defaultExists); err != nil {
 			return err
 		}
-		defaultExtra := json.RawMessage(`{"_risk_policy_mode":"internal_engineering","_risk_allow_user_provided_secrets":true,"_risk_allow_local_debug_credentials":true}`)
+		defaultExtra := json.RawMessage(`{"_risk_policy_mode":"cyber_deny","_risk_allow_user_provided_secrets":false,"_risk_allow_local_debug_credentials":false}`)
 		_, err = s.pool.Exec(ctx, `INSERT INTO audit_profiles
 			(name,endpoint,model,api_key_ciphertext,system_prompt,timeout_ms,block_threshold,enabled,fail_closed,is_default,extra)
 			VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,TRUE,$8,$9)
 			ON CONFLICT(name) DO NOTHING`,
 			"Default small-model audit", cfg.DefaultAuditEndpoint, cfg.DefaultAuditModel, ciphertext,
-			DefaultAuditSystemPrompt, int(cfg.DefaultAuditTimeout.Milliseconds()),
+			CyberDenyAuditSystemPrompt, int(cfg.DefaultAuditTimeout.Milliseconds()),
 			cfg.DefaultAuditBlockThreshold, !defaultExists, defaultExtra)
 		if err != nil {
 			return fmt.Errorf("bootstrap audit profile: %w", err)
@@ -225,6 +225,7 @@ func (s *Store) ListRoutes(ctx context.Context) ([]Route, error) {
 }
 
 func (s *Store) SaveRoute(ctx context.Context, input RouteInput, security *Security) (Route, error) {
+	input.FailClosed = true // Cyber deny policy is fail-closed, including legacy API clients.
 	if input.RequestTimeoutMS == 0 {
 		input.RequestTimeoutMS = 120000
 	}
@@ -356,6 +357,12 @@ func (s *Store) SaveAuditProfile(ctx context.Context, input AuditProfileInput, s
 	if !json.Valid(input.Extra) {
 		return AuditProfile{}, errors.New("extra must be valid JSON")
 	}
+	input.FailClosed = true
+	p := cyberDenyProfile(AuditProfile{Extra: input.Extra})
+	input.Extra = p.Extra
+	// Preserve stored custom text for diagnosis; the execution path always uses
+	// the fixed Cyber policy, never historical permissive prompt templates.
+
 	var ciphertext []byte
 	if input.ID > 0 {
 		existing, err := s.GetAuditProfile(ctx, &input.ID)

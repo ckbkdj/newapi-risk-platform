@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestFusionPanelConsensusDisagreementAndFreshAdjudication(t *testing.T) {
+func TestFusionStrictDenyOverridesIncludingAdjudicator(t *testing.T) {
 	const text = "检查工作流状态"
 	for _, tc := range []struct {
 		name                    string
@@ -19,12 +19,12 @@ func TestFusionPanelConsensusDisagreementAndFreshAdjudication(t *testing.T) {
 		decision, status, class string
 		calls                   int32
 	}{
-		{"consensus-allow", map[string]string{"v2": "allow", "v3": "allow"}, false, "allow", "consensus", "", 3},
-		{"consensus-block", map[string]string{"v2": "block", "v3": "block"}, false, "block", "consensus", "", 3},
-		{"disagree-review", map[string]string{"v2": "allow", "v3": "block"}, false, "block", "unresolved", "", 3},
-		{"adjudicated-allow", map[string]string{"v2": "allow", "v3": "block", "v4": "allow"}, true, "allow", "adjudicated", "", 4},
-		{"adjudicated-block", map[string]string{"v2": "allow", "v3": "block", "v4": "block"}, true, "block", "adjudicated", "", 4},
-		{"invalid-vote", map[string]string{"v2": "allow", "v3": "invalid"}, false, "block", "error", "fusion_incomplete", 4},
+		{"consensus-allow", map[string]string{"v2": "allow", "v3": "allow"}, false, "allow", "all_allow", "", 3},
+		{"consensus-block", map[string]string{"v2": "block", "v3": "block"}, false, "block", "deny_override", "", 2},
+		{"disagree-review", map[string]string{"v2": "allow", "v3": "block"}, false, "block", "deny_override", "", 3},
+		{"adjudicated-allow", map[string]string{"v2": "allow", "v3": "block", "v4": "allow"}, true, "block", "deny_override", "", 3},
+		{"adjudicated-block", map[string]string{"v2": "allow", "v3": "block", "v4": "block"}, true, "block", "deny_override", "", 3},
+		{"invalid-vote", map[string]string{"v2": "allow", "v3": "invalid"}, false, "block", "error", "fusion_incomplete", 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -36,7 +36,7 @@ func TestFusionPanelConsensusDisagreementAndFreshAdjudication(t *testing.T) {
 				}
 				model := payload["model"].(string)
 				if !isSemanticPayload(payload) {
-					return incidentHTTP(200, incidentDecision(DecisionBlock, text)), nil
+					return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 				}
 				kind := tc.votes[model]
 				switch kind {
@@ -68,8 +68,8 @@ func TestFusionPanelConsensusDisagreementAndFreshAdjudication(t *testing.T) {
 			if len(result.AuditSemanticReviews) != 1 || result.AuditSemanticReviews[0].Fusion.Status != tc.status {
 				t.Fatalf("missing fusion trace: %+v", result)
 			}
-			if tc.name == "disagree-review" && result.Category != "audit_uncertainty" {
-				t.Fatal("disagreement labelled as proven harm")
+			if tc.arbiter && calls.Load() > 3 {
+				t.Fatal("arbiter was allowed to override a denial")
 			}
 		})
 	}
