@@ -31,10 +31,10 @@ ROOT = Path(__file__).resolve().parents[1]
 LIMIT = 8 * 1024 * 1024
 HEX = re.compile(r"^[a-f0-9]{7,64}$")
 DECISIONS = {"allow", "review", "block"}
-CONTRACTS = {"risk_audit_request.v2", "risk_audit_output.v2", "output-resilience-fusion.v1", "intent-coverage-guard.v2", "cyber-deny-qwen27b.v4", "cyber-deny-qwen27b.v5", "cyber-deny-qwen27b.v6"}
+CONTRACTS = {"risk_audit_request.v2", "risk_audit_output.v2", "output-resilience-fusion.v1", "intent-coverage-guard.v2", "cyber-deny-qwen27b.v4", "cyber-deny-qwen27b.v5", "cyber-deny-qwen27b.v6", "cyber-deny-qwen27b.v7"}
 LABELS = {"high", "medium", "low", "numeric", "numeric_string", "qualitative"}
 COVERAGE_ISSUES = {"ambiguous_input_fields", "unsupported_role", "input_structure_depth", "invalid_request_json", "reference_context_limit", "unsupported_input_content", "missing_continuation_context", "unresolved_previous_response", "input_text_truncated", "no_auditable_user_intent"}
-ERRORS = {"cyber_evidence_unresolved", "cyber_operation_unresolved", "non_operational_evidence", "cyber_output_conflict", "audit_uncertain_allow", "input_coverage", "invalid_json", "invalid_schema", "invalid_evidence", "invalid_semantic_evidence", "ambiguous_output", "timeout", "connection", "response_read", "response_format", "response_too_large", "output_limits", "output_truncated", "empty_response", "invalid_decision", "structured_output_unsupported", "context_length", "input_too_large", "authentication", "endpoint_or_model_not_found", "rate_limited", "audit_server_error", "http_status", "fusion_incomplete", "fusion_configuration", "fusion_profile_unavailable", "semantic_review_budget", "semantic_verifier_configuration", "semantic_verifier_unavailable", "retry_budget_exhausted", "unknown"}
+ERRORS = {"audit_http_budget", "cyber_evidence_unresolved", "cyber_operation_unresolved", "non_operational_evidence", "cyber_output_conflict", "audit_uncertain_allow", "input_coverage", "invalid_json", "invalid_schema", "invalid_evidence", "invalid_semantic_evidence", "ambiguous_output", "timeout", "connection", "response_read", "response_format", "response_too_large", "output_limits", "output_truncated", "empty_response", "invalid_decision", "structured_output_unsupported", "context_length", "input_too_large", "authentication", "endpoint_or_model_not_found", "rate_limited", "audit_server_error", "http_status", "fusion_incomplete", "fusion_configuration", "fusion_profile_unavailable", "semantic_review_budget", "semantic_verifier_configuration", "semantic_verifier_unavailable", "retry_budget_exhausted", "unknown"}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -106,7 +106,7 @@ def output_shape(raw):
 def trace_view(obj, depth=0):
     if not isinstance(obj, dict) or depth > 6:
         return {}
-    numeric = ("audit_conversation_reference_count", "audit_embedded_reference_count", "audit_profile_id", "profile_id", "attempt", "audit_http_calls", "audit_semantic_review_calls", "audit_model_attempts", "audit_model_retries", "audit_chunk_count", "audit_chunk_bytes", "audit_intent_bytes", "audit_input_tokens", "audit_context_window_tokens", "output_max_tokens", "response_content_bytes", "http_status", "audit_output_max_tokens", "timeline_duration_ms", "audit_latency_ms", "text_bytes")
+    numeric = ("audit_conversation_reference_count", "audit_embedded_reference_count", "audit_profile_id", "profile_id", "attempt", "audit_http_calls", "audit_http_budget", "audit_review_budget", "audit_semantic_review_calls", "audit_model_attempts", "audit_model_retries", "audit_chunk_count", "audit_chunks_completed", "audit_chunk_bytes", "audit_intent_bytes", "audit_input_tokens", "audit_context_window_tokens", "output_max_tokens", "response_content_bytes", "http_status", "audit_output_max_tokens", "timeline_duration_ms", "audit_latency_ms", "text_bytes")
     out = select(obj, numeric, ("success", "upstream_started", "audit_completed", "audit_decision_finalized", "audit_decision_adjusted", "audit_model_evidence_verified", "disagreement"), {
         "decision": DECISIONS, "audit_effective_decision": DECISIONS, "audit_model_decision": DECISIONS,
         "error_class": ERRORS, "audit_error_class": ERRORS, "candidate_error": ERRORS,

@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 )
 
 const auditChunkRetryLimit = 4
 
+type auditChunkProgressKey struct{}
+
 type auditCallMetadata struct {
+	ChunksCompleted           int
 	Mode                      string
 	ChunkCount                int
 	ChunkBytes                int
@@ -56,6 +60,9 @@ func (e *AuditEngine) callModel(
 		chunkBytes = cyberDenyChunkBytes
 	} else {
 		decision, err := e.callModelOnce(ctx, profile, text)
+		if err == nil {
+			metadata.ChunksCompleted = 1
+		}
 		if err == nil || !isAuditContextLengthError(err) {
 			return decision, metadata, err
 		}
@@ -86,7 +93,13 @@ func (e *AuditEngine) callModel(
 			)
 		}
 
-		decision, chunkErr := e.callModelChunks(context.WithValue(ctx, auditChunkOffsetsKey{}, offsets), profile, chunks)
+		if state, ok := ctx.Value(auditSemanticStateKey{}).(*auditSemanticState); ok && cyberDenyActive(ctx) {
+			state.configureChunkBudget(len(chunks))
+		}
+		progress := &atomic.Int32{}
+		chunkCtx := context.WithValue(ctx, auditChunkProgressKey{}, progress)
+		decision, chunkErr := e.callModelChunks(context.WithValue(chunkCtx, auditChunkOffsetsKey{}, offsets), profile, chunks)
+		metadata.ChunksCompleted = int(progress.Load())
 		if chunkErr == nil {
 			return decision, metadata, nil
 		}
@@ -171,7 +184,9 @@ func (e *AuditEngine) callModelChunks(
 	scopes := auditChunkSourceScopes(parent, chunks, offsets...)
 	if len(chunks) == 1 {
 		ctx = context.WithValue(ctx, auditSourceScopeKey{}, scopes[0])
-		return e.callModelOnceWithEvidenceSource(ctx, profile, decorateAuditChunk(chunks[0], 0, 1), chunks[0])
+		d, err := e.callModelOnceWithEvidenceSource(ctx, profile, decorateAuditChunk(chunks[0], 0, 1), chunks[0])
+		recordAuditChunkCompletion(ctx, d, err)
+		return d, err
 	}
 
 	workerCount := e.chunkConcurrency
@@ -234,6 +249,7 @@ func (e *AuditEngine) callModelChunks(
 	completed := 0
 
 	for result := range results {
+		recordAuditChunkCompletion(ctx, result.decision, result.err)
 		completed++
 		if result.err != nil {
 			if firstBlock == nil && firstError == nil {
@@ -382,4 +398,14 @@ func splitAuditTextWithOffsets(text string, maxBytes int, overlapBytes int) ([]s
 		start = next
 	}
 	return chunks, offsets
+}
+
+// Count completed decisions, not canceled or failed physical calls.
+func recordAuditChunkCompletion(ctx context.Context, d AuditDecision, err error) {
+	if err != nil || (d.Decision != DecisionAllow && d.Decision != DecisionBlock && d.Decision != DecisionReview) {
+		return
+	}
+	if progress, ok := ctx.Value(auditChunkProgressKey{}).(*atomic.Int32); ok {
+		progress.Add(1)
+	}
 }

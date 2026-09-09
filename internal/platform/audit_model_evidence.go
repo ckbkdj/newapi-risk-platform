@@ -21,6 +21,7 @@ const (
 // request. The stored quote and context are always redacted.
 func validateAuditDecisionEvidence(decision AuditDecision, sourceText string) (AuditDecision, error) {
 	if decision.Decision == DecisionAllow {
+		decision.evidenceSourceMatched = false
 		decision.Evidence = ""
 		decision.EvidenceContext = ""
 		decision.EvidenceVerified = false
@@ -80,6 +81,8 @@ func validateAuditDecisionEvidence(decision AuditDecision, sourceText string) (A
 	if len(candidate) > auditModelEvidenceMaxBytes || utf8.RuneCountInString(candidate) > auditModelEvidenceMaxRunes {
 		decision.OutputNormalizations = append(decision.OutputNormalizations, "long_evidence_fully_verified")
 	}
+	decision.evidenceSourceMatched = true
+	decision.evidenceSourceStart, decision.evidenceSourceEnd = start, end
 	decision.Evidence = redactCyberTraceText(sourceText[start:end])
 	decision.EvidenceContext = cyberRuleContext(sourceText, start, end)
 	decision.EvidenceVerified = true
