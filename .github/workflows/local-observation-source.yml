@@ -1,0 +1,21 @@
+name: Local observation source snapshot
+on:
+  push:
+    branches: [fix/local-observation-credential-grammar-20260909]
+    paths: [.github/workflows/local-observation-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: git archive HEAD -o "$RUNNER_TEMP/local-observation-source.tar"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-observation-source
+          path: ${{ runner.temp }}/local-observation-source.tar
+          retention-days: 1
