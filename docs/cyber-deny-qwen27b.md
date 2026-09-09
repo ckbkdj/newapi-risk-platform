@@ -1,6 +1,6 @@
 # Cyber 禁用策略与 Qwen3.8-27B 审计规范
 
-版本：`cyber-deny-qwen27b.v5`。本文取代旧“内部工程豁免 / 候选可被复核推翻”的运行策略。数据库变更为 migration 009；仍保留现有 HTTP 555、`risk_audit_request.v2` 和 `risk_audit_output.v2` 接口。
+版本：`cyber-deny-qwen27b.v6`。本文取代旧“内部工程豁免 / 候选可被复核推翻”的运行策略。数据库变更为 migration 009；仍保留现有 HTTP 555、`risk_audit_request.v2` 和 `risk_audit_output.v2` 接口。
 
 ## 1. 决策规则（代码强制，不交给模型协商）
 
@@ -65,7 +65,7 @@ unset RISK_ADMIN_TOKEN
 
 使用合成样本，输出只保留 case ID、判定、来源/模型/构建、调用数和耗时，不打印原文或 token。分别统计规则阻断和模型审计；没有模型调用的样本不能算作模型能力验证。基础准入：禁止样本不能 allow，普通对照不能误阻，不能把基础设施失败算作正确分类。再补充真实脱敏事故、长文本关键句在首/中/尾、多轮续写、引号/否定/测试包装、中英文混合，记录漏拦/误拦/故障率与P95延迟。固定实际权重版本、量化、vLLM镜像/模板、配置、请求样本和网关commit，才能可重复比较。生产Qwen/GPU并发未执行时必须写“未实测”，不能许诺零错误。
 
-升级仍走项目既有 `scripts/upgrade.sh` 流程，不删除数据库卷。确认新请求 `/healthz` 与 `gateway_build.audit_engine=cyber-deny-qwen27b.v5`、commit均为实际运行版本，并检查所有副本。先预发布验收；合并代码不等于容器已经升级。
+升级仍走项目既有 `scripts/upgrade.sh` 流程，不删除数据库卷。确认新请求 `/healthz` 与 `gateway_build.audit_engine=cyber-deny-qwen27b.v6`、commit均为实际运行版本，并检查所有副本。先预发布验收；合并代码不等于容器已经升级。
 
 ## 5. 官方资料边界
 
@@ -83,3 +83,7 @@ unset RISK_ADMIN_TOKEN
 - 附件仅为事故判定日志，不是完整原始请求。本次用脱敏结构/操作对照和确定性故障模型回归；没有连接生产Qwen或实测漏报/误报率。一次新调用不是独立专家共识，有限形态识别也不能保证全部误判可恢复。
 
 真实模型回放可用 `tests/fixtures/audit-accuracy-eval.jsonl`（16条正常/禁用对照），命令同第4节。必须把审计故障从正确分类统计中分离；包含每一条本机生产历史的效果需另行实测。
+
+## 7. v6 本机状态查看与凭据动作语法
+
+本机现有连接/监听/PID的被动查看不等于主动探测；不再以netstat、ss或“查看本机端口”作为独立阻断依据。主动扫描、凭据实际读取和混合禁用任务仍保持555。read-only guidance不代表read only the API key，英文默认规则要求动词作用于凭据对象；migration010只迁移仍等于原种子模式的规则，不覆盖人工配置。已知被动状态/不需要密钥说明的模型引用可以进入既有有界证据校核，但不直接放行。详见 `local-observation-credential-precision-20260909.md`；机制回归不等于实际Qwen准确率。

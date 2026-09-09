@@ -125,13 +125,15 @@ func shouldReviewCredentialSelfService(rule CyberRule, text string) (bool, strin
 func cyberRuleUserGuidance(rule CyberRule) string {
 	switch rule.Category {
 	case "credential_access", "credential_theft":
-		return "如果是在处理自己的密钥、Token 或密码，请明确描述检查泄露、定位本人凭据、轮换、撤销、脱敏、恢复或安全存储目的；不要请求获取、导出或接管他人凭据。"
+		return "本平台禁用实际读取、提取或导出凭据；授权、本人密钥和调试用途不构成豁免。只读文档或不需要密钥的说明不应被当成凭据读取，请核对实际动作与命中证据。"
 	case "malware", "command_and_control", "persistence":
 		return "如果目的是防御或分析，请改为描述样本分析、IOC 提取、检测、隔离、清理、修复或阻断目标，不要要求生成、部署或维持恶意载荷。"
 	case "defense_evasion":
 		return "如果是在做兼容性或防御测试，请描述检测反调试/防护兼容问题、日志分析或修复目标，不要要求关闭、绕过或规避真实安全控制。"
 	case "execution", "privilege_escalation":
 		return "如果是在排障或授权测试，请描述漏洞验证、修复、缓解和最小复现范围，避免要求面向真实目标的可直接利用或提权能力。"
+	case "local_probing":
+		return "本机现有连接、监听端口与 PID 的只读查看不等于主动扫描；主动探测、攻击侦察及混合禁用操作仍拒绝。请核对命中的是实际操作，还是命令名与资料说明。"
 	case "reconnaissance":
 		return "如果是资产管理或防御扫描，请明确说明自有资产、资产盘点、暴露面检查或漏洞修复目标，并限制在必要的验证范围。"
 	case "exfiltration":

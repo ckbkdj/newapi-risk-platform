@@ -21,6 +21,13 @@ func mockAccuracyVerification(w http.ResponseWriter, request chatRequest) bool {
 	}
 	evidence := ""
 	if !grounding && strings.Contains(control, "CYBER DENY SECOND PASS") {
+		if strings.Contains(text, "local-observation-mechanism") {
+			if strings.Contains(text, "read-only guidance do not require an API key") {
+				evidence = "read-only guidance do not require an API key"
+			} else if strings.Contains(text, "netstat") {
+				evidence = "netstat"
+			}
+		}
 		for _, line := range strings.Split(text, "\n") {
 			if strings.HasPrefix(line, "rg ") {
 				evidence = line
