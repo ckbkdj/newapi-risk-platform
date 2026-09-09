@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -62,18 +63,18 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 			out.ReferenceSpans = append(out.ReferenceSpans, auditReferenceSpan{Start: start, End: b.Len(), Kind: "untrusted_conversation_data"})
 		}
 	}
-	var collect func(any, string, int)
-	collect = func(v any, role string, depth int) {
+	var collect func(any, string, string, int)
+	collect = func(v any, role, path string, depth int) {
 		if depth > 32 {
-			out.addCoverageIssue("input_structure_depth")
+			out.coverageProblem("input_structure_depth", path, "unknown", role)
 			return
 		}
 		switch x := v.(type) {
 		case string:
 			appendText(role, x, role != "USER")
 		case []any:
-			for _, item := range x {
-				collect(item, role, depth+1)
+			for index, item := range x {
+				collect(item, role, path+"["+strconv.Itoa(index)+"]", depth+1)
 			}
 		case map[string]any:
 			kind, _ := x["type"].(string)
@@ -93,7 +94,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 					out.IgnoredContextBytes += countContextTextBytes(x, "")
 					return
 				default:
-					out.addCoverageIssue("unsupported_role")
+					out.coverageProblem("unsupported_role", path, kind, "unknown")
 					return
 				}
 			}
@@ -106,7 +107,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 				role = "TOOL_DATA"
 			case "", "message", "input_text", "text", "output_text":
 			default:
-				out.addCoverageIssue("unsupported_input_content")
+				out.coverageProblem("unsupported_input_content", path, kind, role)
 				return
 			}
 			found := false
@@ -119,22 +120,22 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 						} else {
 							data, err := json.Marshal(child)
 							if err != nil {
-								out.addCoverageIssue("unsupported_input_content")
+								out.coverageProblem("unsupported_input_content", path, kind, role)
 							} else {
 								appendText(role, string(data), true)
 							}
 						}
 					} else {
-						collect(child, role, depth+1)
+						collect(child, role, path+"."+key, depth+1)
 					}
 				}
 			}
 			if !found {
-				out.addCoverageIssue("unsupported_input_content")
+				out.coverageProblem("unsupported_input_content", path, kind, role)
 			}
 		case nil:
 		default:
-			out.addCoverageIssue("unsupported_input_content")
+			out.coverageProblem("unsupported_input_content", path, "unknown", role)
 		}
 	}
 	if obj, ok := root.(map[string]any); ok {
@@ -157,7 +158,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 				continue
 			}
 			n++
-			collect(v, "USER", 0)
+			collect(v, "USER", "$."+key, 0)
 		}
 		if n > 1 {
 			out.addCoverageIssue("ambiguous_input_fields")
@@ -169,7 +170,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 			}
 		}
 	} else {
-		collect(root, "USER", 0)
+		collect(root, "USER", "$", 0)
 	}
 	out.ContextActivated = out.ActiveUserMessages > 1 || len(out.ReferenceSpans) > 0
 	out.Text = b.String()

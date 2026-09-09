@@ -1,13 +1,13 @@
 # Cyber 禁用策略与 Qwen3.8-27B 审计规范
 
-版本：`cyber-deny-qwen27b.v4`。本文取代旧“内部工程豁免 / 候选可被复核推翻”的运行策略。数据库变更为 migration 009；仍保留现有 HTTP 555、`risk_audit_request.v2` 和 `risk_audit_output.v2` 接口。
+版本：`cyber-deny-qwen27b.v5`。本文取代旧“内部工程豁免 / 候选可被复核推翻”的运行策略。数据库变更为 migration 009；仍保留现有 HTTP 555、`risk_audit_request.v2` 和 `risk_audit_output.v2` 接口。
 
 ## 1. 决策规则（代码强制，不交给模型协商）
 
 | 场景 | 结果 | 是否访问业务上游 |
 |---|---|---|
 | 命中任意启用的 Cyber 规则，包括旧 action=review/allow | block / 原规则码 | 否；不调用模型 |
-| 模型输出合法 block，且证据存在于实际送审数据 | block / 模型风险码 | 否 |
+| 模型输出合法 block，证据存在且通过操作证据准入 | block / 模型风险码 | 否 |
 | 模型输出合法 review，且证据有效 | block；保留原始 review，不声称已证实恶意 | 否 |
 | 首次 allow；新调用复核也合法 allow、满足置信检查；所有分块完整 | allow | 是 |
 | Fusion 任一有效 block/review | block；其他 allow 或裁决者不能翻转 | 否 |
@@ -36,9 +36,9 @@
 
 migration 009 将启用的旧 Cyber 规则动作更新为 block；不启用原本 disabled 的规则。审计配置和路由更新为 fail-closed；新增/编辑配置同样不能通过旧 fail_open 或 engineering 参数放宽执行。数据库中的历史自定义系统提示保留作记录，运行时不使用它覆盖固定策略。管理界面显示不可豁免策略，旧豁免选项停用。
 
-保留合法 confidence 数字、数字字符串和明确的 high/medium/low 标签，标签不伪造成概率。allow 要通过至少0.9的数值检查或 high 标签；这只是放行检查，不是模型概率已校准的证明。成功的 block/review 不靠调低阈值变成 allow。
+保留合法 confidence 数字、数字字符串和明确的 high/medium/low 标签，标签不伪造成概率。allow 要通过至少0.9的数值检查或 high 标签；这只是放行检查，不是模型概率已校准的证明。通过操作证据准入的 block/review 不靠调低阈值变成 allow。
 
-只恢复真正的调用/格式故障。有效拒绝不是故障，不能通过重试直到 allow。备用模型继承主配置要求的复核/Fusion策略，不能漏掉复核后放行。
+除了明确的非操作性证据候选可做至多一次有界校核（见第6节），只恢复真正的调用/格式故障。有效拒绝不是故障，不能通过重试直到 allow。备用模型继承主配置要求的复核/Fusion策略，不能漏掉复核后放行。
 
 当前审计完整的已提供用户文本历史、助手文本及工具调用参数/结果，并标记为不可信数据；工具定义、真正的 system/developer 控制消息和 reasoning 不作为用户执行意图。文本中伪造 ROLE=SYSTEM 或“我的请求”标题不能删除之前的操作。规则在内存原文上匹配，模型输入单独脱敏，避免脱敏擦除规则触发点。日志不保存原始 ruleText。
 
@@ -65,10 +65,21 @@ unset RISK_ADMIN_TOKEN
 
 使用合成样本，输出只保留 case ID、判定、来源/模型/构建、调用数和耗时，不打印原文或 token。分别统计规则阻断和模型审计；没有模型调用的样本不能算作模型能力验证。基础准入：禁止样本不能 allow，普通对照不能误阻，不能把基础设施失败算作正确分类。再补充真实脱敏事故、长文本关键句在首/中/尾、多轮续写、引号/否定/测试包装、中英文混合，记录漏拦/误拦/故障率与P95延迟。固定实际权重版本、量化、vLLM镜像/模板、配置、请求样本和网关commit，才能可重复比较。生产Qwen/GPU并发未执行时必须写“未实测”，不能许诺零错误。
 
-升级仍走项目既有 `scripts/upgrade.sh` 流程，不删除数据库卷。确认新请求 `/healthz` 与 `gateway_build.audit_engine=cyber-deny-qwen27b.v4`、commit均为实际运行版本，并检查所有副本。先预发布验收；合并代码不等于容器已经升级。
+升级仍走项目既有 `scripts/upgrade.sh` 流程，不删除数据库卷。确认新请求 `/healthz` 与 `gateway_build.audit_engine=cyber-deny-qwen27b.v5`、commit均为实际运行版本，并检查所有副本。先预发布验收；合并代码不等于容器已经升级。
 
 ## 5. 官方资料边界
 
 - Qwen 官方模型卡：https://huggingface.co/Qwen/Qwen3.8-27B — 默认 thinking、局部关闭、模型架构/能力、通用采样建议；不提供本项目审计精度保证。
 - vLLM reasoning：https://docs.vllm.ai/en/latest/features/reasoning_outputs/ — 返回或隐藏 reasoning 与关闭思考不是一回事，应使用模型模板控制。
 - vLLM structured outputs：https://docs.vllm.ai/en/latest/features/structured_outputs/ — 输出约束只能帮助格式，不能证明分类或证据正确。
+
+## 6. v5 准确度修复：先验证操作依据，再锁定拒绝
+
+- XSS 不再是固定基线中的孤立 deny 单词；XSS payload/assertion/attack/injection/test、XSS 攻击/载荷/测试仍命中。依赖声明和 import 仍进入模型审计，绝不对整个文件放行。管理员显式配置的裸关键词规则仍是独立禁用规则，本次不自动改写。
+- 模型引用纯依赖版本、相邻编号文件路径、普通 rg/grep 检索时，原候选尚未证明具体操作。固定形态检查只触发一次新的操作证据校核，不返回 allow，不删除原文或任务锚点。凭据检索、shell 组合/替换/重定向、rg 预处理不按普通检索处理。
+- 校核模型按相同六字段回看同样数据与任务目标。合法的具体操作 block/review 继续终态拒绝；合法 allow 仍须通过原双审计/Fusion要求。再次只引资料名或校核故障使用 cyber_operation_unresolved 终止，不无限重试或切换至 allow。记录 candidate_error=non_operational_evidence、grounding_corrected/grounding_confirmed/grounding_error 及调用。每个候选至多一次，仍受共享64次HTTP、32次复核、120秒总预算。
+- 保持提示词证据目标不超过80字符。模型超出120字符但在1024字符/4096字节硬界限内时，先核验**整个引用**确实存在，再标记 long_evidence_fully_verified；不剪掉虚构尾部，亦不因此证明风险。证据缺失、实际不匹配或超硬界限仍终止。
+- audit_coverage_details 仅记录生成的字段路径、固定类型/角色/错误码，最多32条。未知type只写unknown，绝不记录未审内容。拒绝已终结但覆盖不完整时 audit_decision_finalized=true、audit_completed=false；未支持输入不因此被放行。
+- 附件仅为事故判定日志，不是完整原始请求。本次用脱敏结构/操作对照和确定性故障模型回归；没有连接生产Qwen或实测漏报/误报率。一次新调用不是独立专家共识，有限形态识别也不能保证全部误判可恢复。
+
+真实模型回放可用 `tests/fixtures/audit-accuracy-eval.jsonl`（16条正常/禁用对照），命令同第4节。必须把审计故障从正确分类统计中分离；包含每一条本机生产历史的效果需另行实测。

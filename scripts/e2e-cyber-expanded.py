@@ -61,7 +61,7 @@ for name, payload, expected in cases:
     assert status == expected, (name, status, response)
     meta = trace_for(request_id)['metadata']
     assert meta['audit_policy_mode'] == 'cyber_deny', meta
-    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v4', meta
+    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v5', meta
     if expected == 555:
         assert meta['upstream_started'] is False, meta
         assert meta['audit_source'] == 'rule' and meta['audit_http_calls'] == 0, meta
@@ -127,3 +127,9 @@ meta = trace_for(request_id)['metadata']
 assert meta['audit_http_calls'] == 2 and meta['upstream_started'] is True, meta
 assert meta['audit_completed'] is True and meta['audit_coverage_status'] == 'complete', meta
 print('Responses output configuration: 5 JSON pass cases, Cyber/ambiguity/image guards, and SSE forwarding passed')
+
+# Run accuracy pairs after the original protocol/deny checks, without weakening them.
+import subprocess
+import sys
+from pathlib import Path
+subprocess.run([sys.executable, str(Path(__file__).with_name('e2e-audit-accuracy.py'))], check=True)

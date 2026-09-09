@@ -78,3 +78,30 @@ func auditIncompleteInputDecision(failClosed bool, issues []string) AuditDecisio
 	// An explicitly configured fail-open is not a successful safety assessment.
 	return AuditDecision{Decision: DecisionAllow, Category: "audit_infrastructure", Reason: reason, Source: "fail_open"}
 }
+
+// Only parser-generated paths and allowlisted type/role labels are exposed.
+// Unknown types can contain arbitrary private text, so their value is not logged.
+type AuditCoverageDetail struct {
+	Code        string `json:"code"`
+	Path        string `json:"path"`
+	ContentType string `json:"type"`
+	Role        string `json:"role"`
+}
+
+func (r *AuditTextExtraction) coverageProblem(code, path, kind, role string) {
+	r.addCoverageIssue(code)
+	if len(r.CoverageDetails) >= 32 {
+		return
+	}
+	switch kind {
+	case "input_image", "image_url", "input_audio", "audio", "output_audio", "video", "input_file", "file", "item_reference", "refusal", "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output", "tool_search_call", "tool_search_output", "message", "input_text", "text", "output_text":
+	default:
+		kind = "unknown"
+	}
+	switch role {
+	case "USER", "ASSISTANT_DATA", "TOOL_DATA":
+	default:
+		role = "unknown"
+	}
+	r.CoverageDetails = append(r.CoverageDetails, AuditCoverageDetail{Code: code, Path: path, ContentType: kind, Role: role})
+}

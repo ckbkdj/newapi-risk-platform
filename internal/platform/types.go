@@ -158,6 +158,7 @@ type AuditResult struct {
 	AuditConversationReferenceCount int                   `json:"audit_conversation_reference_count"`
 	AuditCoverageStatus             string                `json:"audit_coverage_status"`
 	AuditCoverageIssues             []string              `json:"audit_coverage_issues,omitempty"`
+	AuditCoverageDetails            []AuditCoverageDetail `json:"audit_coverage_details,omitempty"`
 	AuditOutputContract             string                `json:"audit_output_contract"`
 	GatewayBuild                    BuildInformation      `json:"gateway_build"`
 	AuditInputContract              string                `json:"audit_input_contract,omitempty"`

@@ -45,4 +45,16 @@ class DiagnosticsPrivacyTests(unittest.TestCase):
         obj={'metadata':{'metadata':{'metadata':{'reason':'secret'}}}}
         self.assertNotIn('secret',json.dumps(diag.trace_view(obj)))
 
+    def test_coverage_paths_and_grounding_are_shape_only(self):
+        secret = "PRIVATE_SENTINEL"
+        result = diag.trace_view({"audit_policy_mode":"cyber_deny", "audit_decision_finalized":True,
+            "audit_coverage_details":[{"path":"$.input[3].content[1]", "type":"input_image", "role":"USER", "code":"unsupported_input_content"},
+                                      {"path":"$."+secret,"type":secret,"role":secret,"code":secret}],
+            "audit_semantic_reviews":[{"status":"grounding_corrected", "candidate_error":"non_operational_evidence", "reason":secret}]})
+        self.assertNotIn(secret,json.dumps(result))
+        self.assertEqual(result["audit_coverage_details"][0]["path"],"$.input[3].content[1]")
+        self.assertNotIn("path",result["audit_coverage_details"][1])
+        self.assertEqual(result["audit_semantic_reviews"][0]["status"],"grounding_corrected")
+        self.assertEqual(result["audit_policy_mode"],"cyber_deny")
+
 if __name__=='__main__':unittest.main()

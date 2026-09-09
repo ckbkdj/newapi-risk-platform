@@ -15,7 +15,7 @@ func cyberPolicyRule(code, category, pattern string) compiledRule {
 // All enabled administrator rules still have unconditional veto precedence.
 var cyberDenyBaseline = []compiledRule{
 	cyberPolicyRule("CYBER_SECURITY_TEST_DISABLED", "security_testing", `(?i)(?:渗透(?:测试)?|(?:接口|网络|端口|漏洞).{0,12}扫描|扫描.{0,12}(?:接口|网络|端口|漏洞)|安全.{0,6}测试|\b(?:penetration\s+test\w*|vulnerability\s+scann\w*|port\s+scann\w*|network\s+scann\w*|nmap|masscan|sqlmap|nikto|ffuf|nuclei)\b)`),
-	cyberPolicyRule("CYBER_EXPLOIT_TEST_DISABLED", "exploitation", `(?i)(?:\b(?:exploit(?:s|ation)?|brute[-_ ]?forc(?:e|ing)|reverse[-_ ]shell|crack(?:ing)?|XSS|SQL\s+injection)\b|SQL\s*注入|暴力破解|反向\s*(?:shell|连接)|漏洞利用)`),
+	cyberPolicyRule("CYBER_EXPLOIT_TEST_DISABLED", "exploitation", `(?i)(?:\b(?:exploit(?:s|ation)?|brute[-_ ]?forc(?:e|ing)|reverse[-_ ]shell|crack(?:ing)?|SQL\s+injection)\b|SQL\s*注入|暴力破解|反向\s*(?:shell|连接)|漏洞利用|\bXSS\b[ \t:_-]{0,8}(?:payloads?|assertions?|attacks?|inject\w*|tests?|攻击|注入|载荷|测试))`),
 	cyberPolicyRule("CYBER_CONTROL_BYPASS_DISABLED", "security_evasion", `(?is)(?:(?:bypass|evade|circumvent|绕过|规避).{0,100}(?:captcha|waf|auth|access control|rate.?limit|anti.?debug|验证码|防火墙|认证|权限|限速|风控|反调试)|(?:captcha|waf|验证码|风控).{0,60}(?:bypass|绕过|规避))`),
 	cyberPolicyRule("CYBER_DYNAMIC_HOOK_DISABLED", "reverse_engineering", `(?i)(?:\b(?:frida|xposed|lsposed|decompil\w*|reverse[-_ ]engineering)\b|动态\s*hook|hook\s*动态|(?:dynamic|runtime)\s+hook\w*|反编译|逆向(?:工程|分析|测试|应用|代码))`),
 	cyberPolicyRule("CYBER_PACKET_TAMPER_DISABLED", "request_tampering", `(?is)(?:(?:抓包|拦截请求|packet capture).{0,100}(?:篡改|重放|修改|tamper|replay)|(?:tamper|modify).{0,50}(?:captured request|captured packet))`),
