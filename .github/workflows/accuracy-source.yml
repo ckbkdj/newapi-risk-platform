@@ -1,0 +1,21 @@
+name: Accuracy source workspace
+on:
+  push:
+    branches: [fix/audit-accuracy-20260909]
+    paths: [.github/workflows/accuracy-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: git archive HEAD -o "$RUNNER_TEMP/accuracy-source.tar"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-source
+          path: ${{ runner.temp }}/accuracy-source.tar
+          retention-days: 1
