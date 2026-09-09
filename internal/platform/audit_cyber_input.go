@@ -144,10 +144,20 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 		// Multiple alternate input fields are ambiguous: do not audit one and forward another.
 		n := 0
 		for _, key := range []string{"messages", "input", "prompt", "query", "content", "text"} {
-			if v, exists := obj[key]; exists {
-				n++
-				collect(v, "USER", 0)
+			v, exists := obj[key]
+			if !exists || v == nil {
+				continue // A null optional alias is not a second input source.
 			}
+			// Responses "text" is an output configuration object. Only known
+			// configuration shapes are excluded, and only at the request root.
+			// Legacy text strings and unknown objects still follow input guards.
+			if key == "text" && isResponsesOutputTextConfig(v) {
+				out.IgnoredRoles = append(out.IgnoredRoles, "OUTPUT_TEXT_CONFIG")
+				out.IgnoredContextBytes += countContextTextBytes(v, "")
+				continue
+			}
+			n++
+			collect(v, "USER", 0)
 		}
 		if n > 1 {
 			out.addCoverageIssue("ambiguous_input_fields")
@@ -181,4 +191,74 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 		}
 	}
 	return out
+}
+
+// Responses API's top-level text config is analogous to response_format, not
+// an alternative to input. Do not recursively interpret it as conversation
+// content. Unknown keys/shapes deliberately return to the coverage guard; this
+// must never become an exemption for arbitrary objects named "text".
+func isResponsesOutputTextConfig(value any) bool {
+	config, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	for key, value := range config {
+		switch key {
+		case "verbosity":
+			if value == nil {
+				continue
+			}
+			level, ok := value.(string)
+			if !ok || (level != "low" && level != "medium" && level != "high") {
+				return false
+			}
+		case "format":
+			if value == nil {
+				continue
+			}
+			format, ok := value.(map[string]any)
+			if !ok {
+				return false
+			}
+			kind, _ := format["type"].(string)
+			switch kind {
+			case "text", "json_object":
+				if len(format) != 1 {
+					return false
+				}
+			case "json_schema":
+				name, ok := format["name"].(string)
+				if !ok || strings.TrimSpace(name) == "" {
+					return false
+				}
+				if _, ok := format["schema"].(map[string]any); !ok {
+					return false
+				}
+				for field, item := range format {
+					switch field {
+					case "type", "name", "schema":
+					case "strict":
+						if item != nil {
+							if _, ok := item.(bool); !ok {
+								return false
+							}
+						}
+					case "description":
+						if item != nil {
+							if _, ok := item.(string); !ok {
+								return false
+							}
+						}
+					default:
+						return false
+					}
+				}
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
