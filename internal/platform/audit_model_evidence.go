@@ -9,6 +9,10 @@ import (
 const (
 	auditModelEvidenceMaxRunes = 120
 	auditModelEvidenceMaxBytes = 512
+	// Verification and preferred display length are different limits. Verify
+	// the WHOLE bounded quote; never authorize an invented tail via its prefix.
+	auditEvidenceVerifyMaxRunes = 1024
+	auditEvidenceVerifyMaxBytes = 4096
 )
 
 // validateAuditDecisionEvidence makes model blocks explainable and prevents a
@@ -38,11 +42,11 @@ func validateAuditDecisionEvidence(decision AuditDecision, sourceText string) (A
 			nil,
 		)
 	}
-	if len(candidate) > auditModelEvidenceMaxBytes || utf8.RuneCountInString(candidate) > auditModelEvidenceMaxRunes {
+	if len(candidate) > auditEvidenceVerifyMaxBytes || utf8.RuneCountInString(candidate) > auditEvidenceVerifyMaxRunes {
 		return AuditDecision{}, newAuditModelCallError(
 			"invalid_evidence",
 			0,
-			fmt.Sprintf("audit model evidence exceeds the %d-character safety limit", auditModelEvidenceMaxRunes),
+			fmt.Sprintf("audit model evidence exceeds the bounded verification limit (%d characters / %d bytes)", auditEvidenceVerifyMaxRunes, auditEvidenceVerifyMaxBytes),
 			nil,
 		)
 	}
@@ -73,6 +77,9 @@ func validateAuditDecisionEvidence(decision AuditDecision, sourceText string) (A
 		)
 	}
 
+	if len(candidate) > auditModelEvidenceMaxBytes || utf8.RuneCountInString(candidate) > auditModelEvidenceMaxRunes {
+		decision.OutputNormalizations = append(decision.OutputNormalizations, "long_evidence_fully_verified")
+	}
 	decision.Evidence = redactCyberTraceText(sourceText[start:end])
 	decision.EvidenceContext = cyberRuleContext(sourceText, start, end)
 	decision.EvidenceVerified = true

@@ -38,7 +38,7 @@ def main() -> int:
     if args.cases.stat().st_size > 1024*1024:
         parser.error("Case file exceeds 1 MiB")
     cases = [json.loads(line) for line in args.cases.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if not cases or len(cases)>500 or any(not isinstance(c.get("id"),str) or c.get("expected") not in {"allow", "block"} or not isinstance(c.get("text"), str) or not c["text"].strip() for c in cases):
+    if not cases or len(cases)>500 or any(not isinstance(c,dict) or not isinstance(c.get("id"),str) or c.get("expected") not in {"allow", "block"} or not isinstance(c.get("text"), str) or not c["text"].strip() for c in cases):
         parser.error("Each case needs nonempty text and an allow/block expectation")
     cases = [dict(c, repeat=n+1) for n in range(args.repeat) for c in cases]
     opener = urllib.request.build_opener(NoRedirect)

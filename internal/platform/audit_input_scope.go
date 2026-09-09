@@ -20,6 +20,7 @@ type AuditTextExtraction struct {
 	ruleText               string // In-memory raw rule input; never serialized or persisted.
 	CoverageStatus         string
 	CoverageIssues         []string
+	CoverageDetails        []AuditCoverageDetail
 	ReferenceSpans         []auditReferenceSpan
 	Text                   string
 	Scope                  string

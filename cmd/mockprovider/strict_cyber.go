@@ -8,6 +8,9 @@ import (
 )
 
 func mockStrictCyberVerification(w http.ResponseWriter, request chatRequest, text string) bool {
+	if mockAccuracyVerification(w, request) {
+		return true
+	}
 	// Legacy replay/persistence cases exercise a MODEL Cyber hit, just like
 	// policy-test-routine-engineering. These exact fixture texts deliberately
 	// simulate a classifier verdict; ordinary event replay/data persistence

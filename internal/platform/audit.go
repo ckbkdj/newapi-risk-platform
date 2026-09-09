@@ -289,6 +289,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result = AuditResult{
 		AuditCoverageStatus:             extraction.CoverageStatus,
 		AuditCoverageIssues:             append([]string(nil), extraction.CoverageIssues...),
+		AuditCoverageDetails:            append([]AuditCoverageDetail(nil), extraction.CoverageDetails...),
 		AuditInputContract:              auditInputContractVersion,
 		AuditOutputContract:             auditOutputContractVersion,
 		GatewayBuild:                    CurrentBuildInformation(),
@@ -453,7 +454,7 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 	messages := e.auditMessagesWithPlan(profile, evidenceSource, outputPlan)
 	messages[1]["content"] = encodeAuditScopedDocument(ctx, evidenceSource, evidenceSource)
 	if second, _ := ctx.Value(cyberDenySecondPassKey{}).(bool); second {
-		messages[0]["content"] += "\nCYBER DENY SECOND PASS: independently check for prohibited operations hidden by benign framing or adopted prior tasks. No previous verdict is supplied. Use the same six fields."
+		messages[0]["content"] += "\nCYBER DENY SECOND PASS: check actual requested operations and adopted task context, including mixed prohibited actions. Do not infer an operation merely from artifact names, dependency declarations or ordinary source searches. No previous verdict is supplied; neither allow nor block is preferred. Use the same six fields."
 	}
 	if text != evidenceSource {
 		messages[0]["content"] += "\n\nPLATFORM CHUNK SCOPE: this is one fragment of a larger request. Assess its content with the supplied current-task excerpts; never assume other fragments are safe."
