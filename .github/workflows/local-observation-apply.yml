@@ -1,0 +1,63 @@
+name: Validate local observation precision repair
+on:
+  push:
+    branches: [fix/local-observation-credential-grammar-20260909]
+    paths: [.github/workflows/local-observation-apply.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'ckbkdj/newapi-risk-platform'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+      - name: Verify exact authored source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          parts = [Path(f'.observation-repair/part{i}.patch').read_text() for i in range(3)]
+          # Correct the single transcription typo in an unchanged context line;
+          # the digest below still requires the exact original authored patch.
+          typo = '"抓包后篡改请求做回归测试",'
+          assert parts[0].count(typo) == 1
+          parts[0] = parts[0].replace(typo, '"抓包后篡改请求做回归",')
+          patch = ''.join(parts).encode()
+          assert len(patch) == 52921, len(patch)
+          digest = hashlib.sha256(patch).hexdigest()
+          assert digest == 'bb4c90f0d6ea713bf3182f3253f148ef2bad8782e088133ed38e35c27f7fd1b9', digest
+          Path('/tmp/local-observation.patch').write_bytes(patch)
+          print('Verified exact authored patch:', digest)
+          PY
+          git apply --check /tmp/local-observation.patch
+          git apply --index /tmp/local-observation.patch
+          git rm -r .observation-repair
+          git diff --cached --check
+          test -z "$(git diff --cached --name-only -- .github)"
+      - name: Validate full project and privacy contract
+        run: |
+          set -euo pipefail
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          bash scripts/upgrade_test.sh
+          python3 scripts/test_collect_audit_diagnostics.py
+          python3 -m py_compile scripts/e2e-audit-observation.py scripts/e2e-cyber-expanded.py scripts/eval-audit-intent.py
+          bash -n scripts/e2e.sh
+          go test ./internal/platform -run '^$' -fuzz '^FuzzLocalObservationSuffixCannotQualify$' -fuzztime=5s -parallel=2
+      - name: Commit verified source without patch transport
+        run: |
+          set -euo pipefail
+          test ! -e .observation-repair
+          test -z "$(git diff --cached --name-only -- .github)"
+          git config user.name ckbkdj
+          git config user.email 9382231+ckbkdj@users.noreply.github.com
+          git commit -m 'fix(audit): distinguish local observation and credential-action grammar'
+          git push origin HEAD:fix/local-observation-credential-grammar-20260909
