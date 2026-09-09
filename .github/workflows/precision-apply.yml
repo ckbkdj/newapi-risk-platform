@@ -1,0 +1,49 @@
+name: Validate authored accuracy repair
+on:
+  push:
+    branches: [fix/audit-precision-20260909]
+    paths: [.github/workflows/precision-apply.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'ckbkdj/newapi-risk-platform'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+      - name: Verify exact authored source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .precision-repair/part0.patch .precision-repair/part1.patch .precision-repair/part2.patch > /tmp/precision.patch
+          echo '6ef6b5577380955a458daa1ba7695a20697483a662dea85a9530647b65a8e620  /tmp/precision.patch' | sha256sum --check
+          git apply --check /tmp/precision.patch
+          git apply --index /tmp/precision.patch
+          git rm -r .precision-repair
+          git diff --cached --check
+          test -z "$(git diff --cached --name-only -- .github)"
+      - name: Validate full source and diagnostic contract
+        run: |
+          set -euo pipefail
+          go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/riskd ./cmd/riskd
+          CGO_ENABLED=0 go build -trimpath -o /tmp/mockprovider ./cmd/mockprovider
+          bash scripts/upgrade_test.sh
+          python3 scripts/test_collect_audit_diagnostics.py
+          python3 -m py_compile scripts/e2e-audit-accuracy.py scripts/e2e-cyber-expanded.py scripts/eval-audit-intent.py
+          bash -n scripts/e2e.sh
+          go test ./internal/platform -run '^$' -fuzz '^FuzzAccuracyFullEvidenceNeverAcceptsMissingTail$' -fuzztime=5s -parallel=2
+      - name: Commit validated source only
+        run: |
+          set -euo pipefail
+          test ! -e .precision-repair
+          test -z "$(git diff --cached --name-only -- .github)"
+          git config user.name ckbkdj
+          git config user.email 9382231+ckbkdj@users.noreply.github.com
+          git commit -m 'fix(audit): ground artifact and source-search evidence before terminal Cyber denial'
+          git push origin HEAD:fix/audit-precision-20260909
