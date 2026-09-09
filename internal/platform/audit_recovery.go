@@ -101,10 +101,15 @@ func recordAuditDecisionMetadata(metadata map[string]any, result AuditResult) {
 		return
 	}
 	metadata["audit_effective_decision"] = result.Decision
+	metadata["audit_coverage_status"] = result.AuditCoverageStatus
+	if len(result.AuditCoverageIssues) > 0 {
+		metadata["audit_coverage_issues"] = result.AuditCoverageIssues
+	}
 	metadata["audit_input_contract"] = auditInputContractVersion
 	metadata["audit_output_contract"] = auditOutputContractVersion
 	metadata["gateway_build"] = CurrentBuildInformation()
 	metadata["audit_embedded_reference_count"] = result.AuditEmbeddedReferenceCount
+	metadata["audit_conversation_reference_count"] = result.AuditConversationReferenceCount
 	metadata["audit_completed"] = result.ErrorClass == "" && result.Source != "platform" && result.Source != "fail_open"
 	metadata["audit_semantic_reviews_truncated"] = result.AuditSemanticReviewCount > len(result.AuditSemanticReviews)
 	metadata["audit_http_calls"] = result.AuditHTTPCalls

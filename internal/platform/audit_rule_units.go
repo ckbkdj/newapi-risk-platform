@@ -41,7 +41,7 @@ func splitAuditRuleUnits(text string) []auditRuleUnit {
 	}
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "ROLE=USER" || trimmed == "ROLE=USER_REFERENCED" {
+		if trimmed == "ROLE=USER" || trimmed == "ROLE=USER_REFERENCED" || trimmed == "ROLE=ASSISTANT_REFERENCED" {
 			flush()
 			continue
 		}
@@ -125,14 +125,9 @@ func shouldSuppressEngineeringRuleMatch(policy AuditPolicy, rule CyberRule, unit
 			return true, "application_data_persistence_without_startup_or_implant_semantics"
 		}
 	case "CYBER_CREDENTIAL_THEFT", "CYBER_CLOUD_SECRET_THEFT", "CYBER_CREDENTIAL_ACCESS_REVIEW":
-		if policy.Mode == AuditPolicyModeInternalEngineering && !hasDangerousSecretIntent(unit) {
-			if policy.AllowUserProvidedSecrets && isUserProvidedSecretConfiguration(unit) {
-				return true, "requester_provided_secret_configuration_requires_semantic_policy_not_hard_block"
-			}
-			if policy.AllowLocalDebugCredentials && isLocalDebugCredentialUse(unit) {
-				return true, "local_debug_credential_use_requires_semantic_policy_not_hard_block"
-			}
-		}
+		// A local-debug or supplied-secret keyword is not an exemption for
+		// other operations in the unit. Preserve the candidate for review.
+		return false, ""
 	}
 	return false, ""
 }

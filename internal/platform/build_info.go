@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 )
 
-const auditEngineRevision = "output-resilience-fusion.v1"
+const auditEngineRevision = "intent-coverage-guard.v2"
 
 type BuildInformation struct {
 	Version        string `json:"version"`

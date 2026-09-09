@@ -30,5 +30,5 @@ for name,panel,arbiter,decision,status,error in [
     assert result['decision']==decision,(name,result)
     assert result.get('error_class','')==error,(name,result)
     assert result['audit_semantic_reviews'][0]['fusion']['status']==status,(name,result)
-    assert result['gateway_build']['audit_engine']=='output-resilience-fusion.v1'
+    assert result['gateway_build']['audit_engine']=='intent-coverage-guard.v2'
 print('Fusion consensus, disagreement, adjudication and invalid vote E2E passed')

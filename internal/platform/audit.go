@@ -211,9 +211,12 @@ func (e *AuditEngine) matchRules(text string) (*AuditDecision, *RuleMatchDiagnos
 }
 
 func (e *AuditEngine) matchRulesWithPolicy(text string, policy AuditPolicy) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic) {
+	return e.matchRulesWithScope(text, policy, auditReferenceSpans(text))
+}
+
+func (e *AuditEngine) matchRulesWithScope(text string, policy AuditPolicy, references []auditReferenceSpan) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic) {
 	rules, _ := e.rules.Load().([]compiledRule)
 	units := splitAuditRuleUnits(text)
-	references := auditReferenceSpans(text)
 	var review *AuditDecision
 	var reviewDiagnostics *RuleMatchDiagnostics
 	suppressions := make([]RuleSuppressionDiagnostic, 0, 4)
@@ -281,11 +284,16 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	started := time.Now()
 	extraction := ExtractAuditTextDetails(body, e.maxTextBytes)
 	text := extraction.Text
+	scope := makeAuditSourceScopeWithReferences(text, extraction.ReferenceSpans)
+	ctx = context.WithValue(ctx, auditSourceScopeKey{}, scope)
 	result = AuditResult{
-		AuditInputContract:          auditInputContractVersion,
-		AuditOutputContract:         auditOutputContractVersion,
-		GatewayBuild:                CurrentBuildInformation(),
-		AuditEmbeddedReferenceCount: len(auditReferenceSpans(text)),
+		AuditCoverageStatus:             extraction.CoverageStatus,
+		AuditCoverageIssues:             append([]string(nil), extraction.CoverageIssues...),
+		AuditInputContract:              auditInputContractVersion,
+		AuditOutputContract:             auditOutputContractVersion,
+		GatewayBuild:                    CurrentBuildInformation(),
+		AuditEmbeddedReferenceCount:     len(auditReferenceSpans(text)),
+		AuditConversationReferenceCount: len(extraction.ReferenceSpans),
 		AuditDecision: AuditDecision{
 			Decision:   DecisionAllow,
 			Confidence: 1,
@@ -310,28 +318,32 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	defer func() {
 		result.Latency = time.Since(started)
 	}()
-	if strings.TrimSpace(text) == "" {
-		if extraction.IgnoredContextBytes > 0 {
-			result.Source = "context_only"
-			result.Reason = "no end-user intent text was present; system/developer/assistant/tool context was ignored"
-		}
+	profile, profileErr := e.getAuditProfile(ctx, route.AuditProfileID)
+	if extraction.CoverageStatus != "complete" {
+		result.ErrorClass = "input_coverage"
+		result.AuditDecision = auditIncompleteInputDecision(route.FailClosed || profile.FailClosed || profileErr != nil, extraction.CoverageIssues)
 		return result
 	}
-
-	profile, profileErr := e.getAuditProfile(ctx, route.AuditProfileID)
 	policy := strictAuditPolicy()
 	if profileErr == nil && profile.Enabled {
 		policy = auditPolicyFromProfile(profile)
 	}
 	result.AuditPolicyMode = policy.Mode
-	matched, ruleMatch, suppressions := e.matchRulesWithPolicy(text, policy)
+	matched, ruleMatch, suppressions := e.matchRulesWithScope(text, policy, scope.References)
 	result.RuleMatch = ruleMatch
 	result.AuditRuleSuppressions = append([]RuleSuppressionDiagnostic(nil), suppressions...)
 	if matched != nil && (matched.Decision == DecisionBlock || matched.Decision == DecisionAllow) {
 		adjusted, adjustment := applyAuditPolicyAdjustment(policy, text, *matched)
 		result.AuditDecision = adjusted
 		result.AuditPolicyAdjustment = adjustment
-		return result
+		if adjusted.Decision != DecisionReview {
+			return result
+		}
+		matched = &adjusted
+		if result.RuleMatch != nil {
+			result.RuleMatch.Downgraded = true
+			result.RuleMatch.DowngradeReason = adjusted.Reason
+		}
 	}
 
 	if profileErr != nil || !profile.Enabled {
@@ -355,9 +367,9 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		return result
 	}
 
-	if matched != nil && matched.Decision == DecisionReview && result.AuditEmbeddedReferenceCount > 0 {
-		// Reference-format text cannot turn a rule candidate into an unchecked
-		// allow; independently verify adoption even if the primary says allow.
+	if (matched != nil && matched.Decision == DecisionReview) || extraction.ContextActivated {
+		// All unresolved rule candidates and adopted continuations need a fresh
+		// intent check, not only one special embedded-JSON history format.
 		ctx = context.WithValue(ctx, auditRequireIntentVerificationKey{}, true)
 	}
 	decision, usedProfile, failoverMetadata, err := e.callModelWithFailover(ctx, profile, text)

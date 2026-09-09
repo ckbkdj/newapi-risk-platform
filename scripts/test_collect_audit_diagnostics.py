@@ -19,6 +19,13 @@ class DiagnosticsPrivacyTests(unittest.TestCase):
         self.assertNotIn(secret,encoded)
         self.assertIn('high',encoded)
         self.assertIn('other',encoded)
+    def test_coverage_diagnostics_are_allowlisted(self):
+        secret = 'SECRET_SENTINEL_coverage'
+        result = diag.trace_view({'audit_coverage_status':'incomplete', 'audit_coverage_issues':['unsupported_input_content', secret, {'secret':secret}], 'error_class':'input_coverage', 'audit_semantic_review_status':'escalated'})
+        self.assertNotIn(secret, json.dumps(result))
+        self.assertEqual(result['audit_coverage_issues'], ['unsupported_input_content', 'other', 'other'])
+        self.assertEqual(result['error_class'], 'input_coverage')
+        self.assertEqual(result['audit_semantic_review_status'], 'escalated')
     def test_profile_extra_allowlist(self):
         secret='secret-key-in-endpoint'
         profile={'id':1,'endpoint':secret,'model':secret,'api_key':secret,'system_prompt':secret,'extra':{'Authorization':secret,'_risk_policy_mode':'internal_engineering','_risk_fusion_profile_ids':[2,3]}}

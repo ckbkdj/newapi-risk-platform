@@ -592,6 +592,7 @@ with urllib.request.urlopen(request, timeout=5) as response:
 PY
 
 BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" python3 scripts/e2e-audit-fusion.py
+BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" python3 scripts/e2e-audit-coverage.py
 
 trace_ok=0
 for _ in $(seq 1 40); do
@@ -645,7 +646,7 @@ qm = qualitative["metadata"]
 assert qm["audit_model_confidence_kind"] == "qualitative" and qm["audit_model_confidence_label"] == "high"
 assert qm["audit_model_confidence"] is None and qm["audit_http_calls"] == 1
 assert qm["audit_output_contract"] == "risk_audit_output.v2"
-assert qm["gateway_build"]["audit_engine"] == "output-resilience-fusion.v1"
+assert qm["gateway_build"]["audit_engine"] == "intent-coverage-guard.v2"
 assert "allow_none_risk_code" in qm["audit_output_normalizations"]
 
 structured_recovery = next((item for item in items if item.get("request_id") == "e2e-audit-structured-recovery"), None)
