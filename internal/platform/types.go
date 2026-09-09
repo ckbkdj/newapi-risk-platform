@@ -104,6 +104,9 @@ type CyberRule struct {
 }
 
 type AuditDecision struct {
+	evidenceSourceMatched  bool // In-memory validated offsets; never serialize raw secrets.
+	evidenceSourceStart    int
+	evidenceSourceEnd      int
 	policyOriginalDecision string   // Code-owned provenance for strict review-to-deny; not a model field.
 	ConfidenceKind         string   `json:"confidence_kind,omitempty"`
 	ConfidenceLabel        string   `json:"confidence_label,omitempty"`
@@ -180,6 +183,9 @@ type AuditResult struct {
 	ErrorClass                  string                      `json:"error_class,omitempty"`
 	AuditHTTPStatus             int                         `json:"audit_http_status,omitempty"`
 	AuditMode                   string                      `json:"audit_mode,omitempty"`
+	AuditHTTPBudget             int                         `json:"audit_http_budget"`
+	AuditReviewBudget           int                         `json:"audit_review_budget"`
+	AuditChunksCompleted        int                         `json:"audit_chunks_completed"`
 	AuditChunkCount             int                         `json:"audit_chunk_count,omitempty"`
 	AuditChunkBytes             int                         `json:"audit_chunk_bytes,omitempty"`
 	AuditRequestedTokens        int                         `json:"audit_requested_tokens,omitempty"`

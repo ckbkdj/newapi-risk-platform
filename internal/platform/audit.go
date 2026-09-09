@@ -350,6 +350,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result.AuditProfileName = usedProfile.Name
 	result.AuditMode = callMetadata.Mode
 	result.AuditChunkCount = callMetadata.ChunkCount
+	result.AuditChunksCompleted = callMetadata.ChunksCompleted
 	result.AuditChunkBytes = callMetadata.ChunkBytes
 	result.AuditRequestedTokens = callMetadata.RequestedTokens
 	result.AuditRequestedTokensLowerBound = callMetadata.RequestedTokensLowerBound
@@ -362,6 +363,8 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result.AuditAttempts = append([]AuditAttempt(nil), failoverMetadata.Attempts...)
 	result.AuditModelsTried = auditAttemptModelNames(failoverMetadata.Attempts)
 	result.AuditHTTPCalls = failoverMetadata.HTTPCalls
+	result.AuditHTTPBudget = failoverMetadata.HTTPBudget
+	result.AuditReviewBudget = failoverMetadata.ReviewBudget
 	result.AuditSemanticReviewCalls = failoverMetadata.SemanticReviewCalls
 	result.AuditSemanticReviewCount = failoverMetadata.SemanticReviewCount
 	result.AuditSemanticReviews = failoverMetadata.SemanticReviews
@@ -529,7 +532,11 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 	}
 	if state, ok := ctx.Value(auditSemanticStateKey{}).(*auditSemanticState); ok {
 		state.mu.Lock()
-		if cyberDenyActive(ctx) && state.httpCalls >= cyberDenyHTTPBudget {
+		limit := state.httpBudget
+		if limit == 0 {
+			limit = cyberDenyHTTPBudget
+		}
+		if cyberDenyActive(ctx) && state.httpCalls >= limit {
 			state.mu.Unlock()
 			return AuditDecision{}, newAuditModelCallError("audit_http_budget", 0, "Cyber audit HTTP call budget exhausted", nil)
 		}

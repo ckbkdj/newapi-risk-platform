@@ -25,11 +25,13 @@ type AuditSemanticReview struct {
 type auditSemanticStateKey struct{}
 type auditRequireIntentVerificationKey struct{}
 type auditSemanticState struct {
-	mu          sync.Mutex
-	httpCalls   int
-	reviewCalls int
-	reviews     int
-	records     []AuditSemanticReview
+	mu           sync.Mutex
+	httpCalls    int
+	httpBudget   int
+	reviewBudget int
+	reviewCalls  int
+	reviews      int
+	records      []AuditSemanticReview
 }
 
 func withAuditSemanticState(ctx context.Context) (context.Context, *auditSemanticState) {
@@ -43,7 +45,11 @@ func withAuditSemanticState(ctx context.Context) (context.Context, *auditSemanti
 func (s *auditSemanticState) reserveReview() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.reviewCalls >= maxAuditSemanticCalls {
+	limit := s.reviewBudget
+	if limit == 0 {
+		limit = maxAuditSemanticCalls
+	}
+	if s.reviewCalls >= limit {
 		return false
 	}
 	s.reviewCalls++
@@ -61,6 +67,8 @@ func (s *auditSemanticState) metadata(m auditFailoverMetadata) auditFailoverMeta
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m.HTTPCalls, m.SemanticReviewCalls, m.SemanticReviewCount = s.httpCalls, s.reviewCalls, s.reviews
+	m.HTTPBudget = max(cyberDenyHTTPBudget, s.httpBudget)
+	m.ReviewBudget = max(maxAuditSemanticCalls, s.reviewBudget)
 	m.SemanticReviews = append([]AuditSemanticReview(nil), s.records...)
 	return m
 }

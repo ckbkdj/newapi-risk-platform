@@ -17,6 +17,8 @@ const (
 
 type auditFailoverMetadata struct {
 	HTTPCalls           int
+	HTTPBudget          int
+	ReviewBudget        int
 	SemanticReviewCalls int
 	SemanticReviewCount int
 	SemanticReviews     []AuditSemanticReview

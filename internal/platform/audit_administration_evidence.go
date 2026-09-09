@@ -1,8 +1,8 @@
 package platform
 
 import (
- "regexp"
- "strings"
+	"regexp"
+	"strings"
 )
 
 // Admission to ONE fresh operation check, never a request allowlist. The same
@@ -16,24 +16,39 @@ var adminLoginScope = regexp.MustCompile(`(?i)(\b(?:ssh|sudo)\b|已有.{0,8}权�
 var adminLoginAction = regexp.MustCompile(`(?i)(login|log in|deploy|docker|sudo|登录|连接|部署|启动|切换|切到)`)
 
 func administrativeAuditEvidence(d AuditDecision, quote, source string) bool {
- if !adminRiskClass.MatchString(d.RiskCode+" "+d.Category) || len(quote)<4 || len(quote)>4096 { return false }
- offset,found:=0,false
- for count:=0;count<32;count++{
-  rel:=strings.Index(source[offset:],quote)
-  if rel<0{return found}
-  start:=offset+rel;end:=start+len(quote)
-  a:=strings.LastIndex(source[:start],"\n")+1;b:=len(source)
-  if n:=strings.IndexByte(source[end:],'\n');n>=0{b=end+n}
-  if b-a>8192{return false}
-  line:=source[a:b]
-  // A narrow quote must not hide a prohibited action in its containing line.
-  // Other lines still remain in the request and are checked by the model.
-  if adminExplicitRisk.MatchString(line){return false}
-  connection:=adminConnectionLine.MatchString(line)
-  database:=adminDatabaseScope.MatchString(line)&&adminDatabaseTransfer.MatchString(line)
-  login:=adminLoginScope.MatchString(line)&&adminLoginAction.MatchString(line)
-  if !connection&&!database&&!login{return false}
-  found=true;offset=start+1
- }
- return false // ambiguous/excessive occurrences fail closed, not first-match wins
+	if !adminRiskClass.MatchString(d.RiskCode+" "+d.Category) || len(quote) < 4 || len(quote) > 4096 {
+		return false
+	}
+	offset, found := 0, false
+	for count := 0; count < 32; count++ {
+		rel := strings.Index(source[offset:], quote)
+		if rel < 0 {
+			return found
+		}
+		start := offset + rel
+		end := start + len(quote)
+		a := strings.LastIndex(source[:start], "\n") + 1
+		b := len(source)
+		if n := strings.IndexByte(source[end:], '\n'); n >= 0 {
+			b = end + n
+		}
+		if b-a > 8192 {
+			return false
+		}
+		line := source[a:b]
+		// A narrow quote must not hide a prohibited action in its containing line.
+		// Other lines still remain in the request and are checked by the model.
+		if adminExplicitRisk.MatchString(line) {
+			return false
+		}
+		connection := adminConnectionLine.MatchString(line)
+		database := adminDatabaseScope.MatchString(line) && adminDatabaseTransfer.MatchString(line)
+		login := adminLoginScope.MatchString(line) && adminLoginAction.MatchString(line)
+		if !connection && !database && !login {
+			return false
+		}
+		found = true
+		offset = start + 1
+	}
+	return false // ambiguous/excessive occurrences fail closed, not first-match wins
 }

@@ -14,6 +14,10 @@ func mockAccuracyVerification(w http.ResponseWriter, request chatRequest) bool {
 		return false
 	}
 	control := messageText(request)
+	if strings.Contains(text, "db-sync-mechanism") {
+		mockDBSyncVerification(w, text, control)
+		return true
+	}
 	grounding := strings.Contains(control, "OPERATION EVIDENCE CHECK v1")
 	if grounding && strings.Contains(text, "accuracy-grounding-unavailable") {
 		writeJSON(w, 503, map[string]any{"error": map[string]any{"message": "synthetic grounding unavailable"}})
