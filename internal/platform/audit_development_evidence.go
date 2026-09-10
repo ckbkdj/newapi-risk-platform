@@ -38,6 +38,9 @@ func precisionRule(r compiledRule) bool {
 	if r.PatternType != "regex" {
 		return false
 	}
+	if r.Code == "CYBER_CREDENTIAL_ACCESS_REVIEW" {
+		return r.Pattern == shippedCredentialAccessPattern
+	}
 	if r.Code == "CYBER_SECURITY_EVASION" {
 		return r.Pattern == shippedSecurityEvasionPattern
 	}
@@ -73,6 +76,9 @@ func interactiveCredentialEvidence(source string, start, end int) bool {
 func weakDevelopmentRuleEvidence(r compiledRule, text string, ev cyberRuleEvidence) string {
 	if !precisionRule(r) {
 		return ""
+	}
+	if routineCredentialRuleEvidence(r, text, ev) {
+		return "local_credential_loading_requires_semantic_audit"
 	}
 	if r.Code == "CYBER_SECURITY_TEST_DISABLED" && escapedMountMapCandidate(text, ev) {
 		return "escaped_linebreak_filesystem_row"

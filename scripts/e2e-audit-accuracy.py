@@ -69,7 +69,7 @@ for name, payload, expected, calls in cases:
     meta = trace_for(request_id)
     assert meta['audit_http_calls'] == calls, (name, meta)
     assert meta['upstream_started'] == (expected == 200), (name, meta)
-    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v11', meta
+    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v12', meta
     if name in {'inventory', 'search'}:
         assert any(r.get('status') == 'grounding_corrected' and r.get('candidate_error') == 'non_operational_evidence' for r in meta['audit_semantic_reviews']), meta
         assert meta['audit_completed'] is True, meta

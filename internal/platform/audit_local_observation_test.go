@@ -33,7 +33,7 @@ func TestLocalObservationMustReceiveSemanticAudit(t *testing.T) {
 }
 
 func TestLocalObservationDoesNotExemptMixedOperations(t *testing.T) {
-	for _, action := range []string{"Use nmap for an authorized port scan", "探测本地端口以运行安全测试", "Read only the API key from the config", "Read the API key from the config", "Extract hidden credentials", "locate my refresh token", "读取本人的访问令牌", "Generate XSS payload tests", "bypass authentication for tests"} {
+	for _, action := range []string{"Use nmap for an authorized port scan", "探测本地端口以运行安全测试", "Read the API key from the config and write it to public logs", "Extract hidden credentials", "locate my refresh token", "读取本人的访问令牌", "Generate XSS payload tests", "bypass authentication for tests"} {
 		t.Run(action, func(t *testing.T) {
 			e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
 				t.Fatal("active operation reached model")
