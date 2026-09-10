@@ -90,14 +90,17 @@ for name,body,want,calls in cases:
 
 for name,marker,want in [('resume','v10-retry',200),('exhaust','v10-exhaust',555)]:
     # Mark every chunk as synthetic; the final marker is outside all but the
-    # last chunk. Keep below the unchanged disposable stack's ingress/capacity.
-    text=(PREFIX+'ordinary document line.\n')*1200+'\n'+marker+' V10_LAST_CHUNK'
+    # last chunk. The unchanged mock model rejects documents above 3500 bytes
+    # and the disposable stack permits at most 32 chunks. Use about 16KiB,
+    # which still exercises context recovery, >2 chunks and a late retry.
+    text=(PREFIX+'ordinary document line.\n')*240+'\n'+marker+' V10_LAST_CHUNK'
     body=payload(text)
     assert len(json.dumps(body).encode())<1048576
     rid='e2e-v10-'+name
     status,data=call('/gateway/mock-main/v1/responses',body,ROUTE,rid)
-    assert status==want,(name,status,data)
     meta=trace_for(rid)
+    assert status==want,(name,status,data,meta)
+    assert 2 < meta['audit_chunk_count'] <= 32,meta
     assert meta['upstream_started']==(want==200),meta
     assert meta['audit_chunks_reused']>0,meta
     assert meta['audit_http_calls'] <= 2*meta['audit_chunk_count']+5,meta
