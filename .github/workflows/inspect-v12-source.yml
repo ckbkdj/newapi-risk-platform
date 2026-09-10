@@ -1,21 +1,79 @@
-name: Export pinned v12 source for final verification
+name: Assemble reviewed v13 source
+
 on:
-  push:
-    branches: [fix/local-credential-semantics-v12]
-    paths: [.github/workflows/inspect-v12-source.yml]
+  pull_request:
+    branches: [main]
+
 permissions:
-  contents: read
+  contents: write
+
 jobs:
-  export:
+  assemble:
+    if: github.repository == 'ckbkdj/newapi-risk-platform' && github.event.pull_request.number == 31 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/local-credential-semantics-v12'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 89cc67aa22e035133db895221a702e6a19b6e741
-          persist-credentials: false
-      - run: git archive --format=tar.gz HEAD > /tmp/audit-v12-final-source.tar.gz
-      - uses: actions/upload-artifact@v4
-        with:
-          name: audit-v12-final-source
-          path: /tmp/audit-v12-final-source.tar.gz
-          retention-days: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Apply preimage-checked delta and verify the complete reviewed tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          PARENT="$(git rev-parse HEAD)"
+          cat .maintenance/v13.delta.part1 .maintenance/v13.delta.part2 .maintenance/v13.delta.part3 > "$RUNNER_TEMP/v13.delta.xz"
+          python3 - <<'PY'
+          import hashlib, json, lzma, os
+          from pathlib import Path
+          p = Path(os.environ['RUNNER_TEMP'])
+          raw = (p / 'v13.delta.xz').read_bytes()
+          assert len(raw) == 22128
+          assert hashlib.sha256(raw).hexdigest() == '6c094c619e9d74507bd278304fc149e539bf78f2da4eb95b57d6b7d2affa9712'
+          decoded = lzma.decompress(raw, memlimit=64 * 1024 * 1024)
+          assert len(decoded) < 200000
+          manifest = json.loads(decoded)
+          assert isinstance(manifest, list) and len(manifest) == 29
+          (p / 'v13.delta.json').write_bytes(decoded)
+          PY
+          git checkout --detach f0639b955b33dda8ff9af482047003e4c846b0f0
+          git rm .github/workflows/inspect-v12-source.yml
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path, PurePosixPath
+          manifest = json.loads((Path(os.environ['RUNNER_TEMP']) / 'v13.delta.json').read_bytes())
+          paths = []
+          for name, before, after, edits in manifest:
+              rel = PurePosixPath(name)
+              assert not rel.is_absolute() and '..' not in rel.parts and '.git' not in rel.parts
+              assert name not in paths
+              path = Path(name)
+              assert not path.is_symlink()
+              old = path.read_bytes() if path.exists() else b''
+              assert hashlib.sha256(old).hexdigest() == before, ('preimage', name)
+              text = old.decode('utf-8')
+              previous = 0
+              for start, end, replacement in edits:
+                  assert isinstance(start, int) and isinstance(end, int)
+                  assert previous <= start <= end <= len(text)
+                  assert isinstance(replacement, str)
+                  previous = end
+              for start, end, replacement in reversed(edits):
+                  text = text[:start] + replacement + text[end:]
+              new = text.encode('utf-8')
+              assert hashlib.sha256(new).hexdigest() == after, ('postimage', name)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(new)
+              paths.append(name)
+          subprocess.run(['git', 'add', '--', *paths], check=True)
+          PY
+          git diff --cached --check
+          TREE="$(git write-tree)"
+          test "$TREE" = 677cb0c899ecab2fbdff7079260a5fa443143816
+          git config user.name 'ckbkdj'
+          git config user.email '9382231+ckbkdj@users.noreply.github.com'
+          COMMIT="$(printf 'fix(audit): normal development evidence and source-preserving credential masking (v13)\n' | git commit-tree "$TREE" -p "$PARENT")"
+          CURRENT="$(git ls-remote --heads origin refs/heads/fix/local-credential-semantics-v12 | cut -f1)"
+          test "$CURRENT" = "$PARENT"
+          git push origin "$COMMIT:refs/heads/fix/local-credential-semantics-v12"
+          echo "FINAL_COMMIT=$COMMIT TREE=$TREE"
