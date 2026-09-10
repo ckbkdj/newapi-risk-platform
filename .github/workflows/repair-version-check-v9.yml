@@ -1,0 +1,35 @@
+name: Align final E2E version assertion
+on:
+  push:
+    branches: [fix/csv-local-development-v9]
+    paths: [.github/workflows/repair-version-check-v9.yml]
+permissions:
+  contents: write
+jobs:
+  correct:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/csv-local-development-v9
+      - shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/e2e.sh')
+          text = p.read_text()
+          assert text.count('cyber-deny-qwen27b.v8') == 1
+          p.write_text(text.replace('cyber-deny-qwen27b.v8','cyber-deny-qwen27b.v9'))
+          PY
+          bash -n scripts/e2e.sh
+          git add scripts/e2e.sh
+          git rm --cached .github/workflows/repair-version-check-v9.yml
+          test "$(git write-tree)" = 78645e408455236bb3656ab45a53d4d346fcdbee
+          git add .github/workflows/repair-version-check-v9.yml
+          git diff --cached --check
+          git diff --cached --exit-code -- .github/workflows
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: require actual v9 revision without changing safety assertions'
+          git push origin HEAD:refs/heads/fix/csv-local-development-v9
