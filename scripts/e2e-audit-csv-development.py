@@ -82,7 +82,15 @@ for name,body,want,calls in cases:
     if name=='capacity':
         assert meta['audit_completed'] and not meta['audit_input_partial'] and meta['audit_coverage_status']=='complete',meta
         assert meta['audit_chunks_completed']==meta['audit_chunk_count'] and meta['audit_chunk_count']>32,meta
-        assert meta['audit_http_calls']==2*meta['audit_chunk_count'],meta
+        # Context-window recovery calls are counted, not erased. The mock rejects
+        # every chunk at the three larger sizes; at most two primary calls are
+        # in flight per failed plan in docker-compose.test.yml. No verifier runs
+        # for those failures. Every final chunk must still have both decisions.
+        chunks=meta['audit_chunk_count']
+        retries=meta.get('audit_chunk_retry_count',0)
+        assert 0<=retries<=3,meta
+        assert meta['audit_semantic_review_calls']==chunks,meta
+        assert 2*chunks<=meta['audit_http_calls']<=2*chunks+2*retries,meta
     if name=='image-uncovered':
         assert meta['audit_error_class']=='input_coverage' and not meta['audit_completed'],meta
     if want==200:
