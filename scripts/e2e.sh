@@ -647,7 +647,7 @@ assert qm["audit_model_confidence"] is None
 assert qm["audit_http_calls"] == 2, "qualitative allow must include the fresh verifier call"
 assert qm["audit_semantic_review_calls"] == 1, "qualitative allow verification was skipped"
 assert qm["audit_output_contract"] == "risk_audit_output.v2"
-assert qm["gateway_build"]["audit_engine"] == "cyber-deny-qwen27b.v10"
+assert qm["gateway_build"]["audit_engine"] == "cyber-deny-qwen27b.v11"
 assert "allow_none_risk_code" in qm["audit_output_normalizations"]
 
 structured_recovery = next((item for item in items if item.get("request_id") == "e2e-audit-structured-recovery"), None)
@@ -969,5 +969,6 @@ BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" pyth
 
 BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" python3 scripts/e2e-audit-csv-development.py
 BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" python3 scripts/e2e-audit-v10.py
+BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" python3 scripts/e2e-audit-v11.py
 
 echo "New API risk platform end-to-end checks passed."

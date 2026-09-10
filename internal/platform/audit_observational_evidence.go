@@ -36,7 +36,7 @@ func observationalAuditEvidence(quote, source string) bool {
 			return false
 		}
 		line := source[a:b]
-		weak := false
+		weak := engineeringEvidenceAt(source, start, end) || androidArtifactEvidenceAt(source, start, end)
 		for _, m := range noKeyGuidance.FindAllStringIndex(line, 32) {
 			if a+m[0] <= start && a+m[1] >= end {
 				weak = true

@@ -304,21 +304,22 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 			Confidence: 1,
 			Source:     "empty",
 		},
-		PromptHMAC:                  e.security.PromptHMAC(text),
-		TextBytes:                   len(text),
-		AuditInputScope:             extraction.Scope,
-		AuditIntentBytes:            extraction.IntentBytes,
-		AuditIgnoredContextBytes:    extraction.IgnoredContextBytes,
-		AuditIgnoredRoles:           append([]string(nil), extraction.IgnoredRoles...),
-		AuditIgnoredInputTypes:      append([]string(nil), extraction.IgnoredInputTypes...),
-		AuditTextLimitMode:          e.textLimitMode,
-		AuditTextLimitBytes:         e.maxTextBytes,
-		AuditRawIntentBytes:         extraction.RawIntentBytes,
-		AuditPriorUserContextBytes:  extraction.PriorUserContextBytes,
-		AuditActiveUserMessages:     extraction.ActiveUserMessages,
-		AuditContextActivated:       extraction.ContextActivated,
-		AuditEphemeralArtifactCount: extraction.EphemeralArtifactCount,
-		AuditSecretPlaceholderCount: extraction.SecretPlaceholderCount,
+		PromptHMAC:                   e.security.PromptHMAC(text),
+		TextBytes:                    len(text),
+		AuditInputScope:              extraction.Scope,
+		AuditIntentBytes:             extraction.IntentBytes,
+		AuditIgnoredContextBytes:     extraction.IgnoredContextBytes,
+		AuditIgnoredRoles:            append([]string(nil), extraction.IgnoredRoles...),
+		AuditIgnoredInputTypes:       append([]string(nil), extraction.IgnoredInputTypes...),
+		AuditTextLimitMode:           e.textLimitMode,
+		AuditTextLimitBytes:          e.maxTextBytes,
+		AuditRawIntentBytes:          extraction.RawIntentBytes,
+		AuditPriorUserContextBytes:   extraction.PriorUserContextBytes,
+		AuditActiveUserMessages:      extraction.ActiveUserMessages,
+		AuditContextActivated:        extraction.ContextActivated,
+		AuditEphemeralArtifactCount:  extraction.EphemeralArtifactCount,
+		AuditSecretPlaceholderCount:  extraction.SecretPlaceholderCount,
+		AuditSerializedToolDocuments: extraction.SerializedToolDocuments,
 	}
 	defer func() {
 		result.Latency = time.Since(started)
@@ -367,6 +368,23 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	}
 	phaseStarted = time.Now()
 	matched, ruleMatch, weak, ruleErr := e.matchCyberDenyRulesContext(ctx, extraction.ruleText)
+	if ruleMatch != nil {
+		ruleMatch.InputView = "raw_input"
+	}
+	if matched == nil && ruleErr == nil && extraction.SerializedToolDocuments > 0 {
+		// Inspect BOTH representations. Original administrator matches remain
+		// vetoes; decoding must also expose real encoded operations (\nnmap).
+		var decodedWeak []RuleSuppressionDiagnostic
+		matched, ruleMatch, decodedWeak, ruleErr = e.matchCyberDenyRulesContext(ctx, text)
+		for _, item := range decodedWeak {
+			if len(weak) < 16 {
+				weak = append(weak, item)
+			}
+		}
+		if ruleMatch != nil {
+			ruleMatch.InputView = "decoded_tool_text"
+		}
+	}
 	stages["rules"] = time.Since(phaseStarted).Milliseconds()
 	result.RuleMatch = ruleMatch
 	result.AuditRuleSuppressions = weak
