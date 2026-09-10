@@ -12,7 +12,7 @@ import (
 const shippedCredentialAccessPattern = `(?is)(?:\b(?:extract|read|locate|find|recover|parse)(?:[ \t\r\n]+|[(:][ \t]*)["\']?(?:(?:the|a|an|my|your|our|their|his|her|all|any|own|hidden|stored|saved|raw|plaintext|plain-text|current|local|user|users|admin|administrator|only)[ \t\r\n]+){0,8}\b(?:credentials?|access[ _-]tokens?|refresh[ _-]tokens?|api[ _.-]?keys?|authorization|bearer|cookies?)\b|(?:提取|读取|定位|查找|恢复|解析).{0,80}(?:凭据|访问令牌|刷新令牌|API[ _.-]?Key|Authorization|Bearer|Cookie))`
 
 var routineCredentialMaterial = regexp.MustCompile(`(?i)(key|token|credential|password|secret|authorization|bearer|cookie|密钥|私钥|令牌|凭据|密码|口令)`)
-var routineCredentialSource = regexp.MustCompile(`(?i)(\b(?:config(?:uration)?|environment|env|keystoreProperties|printenv)\b|\.env\b|(?:keystore|local|gradle|key)\.properties\b|/run/secrets/|\.(?:pk8|jks|keystore)\b|\b(?:os\.(?:getenv|environ)|process\.env|system\.getenv|providers\.environmentVariable|Environment\.GetEnvironmentVariable)\b|(?:本地|本项目|项目|应用|程序|构建|签名).{0,20}(?:配置|开发|凭据|密钥|私钥|令牌|Key)|环境变量)`)
+var routineCredentialSource = regexp.MustCompile(`(?i)(\b(?:config(?:uration)?|environment|env|keystoreProperties|printenv)\b|\.env\b|(?:keystore|local|gradle|key)\.properties\b|/run/secrets/|\.(?:pk8|jks|keystore)\b|\b(?:os\.(?:getenv|environ)|process\.env|system\.getenv|providers\.environmentVariable|Environment\.GetEnvironmentVariable)\b|(?:本地|本项目|项目|应用|程序|构建|签名).{0,20}(?:配置|开发|凭据|密钥|私钥|令牌|Key)|环境变量|配置文件)`)
 var routineCredentialRead = regexp.MustCompile(`(?i)(\b(?:read|load|locate|find|parse|getenv|getProperty|environmentVariable|GetEnvironmentVariable|load_dotenv)\b|os\.environ\b|process\.env\b|(?:读取|加载|解析|查找|定位)|\b(?:apksigner[ \t]+sign|keytool[ \t]+-list)\b)`)
 var routineCredentialExtract = regexp.MustCompile(`(?i)(?:\bextract\b|提取).{0,100}(?:\bconfig(?:uration)?\b|\.env\b|环境变量|项目配置)`)
 var credentialSensitiveOrigin = regexp.MustCompile(`(?i)(\b(?:hidden|stolen|victim|unauthorized|other users?|another user|browser cookies?|lsass|ntds|mimikatz)\b|他人|其他用户|别人的|隐藏凭据|隐藏密钥|隐藏令牌|浏览器.{0,12}(?:会话|Cookie|密码)|/etc/shadow|/proc/[0-9]+/environ|Login Data)`)
@@ -98,7 +98,7 @@ func localCredentialEvidenceAt(source string, start, end int) bool {
 	if hi-lo > 8192 {
 		return false
 	}
-	return routineCredentialLine(source[lo:hi])
+	return routineCredentialLine(source[lo:hi]) || currentSessionCredentialLine(source[lo:hi])
 }
 
 func routineCredentialRuleEvidence(r compiledRule, source string, ev cyberRuleEvidence) bool {

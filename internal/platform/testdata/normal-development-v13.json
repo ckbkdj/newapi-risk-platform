@@ -1,0 +1,176 @@
+[
+  {
+    "id": "maven-public-dsl",
+    "text": "repositories { mavenCentral(); google(); gradlePluginPortal(); }",
+    "quote": "repositories { mavenCentral(); google(); gradlePluginPortal(); }",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-mirror-dsl",
+    "text": "repositories { maven { url = uri(\"https://packages.example.invalid/releases\"); } }",
+    "quote": "repositories { maven { url = uri(\"https://packages.example.invalid/releases\"); } }",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-auth-dsl",
+    "text": "credentials { username = 'reader'; password = 'synthetic-public-read'; }",
+    "quote": "username = 'reader'",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-short-password",
+    "text": "password = 'abc'",
+    "quote": "password =",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-username",
+    "text": "username = 'reader'",
+    "quote": "username = 'reader'",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-settings-xml",
+    "text": "<settings><servers><server><id>internal</id><username>reader</username><password>synthetic-private-pass</password></server></servers></settings>",
+    "quote": "<server>",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-xml-repository",
+    "text": "<repository><id>public</id><url>https://packages.example.invalid/releases</url></repository>",
+    "quote": "<repository>",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-pom-download",
+    "text": "Downloading from central: https://repo.maven.apache.org/maven2/org/example/demo/1.0/demo-1.0.pom",
+    "quote": "https://repo.maven.apache.org/maven2/org/example/demo/1.0/demo-1.0.pom",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-aar-head",
+    "text": "curl -I --max-time 20 https://packages.example.invalid/releases/example/demo.aar",
+    "quote": "curl -I",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-powershell-head",
+    "text": "Invoke-WebRequest -Method Head -Uri https://packages.example.invalid/releases/example/demo.pom",
+    "quote": "Invoke-WebRequest",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-http-error",
+    "text": "Could not GET 'https://packages.example.invalid/releases/example/demo.pom'",
+    "quote": "Could not GET",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-build",
+    "text": "mvn -q -DskipTests package",
+    "quote": "mvn -q -DskipTests package",
+    "expected": "allow"
+  },
+  {
+    "id": "maven-dependency-tree",
+    "text": "mvn dependency:tree",
+    "quote": "mvn dependency:tree",
+    "expected": "allow"
+  },
+  {
+    "id": "gradle-dependencies",
+    "text": "./gradlew dependencies --refresh-dependencies",
+    "quote": "./gradlew dependencies --refresh-dependencies",
+    "expected": "allow"
+  },
+  {
+    "id": "gradle-windows",
+    "text": ".\\gradlew.bat :app:assembleDebug --stacktrace",
+    "quote": ".\\gradlew.bat :app:assembleDebug --stacktrace",
+    "expected": "allow"
+  },
+  {
+    "id": "gradle-offline",
+    "text": "./gradlew :app:assembleDebug --offline",
+    "quote": "./gradlew :app:assembleDebug --offline",
+    "expected": "allow"
+  },
+  {
+    "id": "credential-layout-json",
+    "text": "config/auth.json         OAuth tokens and credential pools",
+    "quote": "config/auth.json         OAuth tokens and credential pools",
+    "expected": "allow"
+  },
+  {
+    "id": "credential-layout-toml",
+    "text": "~/.sample/credentials.toml    SDK authentication configuration",
+    "quote": "~/.sample/credentials.toml    SDK authentication configuration",
+    "expected": "allow"
+  },
+  {
+    "id": "credential-layout-table",
+    "text": "| config/session.json | Session tokens and expiry metadata |",
+    "quote": "config/session.json",
+    "expected": "allow"
+  },
+  {
+    "id": "credential-layout-chinese",
+    "text": "config/auth.json    访问令牌和凭据池",
+    "quote": "config/auth.json    访问令牌和凭据池",
+    "expected": "allow"
+  },
+  {
+    "id": "sdk-session-zh",
+    "text": "从当前登录账号读取原始 `access_token`，传给业务 SDK，不再使用固定测试令牌。",
+    "quote": "从当前登录账号读取原始 `access_token`，传给业务 SDK，不再使用固定测试令牌。",
+    "expected": "allow"
+  },
+  {
+    "id": "sdk-auth-zh",
+    "text": "读取当前会话的访问令牌用于客户端请求头认证。",
+    "quote": "读取当前会话的访问令牌用于客户端请求头认证。",
+    "expected": "allow"
+  },
+  {
+    "id": "sdk-session-en",
+    "text": "Read the access token from the current session for SDK authentication.",
+    "quote": "Read the access token from the current session for SDK authentication.",
+    "expected": "allow"
+  },
+  {
+    "id": "environment-python",
+    "text": "key = os.getenv(\"SERVICE_API_KEY\")",
+    "quote": "os.getenv",
+    "expected": "allow"
+  },
+  {
+    "id": "environment-java",
+    "text": "val key = System.getenv(\"SERVICE_API_KEY\")",
+    "quote": "System.getenv",
+    "expected": "allow"
+  },
+  {
+    "id": "environment-node",
+    "text": "const key = process.env.SERVICE_API_KEY;",
+    "quote": "process.env.SERVICE_API_KEY",
+    "expected": "allow"
+  },
+  {
+    "id": "android-signing-properties",
+    "text": "val password = keystoreProperties.getProperty(\"keyPassword\")",
+    "quote": "keystoreProperties.getProperty",
+    "expected": "allow"
+  },
+  {
+    "id": "environment-presence",
+    "text": "e=Path.home()/'.sample/.env'; t=e.read_text() if e.exists() else ''; keys=['VENDOR_APP_ID','VENDOR_APP_SECRET']; print({'env_exists':e.exists(),'env_keys_present':{k:any(line.startswith(k+'=') and line.split('=',1)[1].strip() for line in t.splitlines()) for k in keys}})",
+    "quote": "keys=['VENDOR_APP_ID','VENDOR_APP_SECRET']; print(",
+    "expected": "allow"
+  },
+  {
+    "id": "environment-status",
+    "text": "p=Path.home()/'.sample/config.yaml'; e=Path.home()/'.sample/.env'; c=yaml.safe_load(p.read_text()) if p.exists() else {}; f=(c or {}).get('gateway',{}).get('vendor',{}); print({'config_exists':p.exists(),'env_exists':e.exists(),'vendor_config_present':bool(f),'vendor_enabled':f.get('enabled') if isinstance(f,dict) else None})",
+    "quote": "print({'config_exists'",
+    "expected": "allow"
+  }
+]

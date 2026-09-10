@@ -108,7 +108,7 @@ for name, payload, expected, calls in cases:
     status, data = call('/gateway/mock-main/v1/responses', payload, ROUTE, request_id)
     assert status == expected, (name, status, data)
     meta = trace_for(request_id)
-    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v12', meta
+    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v13', meta
     assert meta['audit_http_calls'] == calls and meta['upstream_started'] == (expected == 200), (name, meta)
     if calls == 0:
         assert meta['audit_source'] == 'rule', meta

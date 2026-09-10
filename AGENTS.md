@@ -1,3 +1,11 @@
+# Development precision boundary v13 (2026-09-10)
+
+The latest user requires ordinary daily development, public/private Maven dependency use and Android development to remain usable. Credential values/configuration presence, path-purpose documentation, current-login SDK token use, boolean presence checks, and state reads are not proof of theft or exfiltration. Judge an actual action, object, source, use and destination. Preserve actual banned-operation vetoes and the HTTP 555 contract; do not grant a repository/domain/Android/localhost blanket allow.
+
+Source-preserving masking must never turn an initializer such as `os.getenv` into a secret placeholder. Tests must quote the actual post-extraction model input, not the original pre-masking string. Both evidence-repair and operation-grounding phases use the same normal-development boundary. All retries remain bounded; repeated invalid evidence and infrastructure failures must not become allow. A corrected allow still needs independent normal verification. Do not alter operator custom rules or persisted enabled/action/profile/route bindings. Distinguish audit-coverage and infrastructure failures from proven content violations.
+
+The v13 corpus and HTTP fixtures are synthetic, NOT replay of complete production requests or a measured Qwen accuracy claim. Preserve the existing v11/v12 suites, including the formerly failing v12 primary-9 case. Run all Go/race/build/vet/script/privacy and full Docker E2E checks before merging. Do not commit private exports, actual user credentials, customer addresses, or temporary patch/assembly workflows in the final tree.
+
 # 本地开发凭据读取（v12 / 2026-09-10 用户最新边界）
 
 读取并使用本项目现有 Key、环境变量、.env、应用配置、服务凭据或 Gradle/AOSP 签名材料是常规研发，不因“read/读取 Key”单独判为泄露。此条取代旧的无条件凭据读取禁用解释；读取来源、实际用途和输出去向须分别判断，正常读取不必改写成安全处置。凭据仍是敏感信息，正常业务放行与日志脱敏是不同责任。禁止要求用户把真实 Key 加入回归或公开仓库。

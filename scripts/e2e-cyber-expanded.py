@@ -61,7 +61,7 @@ for name, payload, expected in cases:
     assert status == expected, (name, status, response)
     meta = trace_for(request_id)['metadata']
     assert meta['audit_policy_mode'] == 'cyber_deny', meta
-    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v12', meta
+    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v13', meta
     if expected == 555:
         assert meta['upstream_started'] is False, meta
         assert meta['audit_source'] == 'rule' and meta['audit_http_calls'] == 0, meta

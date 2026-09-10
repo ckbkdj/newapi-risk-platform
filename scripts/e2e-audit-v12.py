@@ -64,7 +64,7 @@ def check(name,text,want,calls,phase='',stream=False,chat=False):
     status,data=call('/gateway/mock-main/v1/'+('chat/completions' if chat else 'responses'),body,ROUTE,rid,stream)
     assert status==want,(name,status,data)
     meta=trace_for(rid)
-    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v12',meta
+    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v13',meta
     assert meta['audit_http_calls']==calls,(name,meta)
     assert meta['upstream_started']==(want==200),(name,meta)
     if want==200: assert meta['audit_completed'],meta
