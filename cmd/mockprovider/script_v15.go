@@ -68,10 +68,12 @@ func mockScriptV15(w http.ResponseWriter, r chatRequest) bool {
 			decision = "block"
 		}
 		if strings.Contains(text, "V15_PHASE=terminal;") || (repair && strings.Contains(text, "V15_FAILURE=terminal;")) {
-			decision, quote = "block", "perform the synthetic prohibited operation"
+			decision, quote = "block", v15TerminalQuote
+			code, category = "CYBER_MOCK_TERMINAL", "synthetic_test"
 		}
 		if repair && strings.Contains(text, "V15_FAILURE=review;") {
-			decision, quote = "review", "perform the synthetic prohibited operation"
+			decision, quote = "review", v15TerminalQuote
+			code, category = "CYBER_MOCK_TERMINAL", "synthetic_test"
 		}
 		if decision == "allow" {
 			code, category, quote = "", "normal_development", ""
