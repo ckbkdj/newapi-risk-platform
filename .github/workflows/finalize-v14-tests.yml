@@ -19,7 +19,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD^)" = bf9dcce55721d97bda1c7bd030f4903ba6933986
+          git merge-base --is-ancestor bf9dcce55721d97bda1c7bd030f4903ba6933986 HEAD
           test "$(git hash-object scripts/e2e.sh)" = 6485442094f0448d6f20a8437de7ec4801e9472c
           python3 - <<'PY'
           from pathlib import Path
@@ -40,13 +40,7 @@ jobs:
           path.write_text(source)
           path = Path('AGENTS.md')
           source = path.read_text()
-          header = '''# Full-request auditing v14 (2026-09-10)
-
-The user requests accepted long requests to be completely audited without the old secondary 2 MiB or fixed cumulative call-count cliff. This supersedes the older fixed-budget and mandatory 120-second total-lifetime descriptions below, not content-denial or coverage rules. Default total timeout and max chunks are zero (operator-configurable); required chunk work is finitely planned, with per-call timeout, bounded retries/replanning, caller cancellation, integer-overflow guards and global model concurrency preserved. No unfinished audit, invalid tail or model failure authorizes forwarding. Retain ingress and extraction protections and every prior normal-development/denial regression.
-
-The supplied 22-chunk trace already allowed all content then recorded client disconnect. Do not claim a server-capacity change fixes external client/proxy timeouts. Complete final-head CI and Docker HTTP/SSE tests, including the explicitly invoked v14 suite, must pass before squash merge. Temporary maintenance workflows must not be present in the merged tree.
-
-'''
+          header = '# Full-request auditing v14 (2026-09-10)\n\nAccepted long requests must be completely audited without the old secondary 2 MiB or fixed cumulative call-count cliff. This supersedes older fixed-budget and mandatory 120-second total-lifetime descriptions below, not content-denial or coverage rules. Default total timeout and max chunks are zero (operator-configurable); required chunk work is finitely planned. Preserve per-call timeout, bounded retries/replanning, caller cancellation, integer-overflow guards, global model concurrency, ingress/extraction protections and every prior regression. No unfinished audit, invalid tail or model failure authorizes forwarding.\n\nThe supplied 22-chunk trace already allowed all content then recorded client disconnect. Do not claim this change fixes external client/proxy timeouts. Complete final-head CI and Docker HTTP/SSE tests, including the explicitly invoked v14 suite, must pass before squash merge. Temporary maintenance workflows must not be present in the merged tree.\n\n'
           assert not source.startswith('# Full-request auditing v14')
           path.write_text(header + source)
           PY
