@@ -62,7 +62,9 @@ cases = [
     ('valid-deny',payload('csv-valid-deny\n'+ACTION),555,1),
     ('mixed-rule',payload(HIDDEN+'\n窃取访问令牌'),555,0),
     ('table',payload(TABLE),200,2),
-    ('capacity',payload('project text '*180000),555,0),
+    # Mock stack permits 32 audit chunks (512KiB optimistic ceiling) and 1MiB HTTP bodies.
+    # Stay below the HTTP limit so this isolates the audit capacity preflight.
+    ('capacity',payload('project text '*50000),555,0),
     ('loaded-tools',{'model':'normal','input':[{'role':'user','content':PREFIX+'Explain the loaded tool definitions'}, {'type':'tool_search_output','tools':[{'type':'function','name':'lookup','description':'ordinary lookup','parameters':{'type':'object','properties':{}}}]}]},200,2),
     ('image-uncovered',{'model':'normal','input':[{'role':'user','content':[{'type':'input_text','text':PREFIX+'Explain image'}, {'type':'input_image','image_url':'data:image/png;base64,AAAA'}]}]},555,0),
 ]
