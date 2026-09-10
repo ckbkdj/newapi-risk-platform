@@ -1,0 +1,35 @@
+name: Assemble reviewed Android audit v11 repair
+on:
+  push:
+    branches: [fix/escaped-observation-android-v11]
+    paths: [.github/workflows/assemble-v11.yml]
+permissions:
+  contents: write
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply exact reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          encoded = ''.join(Path(f'.repair-v11/part{i}.b64').read_text().strip() for i in range(4))
+          assert len(encoded) == 25992, 'transport size mismatch'
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert len(patch) == 66777, 'patch size mismatch'
+          assert hashlib.sha256(patch).hexdigest() == 'd2170e90d382d13317b42fc015baaa633f7aba5753cea8a80c9f4a8d4095f0e1', 'patch digest mismatch'
+          Path('/tmp/v11.patch').write_bytes(patch)
+          PY
+          git apply --check --unidiff-zero /tmp/v11.patch
+          git apply --index --unidiff-zero /tmp/v11.patch
+          git rm -r .repair-v11
+          git diff --cached --check
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(audit): escaped tool text and bounded Android diagnostic grounding (v11)'
+          git push origin HEAD:refs/heads/fix/escaped-observation-android-v11
