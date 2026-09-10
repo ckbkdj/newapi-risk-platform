@@ -50,12 +50,29 @@ type cyberRuleEvidence struct {
 	matchedRaw string
 }
 
-func matchCyberRuleEvidence(rule compiledRule, text string, lowerText string) (cyberRuleEvidence, bool) {
+func matchCyberRuleEvidence(rule compiledRule, text string, lowerText string, foldedText ...string) (cyberRuleEvidence, bool) {
 	var start, end int
 	switch rule.PatternType {
 	case "regex":
 		if rule.regularExpression == nil {
 			return cyberRuleEvidence{}, false
+		}
+		if len(text) > 8192 {
+			guard := rule.literalGuard
+			if guard == nil {
+				guard = auditRegexLiteralGuard(rule.regularExpression.String())
+			}
+			if guard != nil {
+				folded := ""
+				if len(foldedText) > 0 {
+					folded = foldedText[0]
+				} else {
+					folded = auditCanonicalFold(text)
+				}
+				if !guard.Match(text, folded) {
+					return cyberRuleEvidence{}, false
+				}
+			}
 		}
 		location := rule.regularExpression.FindStringIndex(text)
 		if location == nil {
@@ -144,7 +161,7 @@ func cyberRuleUserGuidance(rule CyberRule) string {
 }
 
 func redactCyberTraceText(value string) string {
-	value = strings.ToValidUTF8(value, "")
+	value = redactAuditSecretDiagnostics(strings.ToValidUTF8(value, ""))
 	for _, expression := range traceSensitivePatterns {
 		value = expression.ReplaceAllStringFunc(value, func(match string) string {
 			lower := strings.ToLower(match)

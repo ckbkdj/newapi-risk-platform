@@ -228,6 +228,12 @@ func auditModelErrorDetails(err error) (class string, httpStatus int, reason str
 		}
 		return class, httpStatus, reason
 	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "audit_deadline_exceeded", 0, "audit deadline exceeded"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "audit_cancelled", 0, "audit request cancelled"
+	}
 	return "unknown", 0, sanitizeAuditDiagnostic(err.Error())
 }
 

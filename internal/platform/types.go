@@ -191,6 +191,7 @@ type AuditResult struct {
 	AuditMode                   string                      `json:"audit_mode,omitempty"`
 	AuditHTTPBudget             int                         `json:"audit_http_budget"`
 	AuditReviewBudget           int                         `json:"audit_review_budget"`
+	AuditChunksReused           int                         `json:"audit_chunks_reused"`
 	AuditChunksCompleted        int                         `json:"audit_chunks_completed"`
 	AuditChunkCount             int                         `json:"audit_chunk_count,omitempty"`
 	AuditChunkBytes             int                         `json:"audit_chunk_bytes,omitempty"`

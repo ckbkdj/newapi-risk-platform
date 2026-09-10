@@ -43,6 +43,7 @@ evidence must be empty. Return the final compact JSON object immediately. Keep r
 type compiledRule struct {
 	CyberRule
 	regularExpression *regexp.Regexp
+	literalGuard      auditLiteralGuard
 	lowerPattern      string
 }
 
@@ -153,6 +154,7 @@ func (e *AuditEngine) ReloadRules(ctx context.Context) (loadErr error) {
 		switch rule.PatternType {
 		case "regex":
 			item.regularExpression, err = regexp.Compile(rule.Pattern)
+			item.literalGuard = auditRegexLiteralGuard(rule.Pattern)
 			if err != nil {
 				return fmt.Errorf("invalid enabled Cyber rule %d: %w", rule.ID, err)
 			}
@@ -410,6 +412,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	result.AuditMode = callMetadata.Mode
 	result.AuditChunkCount = callMetadata.ChunkCount
 	result.AuditChunksCompleted = callMetadata.ChunksCompleted
+	result.AuditChunksReused = callMetadata.ChunksReused
 	result.AuditChunkBytes = callMetadata.ChunkBytes
 	result.AuditRequestedTokens = callMetadata.RequestedTokens
 	result.AuditRequestedTokensLowerBound = callMetadata.RequestedTokensLowerBound
@@ -440,6 +443,9 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	}
 	if err != nil {
 		errorClass, auditHTTPStatus, reason := auditModelErrorDetails(err)
+		if ctx.Err() != nil && !strings.HasPrefix(errorClass, "cyber_") && !strings.HasPrefix(errorClass, "fusion_") {
+			errorClass, auditHTTPStatus, reason = auditModelErrorDetails(ctx.Err())
+		}
 		result.ErrorClass = errorClass
 		result.AuditFailureStage = "model"
 		result.AuditHTTPStatus = auditHTTPStatus

@@ -30,5 +30,5 @@ for name,panel,arbiter,decision,status,error in [
     assert result['decision']==decision,(name,result)
     assert result.get('error_class','')==error,(name,result)
     assert result['audit_semantic_reviews'][0]['fusion']['status']==status,(name,result)
-    assert result['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v9', (name, result['gateway_build'])
+    assert result['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v10', (name, result['gateway_build'])
 print('Strict Fusion all-allow, deny override, arbiter non-override and invalid vote E2E passed')
