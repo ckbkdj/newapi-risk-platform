@@ -1,3 +1,11 @@
+# Script and functional-test evidence v15 (2026-09-11)
+
+The user requires actual prohibited operations to remain denied while ordinary development testing stays usable. Script names, coordinate clicks, browser windows, test runners, historical task titles and security-warning documentation are not independently prohibited capabilities. Do not infer the content of an unseen script or turn a "test/research" claim into authorization.
+
+Validate only exact shipped/default rule relationships: closing browser windows is not disabling the ids.txt identifier list; reading a preview/build result is not reading a numeric output-token budget key; a specific untrusted-page warning is not a prompt-injection instruction. Check all targets within greedy matches and preserve overlapping/later genuine matches, raw and bounded decoded views, custom patterns and persisted operator configuration. Finite generic UI/test evidence in relevant model categories admits only the existing one same-source grounding check; corrected allow still requires normal verification. Valid operational denial and failed/repeated/invalid correction remain terminal 555. Do not omit any source/history or approve entire scripts from export excerpts.
+
+Preserve all v14 capacity/time/concurrency protections and existing suites. Add synthetic paired HTTP/SSE regressions and run final-head full CI/E2E before main merge. Never commit private exports or identify synthetic fixtures as live Qwen accuracy measurements; old CSV records are not rewritten.
+
 # Full-request auditing v14 (2026-09-10)
 
 Accepted long requests must be completely audited without the old secondary 2 MiB or fixed cumulative call-count cliff. This supersedes older fixed-budget and mandatory 120-second total-lifetime descriptions below, not content-denial or coverage rules. Default total timeout and max chunks are zero (operator-configurable); required chunk work is finitely planned. Preserve per-call timeout, bounded retries/replanning, caller cancellation, integer-overflow guards, global model concurrency, ingress/extraction protections and every prior regression. No unfinished audit, invalid tail or model failure authorizes forwarding.

@@ -34,7 +34,7 @@ func nonOperationalAuditEvidence(d AuditDecision, source string) bool {
 	if opaqueOperationEvidence.MatchString(q) && strings.Contains(source, q) {
 		return true
 	}
-	if normalDevelopmentAuditEvidence(q, source) || routineCredentialAuditEvidence(q, source) || negatedCredentialAuditEvidence(q, source) || developmentAuditEvidence(d, q, source) || administrativeAuditEvidence(d, q, source) || observationalAuditEvidence(q, source) {
+	if scriptDevelopmentAuditEvidence(d, q, source) || normalDevelopmentAuditEvidence(q, source) || routineCredentialAuditEvidence(q, source) || negatedCredentialAuditEvidence(q, source) || developmentAuditEvidence(d, q, source) || administrativeAuditEvidence(d, q, source) || observationalAuditEvidence(q, source) {
 		return true
 	}
 	at := strings.Index(source, q)
