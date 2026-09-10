@@ -1,0 +1,21 @@
+name: Export pinned v12 source for final verification
+on:
+  push:
+    branches: [fix/local-credential-semantics-v12]
+    paths: [.github/workflows/inspect-v12-source.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 89cc67aa22e035133db895221a702e6a19b6e741
+          persist-credentials: false
+      - run: git archive --format=tar.gz HEAD > /tmp/audit-v12-final-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-v12-final-source
+          path: /tmp/audit-v12-final-source.tar.gz
+          retention-days: 1
