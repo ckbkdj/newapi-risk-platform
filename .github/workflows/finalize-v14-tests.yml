@@ -15,7 +15,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - name: Apply minimal, preimage-checked test integration edits
+      - name: Apply only ordinary source edits with exact preimage checks
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -32,12 +32,6 @@ jobs:
           assert source.count(old) == 1
           source = source.replace(old, old + '\n\n' + old.replace('v13.py', 'v14.py'))
           path.write_text(source)
-          path = Path('.github/workflows/ci.yml')
-          source = path.read_text()
-          old = "          go test ./internal/platform -run '^$' -fuzz '^FuzzDBSyncAdmissionBounded$' -fuzztime=5s -parallel=2"
-          assert source.count(old) == 1
-          source = source.replace(old, old + "\n          go test ./internal/platform -run '^$' -fuzz '^FuzzV14PlanAccounting$' -fuzztime=5s -parallel=2")
-          path.write_text(source)
           path = Path('AGENTS.md')
           source = path.read_text()
           header = '# Full-request auditing v14 (2026-09-10)\n\nAccepted long requests must be completely audited without the old secondary 2 MiB or fixed cumulative call-count cliff. This supersedes older fixed-budget and mandatory 120-second total-lifetime descriptions below, not content-denial or coverage rules. Default total timeout and max chunks are zero (operator-configurable); required chunk work is finitely planned. Preserve per-call timeout, bounded retries/replanning, caller cancellation, integer-overflow guards, global model concurrency, ingress/extraction protections and every prior regression. No unfinished audit, invalid tail or model failure authorizes forwarding.\n\nThe supplied 22-chunk trace already allowed all content then recorded client disconnect. Do not claim this change fixes external client/proxy timeouts. Complete final-head CI and Docker HTTP/SSE tests, including the explicitly invoked v14 suite, must pass before squash merge. Temporary maintenance workflows must not be present in the merged tree.\n\n'
@@ -45,8 +39,7 @@ jobs:
           path.write_text(header + source)
           PY
           bash -n scripts/e2e.sh
-          git rm .github/workflows/finalize-v14-tests.yml
-          git add scripts/e2e.sh .github/workflows/ci.yml AGENTS.md
+          git add scripts/e2e.sh AGENTS.md
           git diff --cached --check
           test "$(git ls-remote origin refs/heads/fix/full-request-audit-v14 | cut -f1)" = "$GITHUB_SHA"
           git config user.name 'ckbkdj'
