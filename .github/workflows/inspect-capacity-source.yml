@@ -1,0 +1,22 @@
+name: Inspect pinned capacity source
+on:
+  push:
+    branches: [fix/adaptive-audit-capacity-v14]
+    paths: [.github/workflows/inspect-capacity-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4ec5741a9b45f46191c1aea6c4d27f5c5899c58a
+          persist-credentials: false
+      - run: git archive --format=tar.gz HEAD > audit-v13-pinned-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-v13-pinned-source
+          path: audit-v13-pinned-source.tar.gz
+          retention-days: 1
