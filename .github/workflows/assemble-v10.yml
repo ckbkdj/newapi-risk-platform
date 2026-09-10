@@ -33,5 +33,8 @@ jobs:
           git rm .github/workflows/source-v10.yml .github/workflows/assemble-v10.yml
           git diff --cached --check
           test "$(git write-tree)" = "44046051319e55160c4f40579f560bbb2501dee0"
+          # Workflow additions/deletions are finalized with the user's connected
+          # GitHub action; the Actions token changes runtime files only.
+          git restore --source=HEAD --staged --worktree .github/workflows
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(audit): negation, bounded chunk resume and private output diagnostics (v10)'
           git push origin HEAD:refs/heads/fix/audit-negation-retry-v10
