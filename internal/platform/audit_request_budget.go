@@ -1,21 +1,37 @@
 package platform
 
-// Base budgets are retained for small requests. Long requests reserve enough
-// space for two-pass auditing plus a bounded recovery margin. Never reset spent
-// calls on retries/fallback; concurrency and the 120s request deadline are unchanged.
-const cyberDenyMaxHTTPBudget = 256
-const cyberDenyMaxReviewBudget = 128
+// All retry/fallback and re-chunk loops remain finite. A context failure can
+// consume one single-call plan plus the existing bounded re-chunk attempts.
+const maxAuditChunkPlans = maxAuditTotalAttempts * (auditChunkRetryLimit + 1)
 
-func (s *auditSemanticState) configureChunkBudget(chunks int) {
-	if chunks < 1 {
-		return
+// Reserve the complete plan (primary and verifiers, each with at most one
+// existing repair), without resetting calls already spent on earlier plans.
+// Production reserves the maximum validated three-verifier panel. A smaller
+// plan is useful for explicit internal tests. This is NOT permission to allow.
+func (s *auditSemanticState) configureChunkBudget(chunks int, votes ...int) error {
+	reviewers := 3
+	if len(votes) == 1 {
+		reviewers = votes[0]
 	}
-	chunks = min(chunks, 256)
-	margin := 2 * min(chunks, 16)
-	httpLimit := min(cyberDenyMaxHTTPBudget, max(cyberDenyHTTPBudget, 2*chunks+margin))
-	reviewLimit := min(cyberDenyMaxReviewBudget, max(maxAuditSemanticCalls, chunks+margin))
+	invalid := func() error {
+		return newAuditModelCallError("cyber_plan_budget", 0, "invalid or exhausted finite audit work plan; forwarding denied", nil)
+	}
+	if chunks <= 0 || len(votes) > 1 || reviewers < 1 || reviewers > 3 {
+		return invalid()
+	}
+	httpPerChunk, reviewPerChunk := 2*(1+reviewers), 1+2*reviewers
+	maxInt := int(^uint(0) >> 1)
+	if chunks > maxInt/httpPerChunk || chunks > maxInt/reviewPerChunk {
+		return invalid()
+	}
+	httpWork, reviewWork := chunks*httpPerChunk, chunks*reviewPerChunk
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.httpBudget = max(s.httpBudget, httpLimit)
-	s.reviewBudget = max(s.reviewBudget, reviewLimit)
+	baseHTTP, baseReview := max(cyberDenyHTTPBudget, s.httpBudget), max(maxAuditSemanticCalls, s.reviewBudget)
+	if s.budgetPlans >= maxAuditChunkPlans || httpWork > maxInt-baseHTTP || reviewWork > maxInt-baseReview {
+		return invalid()
+	}
+	s.httpBudget, s.reviewBudget = baseHTTP+httpWork, baseReview+reviewWork
+	s.budgetPlans++
+	return nil
 }

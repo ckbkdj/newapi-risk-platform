@@ -211,20 +211,21 @@ func TestCSVProfileFailureClassification(t *testing.T) {
 	}
 }
 
-func TestCSVCapacityStopsBeforeModelAndDoesNotClaimCoverage(t *testing.T) {
+func TestCSVAcceptedLargeTextReachesCompleteModelAudit(t *testing.T) {
 	e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
-		t.Fatal("impossible request reached model")
-		return nil, nil
+		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
+	e.maxAuditChunks = 0
+	e.longContextTimeout = 30 * time.Second
 	body, _ := json.Marshal(map[string]string{"input": strings.Repeat("project text ", 180000)})
 	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
-	if got.Decision != DecisionBlock || got.ErrorClass != "audit_capacity_exceeded" || got.AuditHTTPCalls != 0 || got.AuditCoverageStatus != "incomplete" || !got.AuditInputPartial {
-		t.Fatalf("bad capacity handling: %s %s %+v", got.Decision, got.ErrorClass, got.AuditStageTimingsMS)
+	if got.Decision != DecisionAllow || got.ErrorClass != "" || got.AuditInputPartial || got.AuditChunksCompleted != got.AuditChunkCount || got.AuditHTTPCalls != 2*got.AuditChunkCount {
+		t.Fatalf("accepted text not completely audited: %s %s %d/%d", got.Decision, got.ErrorClass, got.AuditChunksCompleted, got.AuditChunkCount)
 	}
 	meta := map[string]any{}
 	recordAuditDecisionMetadata(meta, got)
-	if meta["audit_completed"] != false || meta["audit_decision_finalized"] != false || meta["audit_failure_stage"] != "extraction" {
-		t.Fatalf("partial data authorized: %+v", meta)
+	if meta["audit_completed"] != true || meta["audit_decision_finalized"] != true {
+		t.Fatal("complete audit not recorded")
 	}
 }
 

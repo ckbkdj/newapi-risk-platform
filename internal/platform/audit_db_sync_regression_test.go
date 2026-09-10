@@ -155,23 +155,21 @@ func TestDBSyncAdmissionIsNotAnAllowlist(t *testing.T) {
 	}
 }
 
-func TestDBSyncBudgetCeilingAndSpentCallsArePreserved(t *testing.T) {
+func TestDBSyncAdaptiveBudgetAndSpentCallsArePreserved(t *testing.T) {
 	s := &auditSemanticState{httpCalls: 60, reviewCalls: 30}
-	s.configureChunkBudget(60)
-	if s.httpBudget != 152 || s.reviewBudget != 92 || s.httpCalls != 60 || s.reviewCalls != 30 {
-		t.Fatalf("unexpected plan: %+v", s)
+	if err := s.configureChunkBudget(60, 1); err != nil {
+		t.Fatal(err)
 	}
-	s.configureChunkBudget(1 << 30)
-	if s.httpBudget != cyberDenyMaxHTTPBudget || s.reviewBudget != cyberDenyMaxReviewBudget {
-		t.Fatal("unbounded request budget")
+	if s.httpBudget < 120 || s.reviewBudget < 60 || s.httpCalls != 60 || s.reviewCalls != 30 {
+		t.Fatal("incomplete two-pass plan")
 	}
-	s.configureChunkBudget(2)
-	if s.httpBudget != 256 || s.reviewBudget != 128 || s.httpCalls != 60 {
-		t.Fatal("retry reset budget or spent calls")
+	h, r := s.httpBudget, s.reviewBudget
+	if err := s.configureChunkBudget(300, 1); err != nil || s.httpBudget <= h || s.reviewBudget <= r {
+		t.Fatal("larger plan clipped")
 	}
 	s.reviewCalls = s.reviewBudget
 	if s.reserveReview() {
-		t.Fatal("review budget exceeded")
+		t.Fatal("planned review budget exceeded")
 	}
 }
 

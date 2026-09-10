@@ -69,7 +69,7 @@ for name,body,want,calls in cases:
     meta=trace_for(rid)
     assert meta['audit_http_calls']==calls,(name,meta)
     assert meta['upstream_started']==(want==200),(name,meta)
-    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v13',meta
+    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v14',meta
     inputs=meta.get('audit_model_inputs') or []
     assert len(inputs)==calls,(name,meta)
     if calls:

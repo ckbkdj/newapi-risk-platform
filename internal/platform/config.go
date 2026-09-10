@@ -60,6 +60,8 @@ type Config struct {
 	AuditChunkOverlapBytes         int
 	AuditChunkConcurrency          int
 	AuditMaxChunks                 int
+	AuditRequestTimeout            time.Duration
+	AuditModelConcurrency          int
 	SSELineMaxBytes                int
 	TraceQueueSize                 int
 	TraceBatchSize                 int
@@ -122,7 +124,9 @@ func LoadConfig() (Config, error) {
 		AuditFallbackChunkBytes:        envInt("AUDIT_FALLBACK_CHUNK_BYTES", 192*1024),
 		AuditChunkOverlapBytes:         envInt("AUDIT_CHUNK_OVERLAP_BYTES", 4096),
 		AuditChunkConcurrency:          envInt("AUDIT_CHUNK_CONCURRENCY", 2),
-		AuditMaxChunks:                 envInt("AUDIT_MAX_CHUNKS", 256),
+		AuditMaxChunks:                 envInt("AUDIT_MAX_CHUNKS", 0),
+		AuditRequestTimeout:            envDuration("AUDIT_REQUEST_TIMEOUT", 0),
+		AuditModelConcurrency:          envInt("AUDIT_MODEL_CONCURRENCY", defaultAuditModelConcurrency),
 		SSELineMaxBytes:                envInt("SSE_LINE_MAX_BYTES", 1024*1024),
 		TraceQueueSize:                 envInt("TRACE_QUEUE_SIZE", 32768),
 		TraceBatchSize:                 envInt("TRACE_BATCH_SIZE", 256),
@@ -214,8 +218,14 @@ func (c Config) Validate() error {
 	if c.AuditChunkConcurrency < 1 || c.AuditChunkConcurrency > 16 {
 		problems = append(problems, "AUDIT_CHUNK_CONCURRENCY must be between 1 and 16")
 	}
-	if c.AuditMaxChunks < 2 || c.AuditMaxChunks > 256 {
-		problems = append(problems, "AUDIT_MAX_CHUNKS must be between 2 and 256")
+	if c.AuditMaxChunks < 0 || c.AuditMaxChunks > 1000000 {
+		problems = append(problems, "AUDIT_MAX_CHUNKS must be 0 for automatic planning or a positive count up to 1000000")
+	}
+	if c.AuditRequestTimeout < 0 || c.AuditRequestTimeout > 24*time.Hour {
+		problems = append(problems, "AUDIT_REQUEST_TIMEOUT must be 0 or a duration up to 24h")
+	}
+	if c.AuditModelConcurrency < 0 || c.AuditModelConcurrency > 256 {
+		problems = append(problems, "AUDIT_MODEL_CONCURRENCY must be 0 for default or between 1 and 256")
 	}
 	if c.SSELineMaxBytes < 64*1024 || c.SSELineMaxBytes > 8*1024*1024 {
 		problems = append(problems, "SSE_LINE_MAX_BYTES must be between 64 KiB and 8 MiB")

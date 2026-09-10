@@ -39,7 +39,7 @@ func auditChunkCheckpointID(scope auditSourceScope, chunk string, index, total i
 	return sha256.Sum256([]byte(document))
 }
 func (c *auditChunkCheckpoint) put(id [32]byte, d AuditDecision, err error) {
-	if c == nil || err != nil || d.Decision != DecisionAllow || len(c.allows) >= cyberDenyMaxReviewBudget {
+	if c == nil || err != nil || d.Decision != DecisionAllow {
 		return
 	}
 	// Called only after callModelOnceWithEvidenceSource, which completes BOTH

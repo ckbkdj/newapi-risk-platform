@@ -63,6 +63,8 @@ type AuditEngine struct {
 	chunkOverlapBytes         int
 	chunkConcurrency          int
 	maxAuditChunks            int
+	requestTimeout            time.Duration
+	modelSlots                chan struct{}
 	refreshInterval           time.Duration
 	log                       *slog.Logger
 	rules                     atomic.Value
@@ -77,6 +79,10 @@ func NewAuditEngine(
 	log *slog.Logger,
 ) *AuditEngine {
 	resolvedTextMaxBytes, textLimitMode := resolveAuditTextMaxBytes(cfg.AuditTextMaxBytes, cfg.RequestHardMaxBytes)
+	slots := cfg.AuditModelConcurrency
+	if slots <= 0 {
+		slots = defaultAuditModelConcurrency
+	}
 	engine := &AuditEngine{
 		store:    store,
 		security: security,
@@ -100,6 +106,8 @@ func NewAuditEngine(
 		chunkOverlapBytes:         cfg.AuditChunkOverlapBytes,
 		chunkConcurrency:          cfg.AuditChunkConcurrency,
 		maxAuditChunks:            cfg.AuditMaxChunks,
+		requestTimeout:            cfg.AuditRequestTimeout,
+		modelSlots:                make(chan struct{}, slots),
 		refreshInterval:           cfg.RulesRefreshInterval,
 		log:                       log,
 		adaptiveQueue:             make(chan adaptiveFailureSample, adaptiveLearningQueueSize),
@@ -282,7 +290,7 @@ func (e *AuditEngine) matchRulesWithScope(text string, policy AuditPolicy, refer
 func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (result AuditResult) {
 	started := time.Now()
 	ctx = context.WithValue(ctx, cyberDenyContextKey{}, true)
-	ctx, cancel := context.WithTimeout(ctx, cyberDenyDeadline)
+	ctx, cancel := e.fullAuditContext(ctx)
 	defer cancel()
 	stages := map[string]int64{}
 	phaseStarted := time.Now()
@@ -603,6 +611,12 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 	if originalBytes, ok := ctx.Value(auditOriginalTextBytesKey{}).(int); ok && originalBytes > textBytes {
 		textBytes = originalBytes
 	}
+	release, slotErr := e.acquireAuditModelSlot(ctx)
+	if slotErr != nil {
+		return AuditDecision{}, slotErr
+	}
+	defer release()
+	// Queue time is not model execution time; start the per-call timeout now.
 	timeout := e.auditRequestTimeout(profile, textBytes)
 	requestContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

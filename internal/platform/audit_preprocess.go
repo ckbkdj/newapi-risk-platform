@@ -18,16 +18,9 @@ func (r auditContextReader) Read(p []byte) (int, error) {
 	return r.reader.Read(p)
 }
 
-// This is an optimistic upper bound, not a claim that every request below it
-// fits. Overlap, task boundaries, repairs and Fusion can require more calls.
-// Above it no two-pass full-content allow can fit the existing hard budgets.
-func (e *AuditEngine) auditCapacityTextLimit() int {
-	chunks := min(cyberDenyMaxHTTPBudget/2, cyberDenyMaxReviewBudget)
-	if e.maxAuditChunks > 0 {
-		chunks = min(chunks, e.maxAuditChunks)
-	}
-	return chunks * cyberDenyChunkBytes
-}
+// Zero disables only the derived two-pass capacity ceiling. Extraction and
+// ingress limits still bound memory; no incomplete request may be forwarded.
+func (e *AuditEngine) auditCapacityTextLimit() int { return 0 }
 
 func auditProfileFailure(ctx context.Context, p AuditProfile, err error) error {
 	if ctx.Err() != nil {
