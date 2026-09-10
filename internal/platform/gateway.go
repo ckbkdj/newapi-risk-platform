@@ -272,6 +272,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			trace.Metadata["error_origin"] = "risk_gateway"
 			trace.Metadata["failure_stage"] = "gateway_ingress"
 			trace.Metadata["failure_component"] = "large_request_memory_guard"
+			trace.Metadata["large_request_max_concurrency"] = g.cfg.LargeRequestMaxConcurrency
+			trace.Metadata["large_request_active"] = len(g.largeBodies)
+			trace.Metadata["retryable"] = true
+			trace.Metadata["retry_after_seconds"] = 1
+			trace.Metadata["security_violation"] = false
 			trace.Metadata["error_reason"] = "large request concurrency limit reached; retry when another large request finishes"
 			finish("error", "LARGE_REQUEST_CONCURRENCY_LIMITED", http.StatusServiceUnavailable, 0, 0)
 			w.Header().Set("Retry-After", "1")

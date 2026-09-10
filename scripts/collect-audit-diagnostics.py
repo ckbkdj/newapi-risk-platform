@@ -31,10 +31,10 @@ ROOT = Path(__file__).resolve().parents[1]
 LIMIT = 8 * 1024 * 1024
 HEX = re.compile(r"^[a-f0-9]{7,64}$")
 DECISIONS = {"allow", "review", "block"}
-CONTRACTS = {"risk_audit_request.v2", "risk_audit_output.v2", "output-resilience-fusion.v1", "intent-coverage-guard.v2", "cyber-deny-qwen27b.v4", "cyber-deny-qwen27b.v5", "cyber-deny-qwen27b.v6", "cyber-deny-qwen27b.v7", "cyber-deny-qwen27b.v8"}
+CONTRACTS = {"risk_audit_request.v2", "risk_audit_output.v2", "output-resilience-fusion.v1", "intent-coverage-guard.v2", "cyber-deny-qwen27b.v4", "cyber-deny-qwen27b.v5", "cyber-deny-qwen27b.v6", "cyber-deny-qwen27b.v7", "cyber-deny-qwen27b.v8", "cyber-deny-qwen27b.v9"}
 LABELS = {"high", "medium", "low", "numeric", "numeric_string", "qualitative"}
-COVERAGE_ISSUES = {"ambiguous_input_fields", "unsupported_role", "input_structure_depth", "invalid_request_json", "reference_context_limit", "unsupported_input_content", "missing_continuation_context", "unresolved_previous_response", "input_text_truncated", "no_auditable_user_intent"}
-ERRORS = {"cyber_input_integrity", "audit_http_budget", "cyber_evidence_unresolved", "cyber_operation_unresolved", "non_operational_evidence", "cyber_output_conflict", "audit_uncertain_allow", "input_coverage", "invalid_json", "invalid_schema", "invalid_evidence", "invalid_semantic_evidence", "ambiguous_output", "timeout", "connection", "response_read", "response_format", "response_too_large", "output_limits", "output_truncated", "empty_response", "invalid_decision", "structured_output_unsupported", "context_length", "input_too_large", "authentication", "endpoint_or_model_not_found", "rate_limited", "audit_server_error", "http_status", "fusion_incomplete", "fusion_configuration", "fusion_profile_unavailable", "semantic_review_budget", "semantic_verifier_configuration", "semantic_verifier_unavailable", "retry_budget_exhausted", "unknown"}
+COVERAGE_ISSUES = {"audit_capacity_exceeded", "ambiguous_input_fields", "unsupported_role", "input_structure_depth", "invalid_request_json", "reference_context_limit", "unsupported_input_content", "missing_continuation_context", "unresolved_previous_response", "input_text_truncated", "no_auditable_user_intent"}
+ERRORS = {"audit_profile_not_found", "audit_profile_disabled", "audit_profile_lookup_timeout", "audit_profile_lookup_failed", "audit_capacity_exceeded", "audit_cancelled", "audit_deadline_exceeded", "cyber_rule_candidate_budget", "rules_unavailable", "cyber_input_integrity", "audit_http_budget", "cyber_evidence_unresolved", "cyber_operation_unresolved", "non_operational_evidence", "cyber_output_conflict", "audit_uncertain_allow", "input_coverage", "invalid_json", "invalid_schema", "invalid_evidence", "invalid_semantic_evidence", "ambiguous_output", "timeout", "connection", "response_read", "response_format", "response_too_large", "output_limits", "output_truncated", "empty_response", "invalid_decision", "structured_output_unsupported", "context_length", "input_too_large", "authentication", "endpoint_or_model_not_found", "rate_limited", "audit_server_error", "http_status", "fusion_incomplete", "fusion_configuration", "fusion_profile_unavailable", "semantic_review_budget", "semantic_verifier_configuration", "semantic_verifier_unavailable", "retry_budget_exhausted", "unknown"}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -106,19 +106,22 @@ def output_shape(raw):
 def trace_view(obj, depth=0):
     if not isinstance(obj, dict) or depth > 6:
         return {}
-    numeric = ("audit_conversation_reference_count", "audit_embedded_reference_count", "audit_profile_id", "profile_id", "attempt", "audit_http_calls", "audit_http_budget", "audit_review_budget", "audit_semantic_review_calls", "audit_model_attempts", "audit_model_retries", "audit_chunk_count", "audit_chunks_completed", "audit_chunk_bytes", "audit_intent_bytes", "audit_input_tokens", "audit_context_window_tokens", "output_max_tokens", "response_content_bytes", "http_status", "audit_output_max_tokens", "timeline_duration_ms", "audit_latency_ms", "text_bytes")
-    out = select(obj, numeric, ("audit_model_inputs_truncated", "success", "upstream_started", "audit_completed", "audit_decision_finalized", "audit_decision_adjusted", "audit_model_evidence_verified", "disagreement"), {
+    numeric = ("audit_capacity_text_limit_bytes", "audit_requested_profile_id", "large_request_max_concurrency", "large_request_active", "retry_after_seconds", "audit_conversation_reference_count", "audit_embedded_reference_count", "audit_profile_id", "profile_id", "attempt", "audit_http_calls", "audit_http_budget", "audit_review_budget", "audit_semantic_review_calls", "audit_model_attempts", "audit_model_retries", "audit_chunk_count", "audit_chunks_completed", "audit_chunk_bytes", "audit_intent_bytes", "audit_input_tokens", "audit_context_window_tokens", "output_max_tokens", "response_content_bytes", "http_status", "audit_output_max_tokens", "timeline_duration_ms", "audit_latency_ms", "text_bytes")
+    out = select(obj, numeric, ("audit_input_partial", "retryable", "security_violation", "audit_model_inputs_truncated", "success", "upstream_started", "audit_completed", "audit_decision_finalized", "audit_decision_adjusted", "audit_model_evidence_verified", "disagreement"), {
         "decision": DECISIONS, "audit_effective_decision": DECISIONS, "audit_model_decision": DECISIONS,
         "error_class": ERRORS, "audit_error_class": ERRORS, "candidate_error": ERRORS,
         "audit_input_contract": CONTRACTS, "audit_output_contract": CONTRACTS,
         "confidence_kind": LABELS, "confidence_label": LABELS, "audit_model_confidence_kind": LABELS, "audit_model_confidence_label": LABELS,
         "audit_coverage_status": {"complete", "incomplete"},
+        "audit_failure_stage": {"extraction", "scope", "rules", "coverage", "profile", "planning", "model"},
         "status": {"evidence_repair_corrected", "evidence_repair_confirmed", "evidence_repair_error", "grounding_corrected", "grounding_confirmed", "grounding_error", "see_attempts", "escalated", "confirmed", "overturned", "unresolved", "error", "consensus", "adjudicated"},
         "audit_semantic_review_status": {"evidence_repair_corrected", "evidence_repair_confirmed", "evidence_repair_error", "grounding_corrected", "grounding_confirmed", "grounding_error", "see_attempts", "escalated", "confirmed", "overturned", "unresolved", "error", "consensus", "adjudicated"},
         "audit_policy_mode": {"strict", "internal_engineering", "cyber_deny"},
         "finish_reason": {"stop", "length", "max_tokens", "tool_calls"},
         "output_mode": {"json_schema", "json_object", "vllm_structured_json", "guided_json", "prompt_only"},
     })
+    if isinstance(obj.get("audit_stage_timings_ms"), dict):
+        out["audit_stage_timings_ms"] = select(obj["audit_stage_timings_ms"], ("extraction", "scope", "rules", "profile", "model"))
     if isinstance(obj.get("audit_coverage_issues"), list):
         out["audit_coverage_issues"] = [value if isinstance(value, str) and value in COVERAGE_ISSUES else "other" for value in obj["audit_coverage_issues"][:16]]
     if isinstance(obj.get("audit_coverage_details"), list):
@@ -128,7 +131,7 @@ def trace_view(obj, depth=0):
                 "type": {"unknown", "input_image", "image_url", "input_audio", "audio", "output_audio", "video", "input_file", "file", "item_reference", "refusal", "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output", "tool_search_call", "tool_search_output", "message", "input_text", "text", "output_text"},
                 "role": {"unknown", "USER", "ASSISTANT_DATA", "TOOL_DATA"}})
             path = item.get("path") if isinstance(item, dict) else None
-            if isinstance(path, str) and len(path) <= 1024 and re.fullmatch(r"\$(?:(?:\.(?:input|messages|prompt|query|content|text|arguments|output|tool_calls|function_call|function))|\[[0-9]{1,9}\])*", path):
+            if isinstance(path, str) and len(path) <= 1024 and re.fullmatch(r"\$(?:(?:\.(?:input|messages|prompt|query|content|text|arguments|output|tools|tool_calls|function_call|function))|\[[0-9]{1,9}\])*", path):
                 safe["path"] = path
             details.append(safe)
         out["audit_coverage_details"] = details

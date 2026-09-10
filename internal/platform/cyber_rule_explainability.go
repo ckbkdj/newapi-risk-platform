@@ -125,7 +125,7 @@ func shouldReviewCredentialSelfService(rule CyberRule, text string) (bool, strin
 func cyberRuleUserGuidance(rule CyberRule) string {
 	switch rule.Category {
 	case "credential_access", "credential_theft":
-		return "本平台禁用实际读取、提取或导出凭据；授权、本人密钥和调试用途不构成豁免。只读文档或不需要密钥的说明不应被当成凭据读取，请核对实际动作与命中证据。"
+		return "请核对凭据来源及实际操作：用户主动输入并用于正常认证，不等于从隐藏存储提取、窃取或披露秘密。本地开发说明不是全请求豁免；存在实际禁用操作仍会拒绝。"
 	case "malware", "command_and_control", "persistence":
 		return "如果目的是防御或分析，请改为描述样本分析、IOC 提取、检测、隔离、清理、修复或阻断目标，不要要求生成、部署或维持恶意载荷。"
 	case "defense_evasion":
@@ -139,7 +139,7 @@ func cyberRuleUserGuidance(rule CyberRule) string {
 	case "exfiltration":
 		return "如果是在排查数据泄露，请改为描述检测、审计、阻断、取证或验证数据流向，不要要求导出他人或未授权数据。"
 	default:
-		return "请把请求改写为防御、检测、审计、修复、取证、合规或明确的安全处置目标，避免要求可直接用于未授权攻击的操作能力。"
+		return "请核对命中证据是否确实包含禁用操作；普通本地开发、认证设计和配置说明不应单独成为攻击依据。误判请提交请求追踪信息，不能仅靠改写用途说明放行实际禁用操作。"
 	}
 }
 

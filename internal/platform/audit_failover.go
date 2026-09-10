@@ -162,7 +162,7 @@ func (e *AuditEngine) callModelWithFailover(
 			metadata.Attempts = append(metadata.Attempts, attemptRecord)
 			// A required fusion panel cannot be bypassed by a fallback profile
 			// that has no panel configured. Missing assessments are unresolved.
-			if strings.HasPrefix(attemptRecord.ErrorClass, "cyber_") || strings.HasPrefix(attemptRecord.ErrorClass, "fusion_") || (cyberDenyActive(ctx) && (strings.HasPrefix(attemptRecord.ErrorClass, "semantic_verifier_") || attemptRecord.ErrorClass == "audit_http_budget" || attemptRecord.ErrorClass == "semantic_review_budget")) {
+			if strings.HasPrefix(attemptRecord.ErrorClass, "cyber_") || strings.HasPrefix(attemptRecord.ErrorClass, "fusion_") || (cyberDenyActive(ctx) && (strings.HasPrefix(attemptRecord.ErrorClass, "semantic_verifier_") || attemptRecord.ErrorClass == "audit_capacity_exceeded" || attemptRecord.ErrorClass == "audit_http_budget" || attemptRecord.ErrorClass == "semantic_review_budget")) {
 				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), err
 			}
 			if attempt >= retries || !auditErrorRetryableOnSameProfile(err) {
