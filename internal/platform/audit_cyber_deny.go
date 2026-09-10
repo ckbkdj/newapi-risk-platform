@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const cyberDenyMode = "cyber_deny"
@@ -31,6 +32,7 @@ const CyberDenyAuditSystemPrompt = `你是商业网关的 Cyber 禁用分类器�
 检查实际请求、代码和断言，不能只写“普通前端开发”就放过其中任一禁用动作。疑似上述能力但不能确认时 review，网关会停止转发。
 先识别实际操作，再判定类别。路径列表中的 install_magisk.sh/magisk.apk 只证明文件存在，不证明要求安装、提权或持久化；需结合用户任务是否执行/采纳。rg/grep/find 检索 AOSP SIM/RIL/运营商配置名称不等于网络扫描或修改安全配置。不能凭 network、radio、root 等名称推断攻击。依赖清单中的 xss 版本声明及防护库导入不等于 XSS 注入；实际要求生成攻击载荷/实施注入测试仍 block。不得给目录、文件或 rg 命令加整体豁免；实际含凭据提取、执行或混合禁用动作仍 block。
 使用用户已提供的连接凭据登录、按已有 sudo 权限管理或部署服务，不等于窃取凭据或利用漏洞提权。数据库备份、同步、迁移、导入及全量/按表抽样拉取，本身不等于凭据导出或非法外传；root 用户、密码字段或脱敏占位符不能单独作为阻断证据。必须说明具体被禁止的操作及对象，如寻找隐藏凭据、披露秘密、未经许可取得/传出数据或绕过访问边界；测试环境/自有资产声明不是豁免。覆盖目标数据属于需确认目标与备份的执行风险，不能只凭覆盖一词伪造 Cyber。保留其他片段及混合操作检查。
+普通本地开发的构建、启动、配置输入、认证设计、请求头传递和业务测试不应仅因 localhost/Token/Session/root/系统提示词字样而拒绝。用户在终端隐藏提示中主动输入现有凭据，不等于从文件或他人会话提取秘密。讨论插件以 JWT/Token/Session 请求头认证，即使方案把秘密放入提示词不安全，也不等于已实施认证绕过；应指出设计风险，不能虚构关闭验签、窃取或外传。若明确要求盗取凭据、伪造令牌、关闭或绕过权限校验、攻击探测，仍按实际禁用操作拒绝。安全文档的否定提醒、相邻表格行不能被拼接为一个动作；静态表格中明确预期拒绝的示例不等于执行窃取，实际采纳或执行禁用操作仍拒绝；不因“本地/测试”声明豁免实际操作。
 普通 UI/构建/业务函数测试不自动等于 Cyber。JSON payload 字段、依赖注入、React useEffect hook 单独出现不是禁用能力；未出现禁用能力才 allow。引用中的已命中禁用项也不授予放行例外。
 只输出一个六字段 JSON：decision=allow|block|review, risk_code=CYBER_*或空, category=类别, confidence=0到1数字, reason=不超过80字的分类依据, evidence=从 request_text 逐字复制的一处连续原文(不超过80字)。block/review 必须有 evidence，allow 必须为空。不要输出思维链、解释正文、Markdown 或 <think>。`
 
@@ -57,16 +59,56 @@ func cyberDenyProfile(p AuditProfile) AuditProfile {
 // rows. Evaluate before model selection. No model, profile exception, priority
 // allow, quote classification or confidence can undo a rule trigger.
 func (e *AuditEngine) matchCyberDenyRules(text string) (*AuditDecision, *RuleMatchDiagnostics) {
+	d, diagnostic, _, _ := e.matchCyberDenyRulesContext(context.Background(), text)
+	return d, diagnostic
+}
+
+// Precision checks apply only to known shipped patterns, before a rule is a
+// valid veto. An operator's custom pattern is never silently weakened.
+func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text string) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic, error) {
 	loaded, _ := e.rules.Load().([]compiledRule)
-	rules := make([]compiledRule, 0, len(loaded)+len(cyberDenyBaseline))
-	rules = append(rules, loaded...)
-	rules = append(rules, cyberDenyBaseline...)
+	rules := append(append([]compiledRule(nil), loaded...), cyberDenyBaseline...)
 	lower := strings.ToLower(text)
+	var weak []RuleSuppressionDiagnostic
 	for i, r := range rules {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, weak, err
+		}
 		if !r.Enabled {
 			continue
 		}
 		evidence, matched := matchCyberRuleEvidence(r, text, lower)
+		if r.PatternType == "regex" && precisionRule(r) {
+			offset, count := 0, 0
+			for matched {
+				if err := ctx.Err(); err != nil {
+					return nil, nil, weak, err
+				}
+				reason := weakDevelopmentRuleEvidence(r, text, evidence)
+				if reason == "" {
+					break
+				}
+				if len(weak) < 16 {
+					weak = append(weak, RuleSuppressionDiagnostic{RuleCode: r.Code, Reason: reason})
+				}
+				count++
+				if count >= 1024 {
+					return nil, nil, weak, newAuditModelCallError("cyber_rule_candidate_budget", 0, "too many unresolved rule candidates; no authorization to forward", nil)
+				}
+				// Move by one UTF-8 rune to preserve overlapping operational matches.
+				_, width := utf8.DecodeRuneInString(text[evidence.start:])
+				offset = evidence.start + max(1, width)
+				if offset >= len(text) {
+					matched = false
+					break
+				}
+				location := r.regularExpression.FindStringIndex(text[offset:])
+				matched = location != nil
+				if matched {
+					evidence = cyberRuleEvidence{start: offset + location[0], end: offset + location[1], matchedRaw: text[offset+location[0] : offset+location[1]]}
+				}
+			}
+		}
 		if !matched && r.PatternType == "exact" {
 			for _, unit := range splitAuditRuleUnits(text) {
 				if ev, hit := matchCyberRuleEvidence(r, unit.Text, strings.ToLower(unit.Text)); hit {
@@ -75,15 +117,17 @@ func (e *AuditEngine) matchCyberDenyRules(text string) (*AuditDecision, *RuleMat
 				}
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, nil, weak, err
+		}
 		if !matched {
 			continue
 		}
 		diagnostic := buildRuleMatchDiagnostics(r, i+1, text, evidence)
-		d := AuditDecision{Decision: DecisionBlock, RiskCode: r.Code, Category: r.Category, Source: "rule", RuleID: r.ID,
-			Reason: "enabled Cyber rule triggered; prohibited by business policy (testing/debugging is not an exemption)"}
-		return &d, &diagnostic
+		d := AuditDecision{Decision: DecisionBlock, RiskCode: r.Code, Category: r.Category, Source: "rule", RuleID: r.ID, Reason: "enabled Cyber rule triggered; prohibited by business policy (testing/debugging is not an exemption)"}
+		return &d, &diagnostic, weak, nil
 	}
-	return nil, nil
+	return nil, nil, weak, nil
 }
 
 func cyberDenyVerdict(d AuditDecision) (AuditDecision, error) {

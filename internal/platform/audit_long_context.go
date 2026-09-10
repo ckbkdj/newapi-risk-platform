@@ -93,8 +93,17 @@ func (e *AuditEngine) callModel(
 			)
 		}
 
+		if err := ctx.Err(); err != nil {
+			return AuditDecision{}, metadata, err
+		}
 		if state, ok := ctx.Value(auditSemanticStateKey{}).(*auditSemanticState); ok && cyberDenyActive(ctx) {
 			state.configureChunkBudget(len(chunks))
+			// Each chunk requires at least a primary and one verifier. Refuse an
+			// impossible plan before occupying model slots; do not clip history or
+			// silently drop verification to fit. Fusion may need further budget.
+			if len(chunks) > cyberDenyMaxHTTPBudget/2 || len(chunks) > cyberDenyMaxReviewBudget {
+				return AuditDecision{}, metadata, newAuditModelCallError("audit_capacity_exceeded", 0, "complete two-pass chunk plan exceeds the audit call budget", nil)
+			}
 		}
 		progress := &atomic.Int32{}
 		chunkCtx := context.WithValue(ctx, auditChunkProgressKey{}, progress)

@@ -70,4 +70,15 @@ class DiagnosticsPrivacyTests(unittest.TestCase):
         self.assertTrue(result["audit_model_inputs_truncated"])
         self.assertEqual(result["audit_semantic_reviews"][0]["status"],"evidence_repair_corrected")
 
+    def test_csv_failure_diagnostics_do_not_export_driver_errors(self):
+        secret = 'DRIVER_SECRET_SENTINEL'
+        result = diag.trace_view({'audit_error_class':'audit_profile_lookup_failed',
+            'audit_failure_stage':'profile', 'audit_requested_profile_id':1, 'audit_input_partial':True,
+            'audit_stage_timings_ms':{'extraction':12,'profile':5000,secret:30},
+            'driver_error':secret,'reason':secret,'retryable':True,'security_violation':False})
+        self.assertNotIn(secret,json.dumps(result))
+        self.assertEqual(result['audit_error_class'],'audit_profile_lookup_failed')
+        self.assertEqual(result['audit_stage_timings_ms'],{'extraction':12,'profile':5000})
+        self.assertFalse(result['security_violation'])
+
 if __name__=='__main__':unittest.main()

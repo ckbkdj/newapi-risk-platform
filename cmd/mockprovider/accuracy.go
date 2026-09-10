@@ -14,6 +14,10 @@ func mockAccuracyVerification(w http.ResponseWriter, request chatRequest) bool {
 		return false
 	}
 	control := messageText(request)
+	if strings.Contains(text, "csv-development-mechanism") {
+		mockLocalDevelopment(w, text, control)
+		return true
+	}
 	if strings.Contains(text, "evidence-repair-mechanism") {
 		mockEvidenceRepair(w, text, control)
 		return true

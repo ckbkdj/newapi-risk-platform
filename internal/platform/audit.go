@@ -282,18 +282,20 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	ctx = context.WithValue(ctx, cyberDenyContextKey{}, true)
 	ctx, cancel := context.WithTimeout(ctx, cyberDenyDeadline)
 	defer cancel()
-	extraction := extractCyberAuditText(body, e.maxTextBytes)
+	stages := map[string]int64{}
+	phaseStarted := time.Now()
+	extraction, extractionErr := extractCyberAuditTextContext(ctx, body, e.maxTextBytes, e.auditCapacityTextLimit())
+	stages["extraction"] = time.Since(phaseStarted).Milliseconds()
 	text := extraction.Text
-	scope := makeAuditSourceScopeWithReferences(text, extraction.ReferenceSpans)
-	ctx = context.WithValue(ctx, auditSourceScopeKey{}, scope)
 	result = AuditResult{
+		AuditStageTimingsMS: stages, AuditRequestedProfileID: route.AuditProfileID, AuditCapacityTextLimit: e.auditCapacityTextLimit(), AuditInputPartial: extractionErr != nil,
 		AuditCoverageStatus:             extraction.CoverageStatus,
 		AuditCoverageIssues:             append([]string(nil), extraction.CoverageIssues...),
 		AuditCoverageDetails:            append([]AuditCoverageDetail(nil), extraction.CoverageDetails...),
 		AuditInputContract:              auditInputContractVersion,
 		AuditOutputContract:             auditOutputContractVersion,
 		GatewayBuild:                    CurrentBuildInformation(),
-		AuditEmbeddedReferenceCount:     len(auditReferenceSpans(text)),
+		AuditEmbeddedReferenceCount:     0,
 		AuditConversationReferenceCount: len(extraction.ReferenceSpans),
 		AuditDecision: AuditDecision{
 			Decision:   DecisionAllow,
@@ -320,28 +322,85 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		result.Latency = time.Since(started)
 	}()
 	result.AuditPolicyMode = cyberDenyMode
-	matched, ruleMatch := e.matchCyberDenyRules(extraction.ruleText)
+	fail := func(err error, stage string) {
+		result.ErrorClass, _, _ = auditModelErrorDetails(err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			result.ErrorClass = "audit_deadline_exceeded"
+		}
+		if errors.Is(err, context.Canceled) {
+			result.ErrorClass = "audit_cancelled"
+		}
+		result.AuditFailureStage = stage
+		_, _, reason := auditModelErrorDetails(err)
+		if result.ErrorClass == "audit_deadline_exceeded" || result.ErrorClass == "audit_cancelled" {
+			reason = "audit stopped during " + stage + ": " + result.ErrorClass
+		}
+		riskCode := "AUDIT_MODEL_ERROR"
+		switch result.ErrorClass {
+		case "rules_unavailable":
+			riskCode = "AUDIT_RULES_UNAVAILABLE"
+		case "audit_profile_not_found", "audit_profile_disabled", "audit_profile_lookup_failed", "audit_profile_lookup_timeout":
+			riskCode = "AUDIT_MODEL_UNAVAILABLE"
+		case "audit_capacity_exceeded", "input_too_large":
+			riskCode = "AUDIT_CONTEXT_TOO_LARGE"
+		}
+		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: riskCode, Category: "audit_infrastructure", Reason: reason, Source: "platform"}
+	}
+	if extractionErr != nil {
+		fail(extractionErr, "extraction")
+		return result
+	}
+	if err := ctx.Err(); err != nil {
+		fail(err, "extraction")
+		return result
+	}
+	phaseStarted = time.Now()
+	scope := makeAuditSourceScopeWithReferences(text, extraction.ReferenceSpans)
+	ctx = context.WithValue(ctx, auditSourceScopeKey{}, scope)
+	result.AuditEmbeddedReferenceCount = len(auditReferenceSpans(text))
+	stages["scope"] = time.Since(phaseStarted).Milliseconds()
+	if err := ctx.Err(); err != nil {
+		fail(err, "scope")
+		return result
+	}
+	phaseStarted = time.Now()
+	matched, ruleMatch, weak, ruleErr := e.matchCyberDenyRulesContext(ctx, extraction.ruleText)
+	stages["rules"] = time.Since(phaseStarted).Milliseconds()
 	result.RuleMatch = ruleMatch
+	result.AuditRuleSuppressions = weak
+	if ruleErr != nil {
+		fail(ruleErr, "rules")
+		return result
+	}
 	if matched != nil {
 		result.AuditDecision = *matched
 		return result
 	}
 	if e.ruleLoadFailed.Load() {
-		result.ErrorClass = "rules_unavailable"
-		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: "AUDIT_RULES_UNAVAILABLE", Category: "audit_infrastructure", Reason: "enabled Cyber rule snapshot could not be refreshed", Source: "platform"}
+		fail(newAuditModelCallError("rules_unavailable", 0, "enabled Cyber rule snapshot could not be refreshed", nil), "rules")
 		return result
 	}
 	if extraction.CoverageStatus != "complete" {
 		result.ErrorClass = "input_coverage"
+		result.AuditFailureStage = "coverage"
 		result.AuditDecision = auditIncompleteInputDecision(true, extraction.CoverageIssues)
 		return result
 	}
-	profile, profileErr := e.getAuditProfile(ctx, route.AuditProfileID)
-	if profileErr != nil || !profile.Enabled {
-		result.ErrorClass = "audit_profile_unavailable"
-		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: "AUDIT_MODEL_UNAVAILABLE", Category: "audit_infrastructure", Confidence: 1, Reason: "no enabled audit model is available", Source: "platform"}
+	if err := ctx.Err(); err != nil {
+		fail(err, "profile")
 		return result
 	}
+	phaseStarted = time.Now()
+	lookupCtx, lookupCancel := context.WithTimeout(ctx, 5*time.Second)
+	profile, profileErr := e.getAuditProfile(lookupCtx, route.AuditProfileID)
+	lookupCancel()
+	stages["profile"] = time.Since(phaseStarted).Milliseconds()
+	if profileErr != nil || !profile.Enabled {
+		fail(auditProfileFailure(ctx, profile, profileErr), "profile")
+		return result
+	}
+	phaseStarted = time.Now()
+	defer func() { stages["model"] = time.Since(phaseStarted).Milliseconds() }()
 	profile = cyberDenyProfile(profile)
 	decision, usedProfile, failoverMetadata, err := e.callModelWithFailover(ctx, profile, text)
 	callMetadata := failoverMetadata.CallMetadata
@@ -382,9 +441,13 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	if err != nil {
 		errorClass, auditHTTPStatus, reason := auditModelErrorDetails(err)
 		result.ErrorClass = errorClass
+		result.AuditFailureStage = "model"
 		result.AuditHTTPStatus = auditHTTPStatus
+		if errorClass == "audit_capacity_exceeded" {
+			result.AuditFailureStage = "planning"
+		}
 		riskCode := "AUDIT_MODEL_ERROR"
-		if errorClass == "context_length" || errorClass == "input_too_large" {
+		if errorClass == "context_length" || errorClass == "input_too_large" || errorClass == "audit_capacity_exceeded" {
 			riskCode = "AUDIT_CONTEXT_TOO_LARGE"
 		}
 		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: riskCode, Category: "audit_infrastructure", Confidence: 1, Reason: reason, Source: "platform"}

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strconv"
@@ -15,22 +16,47 @@ import (
 // Control prompts and tool schemas are excluded, not executed or trusted as
 // proof. Opaque remote history and non-text modalities remain unsupported.
 func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+	out, _ := extractCyberAuditTextContext(context.Background(), body, limit, 0)
+	return out
+}
+
+func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capacity int) (AuditTextExtraction, error) {
+	if err := ctx.Err(); err != nil {
+		return AuditTextExtraction{CoverageStatus: "incomplete"}, err
+	}
+
 	if limit <= 0 {
 		limit = 256 * 1024
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder := json.NewDecoder(auditContextReader{ctx: ctx, reader: bytes.NewReader(body)})
 	decoder.UseNumber()
 	root, decodeErr := readAuditJSONValue(decoder, 0)
+	if err := ctx.Err(); err != nil {
+		return AuditTextExtraction{CoverageStatus: "incomplete"}, err
+	}
 	if _, trailing := decoder.Token(); trailing != io.EOF && decodeErr == nil {
 		decodeErr = io.ErrUnexpectedEOF
 	}
 	if decodeErr != nil || !utf8.Valid(body) {
-		return AuditTextExtraction{CoverageStatus: "incomplete", CoverageIssues: []string{"invalid_request_json"}, Scope: "cyber_user_history_and_tool_data"}
+		return AuditTextExtraction{CoverageStatus: "incomplete", CoverageIssues: []string{"invalid_request_json"}, Scope: "cyber_user_history_and_tool_data"}, nil
 	}
 	out := AuditTextExtraction{CoverageStatus: "complete", Scope: "cyber_user_history_and_tool_data"}
 	var b, raw strings.Builder
+	var workErr error
 	var appendText func(string, string, bool)
 	appendText = func(role, text string, reference bool) {
+		if workErr != nil {
+			return
+		}
+		if workErr = ctx.Err(); workErr != nil {
+			return
+		}
+		if capacity > 0 && b.Len()+len(text)+len(role)+7 > capacity {
+			out.RawIntentBytes += len(text)
+			out.addCoverageIssue("audit_capacity_exceeded")
+			workErr = newAuditModelCallError("audit_capacity_exceeded", 0, "auditable text exceeds the maximum two-pass capacity; no content was authorized or forwarded", nil)
+			return
+		}
 		if strings.TrimSpace(text) == "" {
 			return
 		}
@@ -45,8 +71,16 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 		}
 		// Mask secret values only; do NOT remove text preceding "My request",
 		// clipboard-looking paths, tests, assertions or a safety reminder.
-		out.SecretPlaceholderCount += len(secretAssignmentPattern.FindAllStringIndex(text, -1))
-		text = secretAssignmentPattern.ReplaceAllString(text, "${1}[USER_PROVIDED_SECRET]")
+		// One match pass counts and replaces secret assignments. Never duplicate
+		// an expensive full-text regex scan merely to compute a counter.
+		text = secretAssignmentPattern.ReplaceAllStringFunc(text, func(match string) string {
+			out.SecretPlaceholderCount++
+			parts := secretAssignmentPattern.FindStringSubmatchIndex(match)
+			return match[parts[2]:parts[3]] + "[USER_PROVIDED_SECRET]"
+		})
+		if workErr = ctx.Err(); workErr != nil {
+			return
+		}
 		text = bearerSecretPattern.ReplaceAllString(text, "${1}[USER_PROVIDED_SECRET]")
 		text = openAISecretPattern.ReplaceAllString(text, "[USER_PROVIDED_SECRET]")
 		text = awsSecretPattern.ReplaceAllString(text, "[USER_PROVIDED_SECRET]")
@@ -65,6 +99,12 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 	}
 	var collect func(any, string, string, int)
 	collect = func(v any, role, path string, depth int) {
+		if workErr != nil {
+			return
+		}
+		if workErr = ctx.Err(); workErr != nil {
+			return
+		}
 		if depth > 32 {
 			out.coverageProblem("input_structure_depth", path, "unknown", role)
 			return
@@ -111,6 +151,21 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 				return
 			}
 			found := false
+			// Loaded tool definitions are returned under tools, not output. Keep
+			// their whole JSON as untrusted text instead of silently skipping them.
+			// This is not the request-root tools configuration exclusion.
+			if kind == "tool_search_output" {
+				if definitions, exists := x["tools"]; exists {
+					found = true
+					if !auditLoadedToolDefinitions(definitions, 0) {
+						out.coverageProblem("unsupported_input_content", path+".tools", kind, role)
+					} else if data, err := json.Marshal(definitions); err != nil {
+						out.coverageProblem("unsupported_input_content", path+".tools", kind, role)
+					} else {
+						appendText(role, string(data), true)
+					}
+				}
+			}
 			for _, key := range []string{"content", "text", "input", "prompt", "query", "arguments", "output", "tool_calls", "function_call", "function"} {
 				if child, exists := x[key]; exists {
 					found = true
@@ -172,6 +227,13 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 	} else {
 		collect(root, "USER", "$", 0)
 	}
+	if workErr != nil {
+		out.Text = b.String()
+		out.ruleText = raw.String()
+		out.IntentBytes = len(out.Text)
+		out.CoverageStatus = "incomplete"
+		return out, workErr
+	}
 	out.ContextActivated = out.ActiveUserMessages > 1 || len(out.ReferenceSpans) > 0
 	out.Text = b.String()
 	out.ruleText = raw.String()
@@ -191,7 +253,7 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 			out.addCoverageIssue("missing_continuation_context")
 		}
 	}
-	return out
+	return out, ctx.Err()
 }
 
 // Responses API's top-level text config is analogous to response_format, not
@@ -255,6 +317,33 @@ func isResponsesOutputTextConfig(value any) bool {
 					}
 				}
 			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// Only documented textual tool definitions; unknown modalities remain uncovered.
+func auditLoadedToolDefinitions(value any, depth int) bool {
+	list, ok := value.([]any)
+	if !ok || depth > 16 || len(list) > 512 {
+		return false
+	}
+	for _, item := range list {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			return false
+		}
+		switch obj["type"] {
+		case "function", "custom":
+			if name, ok := obj["name"].(string); !ok || strings.TrimSpace(name) == "" {
+				return false
+			}
+		case "namespace":
+			if !auditLoadedToolDefinitions(obj["tools"], depth+1) {
 				return false
 			}
 		default:

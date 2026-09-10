@@ -158,6 +158,11 @@ type AuditAttempt struct {
 }
 
 type AuditResult struct {
+	AuditStageTimingsMS             map[string]int64             `json:"audit_stage_timings_ms,omitempty"`
+	AuditFailureStage               string                       `json:"audit_failure_stage,omitempty"`
+	AuditRequestedProfileID         *int64                       `json:"audit_requested_profile_id,omitempty"`
+	AuditCapacityTextLimit          int                          `json:"audit_capacity_text_limit_bytes,omitempty"`
+	AuditInputPartial               bool                         `json:"audit_input_partial,omitempty"`
 	AuditConversationReferenceCount int                          `json:"audit_conversation_reference_count"`
 	AuditCoverageStatus             string                       `json:"audit_coverage_status"`
 	AuditCoverageIssues             []string                     `json:"audit_coverage_issues,omitempty"`

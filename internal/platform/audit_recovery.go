@@ -101,6 +101,19 @@ func recordAuditDecisionMetadata(metadata map[string]any, result AuditResult) {
 		return
 	}
 	metadata["audit_effective_decision"] = result.Decision
+	metadata["audit_stage_timings_ms"] = result.AuditStageTimingsMS
+	metadata["audit_capacity_text_limit_bytes"] = result.AuditCapacityTextLimit
+	metadata["audit_input_partial"] = result.AuditInputPartial
+	if result.AuditFailureStage != "" {
+		metadata["audit_failure_stage"] = result.AuditFailureStage
+	}
+	if result.AuditRequestedProfileID != nil {
+		metadata["audit_requested_profile_id"] = *result.AuditRequestedProfileID
+	}
+	if len(result.AuditRuleSuppressions) > 0 {
+		metadata["audit_rule_non_operational_candidates"] = result.AuditRuleSuppressions
+	}
+
 	metadata["audit_coverage_status"] = result.AuditCoverageStatus
 	if len(result.AuditCoverageIssues) > 0 {
 		metadata["audit_coverage_issues"] = result.AuditCoverageIssues
