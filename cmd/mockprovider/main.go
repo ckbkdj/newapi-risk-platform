@@ -51,6 +51,9 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if mockFullRequestV14(w, request) {
+		return
+	}
 	text := strings.ToLower(messageText(request))
 	rawUserText := userMessageText(request)
 	userText := strings.ToLower(rawUserText)

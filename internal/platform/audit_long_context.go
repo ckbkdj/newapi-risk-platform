@@ -60,6 +60,11 @@ func (e *AuditEngine) callModel(
 		metadata.Mode = "chunked_for_audit_budget"
 		chunkBytes = cyberDenyChunkBytes
 	} else {
+		if state, ok := ctx.Value(auditSemanticStateKey{}).(*auditSemanticState); ok && cyberDenyActive(ctx) {
+			if err := state.configureChunkBudget(1); err != nil {
+				return AuditDecision{}, metadata, err
+			}
+		}
 		decision, err := e.callModelOnce(ctx, profile, text)
 		if err == nil {
 			metadata.ChunksCompleted = 1
@@ -81,7 +86,7 @@ func (e *AuditEngine) callModel(
 		if metadata.Mode == "chunked_for_audit_budget" {
 			metadata.RetryCount = retry
 		}
-		if len(chunks) > e.maxAuditChunks {
+		if e.maxAuditChunks > 0 && len(chunks) > e.maxAuditChunks {
 			return AuditDecision{}, metadata, newAuditModelCallError(
 				"input_too_large",
 				0,
@@ -98,12 +103,8 @@ func (e *AuditEngine) callModel(
 			return AuditDecision{}, metadata, err
 		}
 		if state, ok := ctx.Value(auditSemanticStateKey{}).(*auditSemanticState); ok && cyberDenyActive(ctx) {
-			state.configureChunkBudget(len(chunks))
-			// Each chunk requires at least a primary and one verifier. Refuse an
-			// impossible plan before occupying model slots; do not clip history or
-			// silently drop verification to fit. Fusion may need further budget.
-			if len(chunks) > cyberDenyMaxHTTPBudget/2 || len(chunks) > cyberDenyMaxReviewBudget {
-				return AuditDecision{}, metadata, newAuditModelCallError("audit_capacity_exceeded", 0, "complete two-pass chunk plan exceeds the audit call budget", nil)
+			if err := state.configureChunkBudget(len(chunks)); err != nil {
+				return AuditDecision{}, metadata, err
 			}
 		}
 		progress := &atomic.Int32{}

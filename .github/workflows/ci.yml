@@ -68,7 +68,9 @@ jobs:
               'AUDIT_FALLBACK_CHUNK_BYTES': '196608',
               'AUDIT_CHUNK_OVERLAP_BYTES': '4096',
               'AUDIT_CHUNK_CONCURRENCY': '2',
-              'AUDIT_MAX_CHUNKS': '256',
+              'AUDIT_MAX_CHUNKS': '0',
+              'AUDIT_REQUEST_TIMEOUT': '0s',
+              'AUDIT_MODEL_CONCURRENCY': '16',
           }
           for key, value in expected.items():
               assert current.get(key) == value, (key, current.get(key), value)
@@ -117,7 +119,7 @@ jobs:
           assert values['REQUEST_LARGE_BODY_MAX_CONCURRENCY'] == '4'
           assert values['AUDIT_TEXT_MAX_BYTES'] == '0'
           assert values['AUDIT_OUTPUT_MAX_TOKENS'] == '256'
-          assert values['AUDIT_MAX_CHUNKS'] == '256'
+          assert values['AUDIT_MAX_CHUNKS'] == '0'
           PY
 
       - name: Verify module lock and formatting

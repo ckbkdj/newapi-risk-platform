@@ -62,9 +62,9 @@ cases = [
     ('valid-deny',payload('csv-valid-deny\n'+ACTION),555,1),
     ('mixed-rule',payload(HIDDEN+'\n窃取访问令牌'),555,0),
     ('table',payload(TABLE),200,2),
-    # Mock stack permits 32 audit chunks (512KiB optimistic ceiling) and 1MiB HTTP bodies.
+    # The old 512KiB derived cap no longer rejects accepted 1MiB HTTP bodies.
     # Stay below the HTTP limit so this isolates the audit capacity preflight.
-    ('capacity',payload('project text '*50000),555,0),
+    ('capacity',payload('project text '*50000),200,None),
     ('loaded-tools',{'model':'normal','input':[{'role':'user','content':PREFIX+'Explain the loaded tool definitions'}, {'type':'tool_search_output','tools':[{'type':'function','name':'lookup','description':'ordinary lookup','parameters':{'type':'object','properties':{}}}]}]},200,2),
     ('image-uncovered',{'model':'normal','input':[{'role':'user','content':[{'type':'input_text','text':PREFIX+'Explain image'}, {'type':'input_image','image_url':'data:image/png;base64,AAAA'}]}]},555,0),
 ]
@@ -73,19 +73,28 @@ for name,body,want,calls in cases:
     status,data=call('/gateway/mock-main/v1/responses',body,ROUTE,rid)
     assert status==want,(name,status,data)
     meta=trace_for(rid)
-    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v13',meta
-    assert meta['audit_http_calls']==calls,(name,meta)
+    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v14',meta
+    if calls is not None: assert meta['audit_http_calls']==calls,(name,meta)
     assert meta['upstream_started']==(want==200),(name,meta)
     assert 'extraction' in meta['audit_stage_timings_ms'],meta
     if name in {'repeat','invalid','unavailable'}:
         assert meta['audit_error_class']=='cyber_operation_unresolved',meta
     if name=='capacity':
-        assert meta['audit_error_class']=='audit_capacity_exceeded' and meta['audit_failure_stage']=='extraction',meta
-        assert not meta['audit_completed'] and meta['audit_input_partial'] and meta['audit_coverage_status']=='incomplete',meta
+        assert meta['audit_completed'] and not meta['audit_input_partial'] and meta['audit_coverage_status']=='complete',meta
+        assert meta['audit_chunks_completed']==meta['audit_chunk_count'] and meta['audit_chunk_count']>32,meta
+        # Context-window recovery calls are counted, not erased. The mock rejects
+        # every chunk at the three larger sizes; at most two primary calls are
+        # in flight per failed plan in docker-compose.test.yml. No verifier runs
+        # for those failures. Every final chunk must still have both decisions.
+        chunks=meta['audit_chunk_count']
+        retries=meta.get('audit_chunk_retry_count',0)
+        assert 0<=retries<=3,meta
+        assert meta['audit_semantic_review_calls']==chunks,meta
+        assert 2*chunks<=meta['audit_http_calls']<=2*chunks+2*retries,meta
     if name=='image-uncovered':
         assert meta['audit_error_class']=='input_coverage' and not meta['audit_completed'],meta
     if want==200:
-        assert meta['audit_completed'] and meta['audit_chunks_completed']==1,meta
+        assert meta['audit_completed'] and meta['audit_chunks_completed']==meta['audit_chunk_count'],meta
     if name in {'auth-primary','auth-verifier'}:
         inputs=meta['audit_model_inputs']
         assert len({i['document_hmac'] for i in inputs})==1,meta

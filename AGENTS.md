@@ -1,3 +1,9 @@
+# Full-request auditing v14 (2026-09-10)
+
+Accepted long requests must be completely audited without the old secondary 2 MiB or fixed cumulative call-count cliff. This supersedes older fixed-budget and mandatory 120-second total-lifetime descriptions below, not content-denial or coverage rules. Default total timeout and max chunks are zero (operator-configurable); required chunk work is finitely planned. Preserve per-call timeout, bounded retries/replanning, caller cancellation, integer-overflow guards, global model concurrency, ingress/extraction protections and every prior regression. No unfinished audit, invalid tail or model failure authorizes forwarding.
+
+The supplied 22-chunk trace already allowed all content then recorded client disconnect. Do not claim this change fixes external client/proxy timeouts. Complete final-head CI and Docker HTTP/SSE tests, including the explicitly invoked v14 suite, must pass before squash merge. Temporary maintenance workflows must not be present in the merged tree.
+
 # Development precision boundary v13 (2026-09-10)
 
 The latest user requires ordinary daily development, public/private Maven dependency use and Android development to remain usable. Credential values/configuration presence, path-purpose documentation, current-login SDK token use, boolean presence checks, and state reads are not proof of theft or exfiltration. Judge an actual action, object, source, use and destination. Preserve actual banned-operation vetoes and the HTTP 555 contract; do not grant a repository/domain/Android/localhost blanket allow.

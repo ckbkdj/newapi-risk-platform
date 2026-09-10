@@ -94,7 +94,9 @@ audit_defaults = {
     "AUDIT_FALLBACK_CHUNK_BYTES": "196608",
     "AUDIT_CHUNK_OVERLAP_BYTES": "4096",
     "AUDIT_CHUNK_CONCURRENCY": "2",
-    "AUDIT_MAX_CHUNKS": "256",
+    "AUDIT_MAX_CHUNKS": "0",
+    "AUDIT_REQUEST_TIMEOUT": "0s",
+    "AUDIT_MODEL_CONCURRENCY": "16",
 }
 for key, default in audit_defaults.items():
     current = values.get(key, "").strip()
@@ -109,10 +111,10 @@ for key, default in audit_defaults.items():
         warnings.append(
             "AUDIT_OUTPUT_MAX_TOKENS was increased from 128 to 256 so the six-field structured policy JSON is not truncated."
         )
-    if key == "AUDIT_MAX_CHUNKS" and current == "64":
+    if key == "AUDIT_MAX_CHUNKS" and current in {"64", "256"}:
         should_set = True
         warnings.append(
-            "AUDIT_MAX_CHUNKS was increased from 64 to 256 for complete large-text request auditing."
+            "AUDIT_MAX_CHUNKS legacy default was changed to 0 for full accepted-request audit planning; retries and model concurrency remain bounded."
         )
     if key == "AUDIT_CONTEXT_TARGET_TOKENS" and current == "260000":
         should_set = True

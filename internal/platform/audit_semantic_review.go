@@ -28,6 +28,7 @@ type auditSemanticState struct {
 	mu           sync.Mutex
 	httpCalls    int
 	httpBudget   int
+	budgetPlans  int
 	reviewBudget int
 	reviewCalls  int
 	reviews      int
