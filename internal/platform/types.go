@@ -158,6 +158,7 @@ type AuditAttempt struct {
 }
 
 type AuditResult struct {
+	AuditPreflight                  *AuditPreflightDiagnostics   `json:"audit_preflight,omitempty"`
 	AuditConversationReferenceCount int                          `json:"audit_conversation_reference_count"`
 	AuditCoverageStatus             string                       `json:"audit_coverage_status"`
 	AuditCoverageIssues             []string                     `json:"audit_coverage_issues,omitempty"`

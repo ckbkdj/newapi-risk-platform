@@ -282,18 +282,29 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	ctx = context.WithValue(ctx, cyberDenyContextKey{}, true)
 	ctx, cancel := context.WithTimeout(ctx, cyberDenyDeadline)
 	defer cancel()
-	extraction := extractCyberAuditText(body, e.maxTextBytes)
+	pre := &AuditPreflightDiagnostics{StageMS: map[string]int64{}, ProfileSelection: "default"}
+	if route.AuditProfileID != nil && *route.AuditProfileID > 0 {
+		pre.ProfileSelection = "route"
+		pre.RequestedProfileID = *route.AuditProfileID
+	}
+	result = AuditResult{AuditPreflight: pre, AuditPolicyMode: cyberDenyMode, GatewayBuild: CurrentBuildInformation(), AuditCoverageStatus: "incomplete", AuditInputContract: auditInputContractVersion, AuditOutputContract: auditOutputContractVersion}
+	defer func() { result.Latency = time.Since(started) }()
+	if auditPreflightInterrupted(ctx, &result, "input_extract") {
+		return result
+	}
+	stageStart := time.Now()
+	extraction := extractCyberAuditTextContext(ctx, body, e.maxTextBytes)
+	pre.StageMS["input_extract"] = time.Since(stageStart).Milliseconds()
 	text := extraction.Text
-	scope := makeAuditSourceScopeWithReferences(text, extraction.ReferenceSpans)
-	ctx = context.WithValue(ctx, auditSourceScopeKey{}, scope)
 	result = AuditResult{
+		AuditPreflight:                  pre,
 		AuditCoverageStatus:             extraction.CoverageStatus,
 		AuditCoverageIssues:             append([]string(nil), extraction.CoverageIssues...),
 		AuditCoverageDetails:            append([]AuditCoverageDetail(nil), extraction.CoverageDetails...),
 		AuditInputContract:              auditInputContractVersion,
 		AuditOutputContract:             auditOutputContractVersion,
 		GatewayBuild:                    CurrentBuildInformation(),
-		AuditEmbeddedReferenceCount:     len(auditReferenceSpans(text)),
+		AuditEmbeddedReferenceCount:     0,
 		AuditConversationReferenceCount: len(extraction.ReferenceSpans),
 		AuditDecision: AuditDecision{
 			Decision:   DecisionAllow,
@@ -316,34 +327,66 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		AuditEphemeralArtifactCount: extraction.EphemeralArtifactCount,
 		AuditSecretPlaceholderCount: extraction.SecretPlaceholderCount,
 	}
-	defer func() {
-		result.Latency = time.Since(started)
-	}()
 	result.AuditPolicyMode = cyberDenyMode
-	matched, ruleMatch := e.matchCyberDenyRules(extraction.ruleText)
+	if auditPreflightInterrupted(ctx, &result, "input_extract") {
+		return result
+	}
+	stageStart = time.Now()
+	capacityRejected := e.rejectImpossibleAuditCapacity(ctx, text, &result)
+	pre.StageMS["capacity"] = time.Since(stageStart).Milliseconds()
+	if capacityRejected {
+		return result
+	}
+	stageStart = time.Now()
+	matched, ruleMatch, ruleErr := e.matchCyberDenyRulesContext(ctx, extraction.ruleText, pre)
+	pre.StageMS["rules"] = time.Since(stageStart).Milliseconds()
+	if auditPreflightInterrupted(ctx, &result, "rules") {
+		return result
+	}
+	if ruleErr != nil {
+		failAuditPreflight(&result, "rules", "rules_unavailable", "AUDIT_RULES_UNAVAILABLE", "rule evidence inspection did not complete")
+		return result
+	}
 	result.RuleMatch = ruleMatch
 	if matched != nil {
 		result.AuditDecision = *matched
 		return result
 	}
 	if e.ruleLoadFailed.Load() {
+		pre.FailureStage = "rules"
 		result.ErrorClass = "rules_unavailable"
 		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: "AUDIT_RULES_UNAVAILABLE", Category: "audit_infrastructure", Reason: "enabled Cyber rule snapshot could not be refreshed", Source: "platform"}
 		return result
 	}
 	if extraction.CoverageStatus != "complete" {
+		pre.FailureStage = "input_extract"
 		result.ErrorClass = "input_coverage"
 		result.AuditDecision = auditIncompleteInputDecision(true, extraction.CoverageIssues)
 		return result
 	}
-	profile, profileErr := e.getAuditProfile(ctx, route.AuditProfileID)
-	if profileErr != nil || !profile.Enabled {
-		result.ErrorClass = "audit_profile_unavailable"
-		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: "AUDIT_MODEL_UNAVAILABLE", Category: "audit_infrastructure", Confidence: 1, Reason: "no enabled audit model is available", Source: "platform"}
+	stageStart = time.Now()
+	lookupCtx, lookupCancel := context.WithTimeout(ctx, auditProfileLookupTimeout)
+	profile, profileErr := e.getAuditProfile(lookupCtx, route.AuditProfileID)
+	lookupCancel()
+	pre.StageMS["profile_lookup"] = time.Since(stageStart).Milliseconds()
+	if class, reason, kind := auditProfileFailure(ctx, profile, profileErr); class != "" {
+		pre.ProfileErrorKind = kind
+		failAuditPreflight(&result, "profile_lookup", class, "AUDIT_MODEL_UNAVAILABLE", reason)
+		return result
+	}
+	pre.SelectedProfileID = profile.ID
+	stageStart = time.Now()
+	scope := makeAuditSourceScopeWithReferences(text, extraction.ReferenceSpans)
+	ctx = context.WithValue(ctx, auditSourceScopeKey{}, scope)
+	result.AuditEmbeddedReferenceCount = len(auditReferenceSpans(text))
+	pre.StageMS["source_scope"] = time.Since(stageStart).Milliseconds()
+	if auditPreflightInterrupted(ctx, &result, "source_scope") {
 		return result
 	}
 	profile = cyberDenyProfile(profile)
+	stageStart = time.Now()
 	decision, usedProfile, failoverMetadata, err := e.callModelWithFailover(ctx, profile, text)
+	pre.StageMS["model"] = time.Since(stageStart).Milliseconds()
 	callMetadata := failoverMetadata.CallMetadata
 	result.Model = usedProfile.Model
 	result.AuditProfileID = usedProfile.ID
@@ -381,6 +424,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	}
 	if err != nil {
 		errorClass, auditHTTPStatus, reason := auditModelErrorDetails(err)
+		pre.FailureStage = "model"
 		result.ErrorClass = errorClass
 		result.AuditHTTPStatus = auditHTTPStatus
 		riskCode := "AUDIT_MODEL_ERROR"

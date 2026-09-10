@@ -2,6 +2,7 @@ package platform
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strconv"
@@ -15,10 +16,14 @@ import (
 // Control prompts and tool schemas are excluded, not executed or trusted as
 // proof. Opaque remote history and non-text modalities remain unsupported.
 func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
+	return extractCyberAuditTextContext(context.Background(), body, limit)
+}
+
+func extractCyberAuditTextContext(ctx context.Context, body []byte, limit int) AuditTextExtraction {
 	if limit <= 0 {
 		limit = 256 * 1024
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder := json.NewDecoder(&auditContextReader{ctx: ctx, reader: bytes.NewReader(body)})
 	decoder.UseNumber()
 	root, decodeErr := readAuditJSONValue(decoder, 0)
 	if _, trailing := decoder.Token(); trailing != io.EOF && decodeErr == nil {
@@ -31,6 +36,10 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 	var b, raw strings.Builder
 	var appendText func(string, string, bool)
 	appendText = func(role, text string, reference bool) {
+		if ctx.Err() != nil {
+			out.addCoverageIssue("preprocessing_interrupted")
+			return
+		}
 		if strings.TrimSpace(text) == "" {
 			return
 		}
@@ -45,8 +54,10 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 		}
 		// Mask secret values only; do NOT remove text preceding "My request",
 		// clipboard-looking paths, tests, assertions or a safety reminder.
-		out.SecretPlaceholderCount += len(secretAssignmentPattern.FindAllStringIndex(text, -1))
-		text = secretAssignmentPattern.ReplaceAllString(text, "${1}[USER_PROVIDED_SECRET]")
+		if strings.ContainsAny(text, ":=") {
+			out.SecretPlaceholderCount += len(secretAssignmentPattern.FindAllStringIndex(text, -1))
+			text = secretAssignmentPattern.ReplaceAllString(text, "${1}[USER_PROVIDED_SECRET]")
+		}
 		text = bearerSecretPattern.ReplaceAllString(text, "${1}[USER_PROVIDED_SECRET]")
 		text = openAISecretPattern.ReplaceAllString(text, "[USER_PROVIDED_SECRET]")
 		text = awsSecretPattern.ReplaceAllString(text, "[USER_PROVIDED_SECRET]")
@@ -65,6 +76,10 @@ func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 	}
 	var collect func(any, string, string, int)
 	collect = func(v any, role, path string, depth int) {
+		if ctx.Err() != nil {
+			out.addCoverageIssue("preprocessing_interrupted")
+			return
+		}
 		if depth > 32 {
 			out.coverageProblem("input_structure_depth", path, "unknown", role)
 			return

@@ -100,6 +100,7 @@ func recordAuditDecisionMetadata(metadata map[string]any, result AuditResult) {
 	if metadata == nil {
 		return
 	}
+	metadata["audit_preflight"] = result.AuditPreflight
 	metadata["audit_effective_decision"] = result.Decision
 	metadata["audit_coverage_status"] = result.AuditCoverageStatus
 	if len(result.AuditCoverageIssues) > 0 {

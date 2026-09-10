@@ -70,4 +70,18 @@ class DiagnosticsPrivacyTests(unittest.TestCase):
         self.assertTrue(result["audit_model_inputs_truncated"])
         self.assertEqual(result["audit_semantic_reviews"][0]["status"],"evidence_repair_corrected")
 
+    def test_preflight_diagnostics_do_not_export_storage_secrets(self):
+        secret = "STORAGE_SECRET_SENTINEL"
+        result = diag.trace_view({"audit_error_class":"audit_profile_lookup_timeout", "audit_preflight":{
+            "profile_selection":"default", "selected_profile_id":1, "failure_stage":"profile_lookup",
+            "profile_error_kind":secret, "raw_error":secret,
+            "stage_ms":{"input_extract":120, "profile_lookup":5000, secret:123},
+            "required_chunks":900, "minimum_http_calls":1800}})
+        self.assertNotIn(secret,json.dumps(result))
+        self.assertEqual(result["audit_error_class"],"audit_profile_lookup_timeout")
+        self.assertEqual(result["audit_preflight"]["stage_ms"]["profile_lookup"],5000)
+        self.assertEqual(result["audit_preflight"]["profile_selection"],"default")
+        for revision in ("cyber-deny-qwen27b.v8", "cyber-deny-qwen27b.v9"):
+            self.assertEqual(diag.build_view({"audit_engine":revision})["audit_engine"],revision)
+
 if __name__=='__main__':unittest.main()

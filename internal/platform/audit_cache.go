@@ -28,8 +28,11 @@ func (e *AuditEngine) profileCache() *auditProfileCacheState {
 }
 
 func (e *AuditEngine) getAuditProfile(ctx context.Context, id *int64) (AuditProfile, error) {
+	if err := ctx.Err(); err != nil {
+		return AuditProfile{}, err
+	}
 	cacheKey := int64(0)
-	if id != nil {
+	if id != nil && *id > 0 {
 		cacheKey = *id
 	}
 	state := e.profileCache()

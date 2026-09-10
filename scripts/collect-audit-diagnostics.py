@@ -31,10 +31,10 @@ ROOT = Path(__file__).resolve().parents[1]
 LIMIT = 8 * 1024 * 1024
 HEX = re.compile(r"^[a-f0-9]{7,64}$")
 DECISIONS = {"allow", "review", "block"}
-CONTRACTS = {"risk_audit_request.v2", "risk_audit_output.v2", "output-resilience-fusion.v1", "intent-coverage-guard.v2", "cyber-deny-qwen27b.v4", "cyber-deny-qwen27b.v5", "cyber-deny-qwen27b.v6", "cyber-deny-qwen27b.v7", "cyber-deny-qwen27b.v8"}
+CONTRACTS = {"risk_audit_request.v2", "risk_audit_output.v2", "output-resilience-fusion.v1", "intent-coverage-guard.v2", "cyber-deny-qwen27b.v4", "cyber-deny-qwen27b.v5", "cyber-deny-qwen27b.v6", "cyber-deny-qwen27b.v7", "cyber-deny-qwen27b.v8", "cyber-deny-qwen27b.v9"}
 LABELS = {"high", "medium", "low", "numeric", "numeric_string", "qualitative"}
-COVERAGE_ISSUES = {"ambiguous_input_fields", "unsupported_role", "input_structure_depth", "invalid_request_json", "reference_context_limit", "unsupported_input_content", "missing_continuation_context", "unresolved_previous_response", "input_text_truncated", "no_auditable_user_intent"}
-ERRORS = {"cyber_input_integrity", "audit_http_budget", "cyber_evidence_unresolved", "cyber_operation_unresolved", "non_operational_evidence", "cyber_output_conflict", "audit_uncertain_allow", "input_coverage", "invalid_json", "invalid_schema", "invalid_evidence", "invalid_semantic_evidence", "ambiguous_output", "timeout", "connection", "response_read", "response_format", "response_too_large", "output_limits", "output_truncated", "empty_response", "invalid_decision", "structured_output_unsupported", "context_length", "input_too_large", "authentication", "endpoint_or_model_not_found", "rate_limited", "audit_server_error", "http_status", "fusion_incomplete", "fusion_configuration", "fusion_profile_unavailable", "semantic_review_budget", "semantic_verifier_configuration", "semantic_verifier_unavailable", "retry_budget_exhausted", "unknown"}
+COVERAGE_ISSUES = {"preprocessing_interrupted", "ambiguous_input_fields", "unsupported_role", "input_structure_depth", "invalid_request_json", "reference_context_limit", "unsupported_input_content", "missing_continuation_context", "unresolved_previous_response", "input_text_truncated", "no_auditable_user_intent"}
+ERRORS = {"audit_profile_unavailable", "audit_profile_not_found", "audit_profile_disabled", "audit_profile_lookup_timeout", "audit_profile_lookup_error", "audit_deadline", "audit_cancelled", "rules_unavailable", "cyber_input_integrity", "audit_http_budget", "cyber_evidence_unresolved", "cyber_operation_unresolved", "non_operational_evidence", "cyber_output_conflict", "audit_uncertain_allow", "input_coverage", "invalid_json", "invalid_schema", "invalid_evidence", "invalid_semantic_evidence", "ambiguous_output", "timeout", "connection", "response_read", "response_format", "response_too_large", "output_limits", "output_truncated", "empty_response", "invalid_decision", "structured_output_unsupported", "context_length", "input_too_large", "authentication", "endpoint_or_model_not_found", "rate_limited", "audit_server_error", "http_status", "fusion_incomplete", "fusion_configuration", "fusion_profile_unavailable", "semantic_review_budget", "semantic_verifier_configuration", "semantic_verifier_unavailable", "retry_budget_exhausted", "unknown"}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -132,6 +132,14 @@ def trace_view(obj, depth=0):
                 safe["path"] = path
             details.append(safe)
         out["audit_coverage_details"] = details
+    if isinstance(obj.get("audit_preflight"), dict):
+        pre = obj["audit_preflight"]
+        stages = {"input_extract", "capacity", "rules", "profile_lookup", "source_scope", "model"}
+        safe = select(pre, ("requested_profile_id", "selected_profile_id", "required_chunks", "minimum_http_calls", "non_operational_rule_matches"), categorical={
+            "profile_selection": {"default", "route"}, "failure_stage": stages,
+            "profile_error_kind": {"context_deadline", "context_cancelled", "lookup_deadline", "lookup_cancelled", "not_found", "disabled", "*errors.errorString", "*pgconn.PgError", "*pgconn.ConnectError"}})
+        safe["stage_ms"] = select(pre.get("stage_ms", {}), tuple(stages))
+        out["audit_preflight"] = safe
     if isinstance(obj.get("audit_model_inputs"), list):
         out["audit_model_inputs"] = []
         for item in obj["audit_model_inputs"][:32]:

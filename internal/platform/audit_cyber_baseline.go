@@ -57,7 +57,7 @@ func cyberDeniedCategory(category string) bool {
 		return true
 	}
 	switch normalized {
-	case "credential_access", "credential_theft", "exploitation", "malware", "security_testing", "reconnaissance", "security_evasion", "defense_evasion", "exfiltration", "persistence", "command_and_control", "privilege_escalation", "request_tampering", "reverse_engineering", "web_automation", "local_probing", "network_probing", "network_reconnaissance", "port_scanning", "system_configuration", "illicit":
+	case "bypass", "auth_bypass", "authentication_bypass", "authorization_bypass", "credential_access", "credential_theft", "exploitation", "malware", "security_testing", "reconnaissance", "security_evasion", "defense_evasion", "exfiltration", "persistence", "command_and_control", "privilege_escalation", "request_tampering", "reverse_engineering", "web_automation", "local_probing", "network_probing", "network_reconnaissance", "port_scanning", "system_configuration", "illicit":
 		return true
 	}
 	return false

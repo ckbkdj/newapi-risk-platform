@@ -29,7 +29,7 @@ func nonOperationalAuditEvidence(d AuditDecision, source string) bool {
 	if q == "" {
 		return false
 	}
-	if administrativeAuditEvidence(d, q, source) || observationalAuditEvidence(q, source) {
+	if localDevelopmentAuditEvidence(d, q, source) || administrativeAuditEvidence(d, q, source) || observationalAuditEvidence(q, source) {
 		return true
 	}
 	at := strings.Index(source, q)
@@ -186,7 +186,7 @@ func (e *AuditEngine) callCyberGroundedModel(ctx context.Context, profile AuditP
 	}
 	plan := auditOutputPlanFromContext(ctx)
 	plan.VerifyIntent = false
-	plan.Feedback = feedback
+	plan.Feedback = feedback + "\n" + localDevelopmentAuditBoundary
 	checkCtx, output := withAuditOutputAttempt(ctx, plan)
 	checkCtx = context.WithValue(checkCtx, auditAdmissionPhaseKey{}, kind)
 	checked, checkErr := e.callModelRawWithEvidenceSource(checkCtx, profile, text, source)

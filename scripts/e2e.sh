@@ -967,4 +967,6 @@ BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" pyth
 
 BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" python3 scripts/e2e-audit-evidence-repair.py
 
+BASE_URL="${BASE_URL}" RISK_ADMIN_TOKEN="${TOKEN}" ROUTE_KEY="${ROUTE_KEY}" python3 scripts/e2e-audit-local-development.py
+
 echo "New API risk platform end-to-end checks passed."

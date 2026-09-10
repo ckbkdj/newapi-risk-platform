@@ -468,6 +468,11 @@ func normalizeAuditUserText(value string) (string, int, int, int) {
 
 	secretCount := 0
 	for _, expression := range []*regexp.Regexp{secretAssignmentPattern, bearerSecretPattern} {
+		// An assignment must contain a separator. Avoid expensive regex scans
+		// of multi-megabyte plain text; this cannot exclude a real match.
+		if expression == secretAssignmentPattern && !strings.ContainsAny(value, ":=") {
+			continue
+		}
 		secretCount += len(expression.FindAllStringIndex(value, -1))
 		value = expression.ReplaceAllString(value, "${1}[USER_PROVIDED_SECRET]")
 	}

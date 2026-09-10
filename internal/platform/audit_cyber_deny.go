@@ -40,7 +40,7 @@ func cyberDenyActive(ctx context.Context) bool {
 }
 
 func cyberDenyProfile(p AuditProfile) AuditProfile {
-	p.SystemPrompt = CyberDenyAuditSystemPrompt
+	p.SystemPrompt = CyberDenyAuditSystemPrompt + "\n" + localDevelopmentAuditBoundary
 	p.FailClosed = true
 	extra := auditProfileExtra(p)
 	if extra == nil {
@@ -57,16 +57,26 @@ func cyberDenyProfile(p AuditProfile) AuditProfile {
 // rows. Evaluate before model selection. No model, profile exception, priority
 // allow, quote classification or confidence can undo a rule trigger.
 func (e *AuditEngine) matchCyberDenyRules(text string) (*AuditDecision, *RuleMatchDiagnostics) {
+	d, r, _ := e.matchCyberDenyRulesContext(context.Background(), text, nil)
+	return d, r
+}
+func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text string, pre *AuditPreflightDiagnostics) (*AuditDecision, *RuleMatchDiagnostics, error) {
 	loaded, _ := e.rules.Load().([]compiledRule)
 	rules := make([]compiledRule, 0, len(loaded)+len(cyberDenyBaseline))
 	rules = append(rules, loaded...)
 	rules = append(rules, cyberDenyBaseline...)
 	lower := strings.ToLower(text)
 	for i, r := range rules {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		if !r.Enabled {
 			continue
 		}
-		evidence, matched := matchCyberRuleEvidence(r, text, lower)
+		evidence, matched, err := matchCyberRuleWithContext(ctx, r, text, lower, pre)
+		if err != nil {
+			return nil, nil, err
+		}
 		if !matched && r.PatternType == "exact" {
 			for _, unit := range splitAuditRuleUnits(text) {
 				if ev, hit := matchCyberRuleEvidence(r, unit.Text, strings.ToLower(unit.Text)); hit {
@@ -81,9 +91,9 @@ func (e *AuditEngine) matchCyberDenyRules(text string) (*AuditDecision, *RuleMat
 		diagnostic := buildRuleMatchDiagnostics(r, i+1, text, evidence)
 		d := AuditDecision{Decision: DecisionBlock, RiskCode: r.Code, Category: r.Category, Source: "rule", RuleID: r.ID,
 			Reason: "enabled Cyber rule triggered; prohibited by business policy (testing/debugging is not an exemption)"}
-		return &d, &diagnostic
+		return &d, &diagnostic, nil
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func cyberDenyVerdict(d AuditDecision) (AuditDecision, error) {
