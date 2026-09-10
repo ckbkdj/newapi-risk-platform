@@ -1,0 +1,22 @@
+name: Export pinned v9 audit source
+on:
+  push:
+    branches: [fix/csv-rule-and-retry-v10]
+    paths: [.github/workflows/repair-source-v10.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e5bc49fb1f9b6f98bd171cfa7baf8412dfb321b0
+          persist-credentials: false
+      - run: git archive --format=tar HEAD > /tmp/audit-v9-source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-v9-source
+          path: /tmp/audit-v9-source.tar
+          retention-days: 1
