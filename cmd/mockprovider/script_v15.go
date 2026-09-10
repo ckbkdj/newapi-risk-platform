@@ -22,6 +22,9 @@ var v15ScriptQuotes = map[string]struct{ Quote, Code, Category string }{
 }
 
 func mockScriptV15(w http.ResponseWriter, r chatRequest) bool {
+	if mockScriptV15Verifier(w, r) {
+		return true
+	}
 	if r.Model != "qwen-v15-script" {
 		return false
 	}
