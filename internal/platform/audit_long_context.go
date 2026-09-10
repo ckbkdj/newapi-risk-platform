@@ -15,6 +15,7 @@ type auditChunkProgressKey struct{}
 
 type auditCallMetadata struct {
 	ChunksCompleted           int
+	ChunksReused              int
 	Mode                      string
 	ChunkCount                int
 	ChunkBytes                int
@@ -106,9 +107,12 @@ func (e *AuditEngine) callModel(
 			}
 		}
 		progress := &atomic.Int32{}
+		reused := &atomic.Int32{}
 		chunkCtx := context.WithValue(ctx, auditChunkProgressKey{}, progress)
+		chunkCtx = context.WithValue(chunkCtx, auditChunkReuseKey{}, reused)
 		decision, chunkErr := e.callModelChunks(context.WithValue(chunkCtx, auditChunkOffsetsKey{}, offsets), profile, chunks)
 		metadata.ChunksCompleted = int(progress.Load())
+		metadata.ChunksReused = int(reused.Load())
 		if chunkErr == nil {
 			return decision, metadata, nil
 		}
@@ -191,10 +195,30 @@ func (e *AuditEngine) callModelChunks(
 	}
 	offsets, _ := ctx.Value(auditChunkOffsetsKey{}).([]int)
 	scopes := auditChunkSourceScopes(parent, chunks, offsets...)
+	checkpoint, _ := ctx.Value(auditChunkCheckpointKey{}).(*auditChunkCheckpoint)
+	ids := make([][32]byte, len(chunks))
+	cached := make(map[int]AuditDecision)
+	if checkpoint != nil {
+		for i, chunk := range chunks {
+			ids[i] = auditChunkCheckpointID(scopes[i], chunk, i, len(chunks))
+			if d, ok := checkpoint.allows[ids[i]]; ok {
+				cached[i] = d
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return AuditDecision{}, err
+	}
 	if len(chunks) == 1 {
+		if d, ok := cached[0]; ok {
+			recordAuditChunkCompletion(ctx, d, nil)
+			recordAuditChunkReuse(ctx)
+			return d, nil
+		}
 		ctx = context.WithValue(ctx, auditSourceScopeKey{}, scopes[0])
 		d, err := e.callModelOnceWithEvidenceSource(ctx, profile, decorateAuditChunk(chunks[0], 0, 1), chunks[0])
 		recordAuditChunkCompletion(ctx, d, err)
+		checkpoint.put(ids[0], d, err)
 		return d, err
 	}
 
@@ -210,6 +234,10 @@ func (e *AuditEngine) callModelChunks(
 	defer cancel()
 	jobs := make(chan int)
 	results := make(chan auditChunkResult, len(chunks))
+	for index, d := range cached {
+		results <- auditChunkResult{index: index, decision: d}
+		recordAuditChunkReuse(ctx)
+	}
 	var waitGroup sync.WaitGroup
 
 	for worker := 0; worker < workerCount; worker++ {
@@ -239,6 +267,9 @@ func (e *AuditEngine) callModelChunks(
 	go func() {
 		defer close(jobs)
 		for index := range chunks {
+			if _, ok := cached[index]; ok {
+				continue
+			}
 			select {
 			case <-workerContext.Done():
 				return
@@ -258,6 +289,7 @@ func (e *AuditEngine) callModelChunks(
 	completed := 0
 
 	for result := range results {
+		checkpoint.put(ids[result.index], result.decision, result.err)
 		recordAuditChunkCompletion(ctx, result.decision, result.err)
 		completed++
 		if result.err != nil {
@@ -305,6 +337,9 @@ func (e *AuditEngine) callModelChunks(
 	// Never return review/allow until every chunk has produced a decision.
 	// A client disconnect or deadline must not turn a partially audited request
 	// into a result that a fail-open route could forward.
+	if ctx.Err() != nil {
+		return AuditDecision{}, ctx.Err()
+	}
 	if completed < len(chunks) {
 		return AuditDecision{}, newAuditModelCallError("connection", 0, "chunked audit was canceled before every chunk completed", ctx.Err())
 	}

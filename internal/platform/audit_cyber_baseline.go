@@ -7,7 +7,7 @@ import (
 )
 
 func cyberPolicyRule(code, category, pattern string) compiledRule {
-	return compiledRule{CyberRule: CyberRule{Code: code, Name: "平台 Cyber 禁用基线", Category: category, Pattern: pattern, PatternType: "regex", Action: DecisionBlock, Enabled: true}, regularExpression: regexp.MustCompile(pattern)}
+	return compiledRule{CyberRule: CyberRule{Code: code, Name: "平台 Cyber 禁用基线", Category: category, Pattern: pattern, PatternType: "regex", Action: DecisionBlock, Enabled: true}, regularExpression: regexp.MustCompile(pattern), literalGuard: auditRegexLiteralGuard(pattern)}
 }
 
 // Compact, multilingual baseline independent of database migrations. Ambiguous

@@ -685,7 +685,7 @@ func sanitizeAdaptiveProviderError(body []byte) string {
 	if len(body) > adaptiveProviderErrorLimit {
 		body = body[:adaptiveProviderErrorLimit]
 	}
-	text := strings.ToValidUTF8(string(body), "")
+	text := redactAuditSecretDiagnostics(strings.ToValidUTF8(string(body), ""))
 	for _, expression := range adaptiveSecretPatterns {
 		text = expression.ReplaceAllString(text, "[REDACTED]")
 	}

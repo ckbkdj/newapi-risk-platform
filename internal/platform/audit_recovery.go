@@ -129,6 +129,7 @@ func recordAuditDecisionMetadata(metadata map[string]any, result AuditResult) {
 	finalized := result.ErrorClass == "" && result.Source != "platform" && result.Source != "fail_open"
 	metadata["audit_decision_finalized"] = finalized
 	metadata["audit_chunks_completed"] = result.AuditChunksCompleted
+	metadata["audit_chunks_reused"] = result.AuditChunksReused
 	metadata["audit_completed"] = finalized && result.AuditCoverageStatus != "incomplete" && (result.AuditChunkCount == 0 || result.AuditChunksCompleted == result.AuditChunkCount)
 	metadata["audit_semantic_reviews_truncated"] = result.AuditSemanticReviewCount > len(result.AuditSemanticReviews)
 	metadata["audit_model_inputs"] = result.AuditModelInputs

@@ -103,6 +103,7 @@ func (e *AuditEngine) callModelWithFailover(
 
 		formatAttempt := 0
 		var profileChunks auditCallMetadata
+		checkpoint := newAuditChunkCheckpoint(ctx, profile)
 		for attempt := 0; attempt <= retries; attempt++ {
 			if ctx.Err() != nil {
 				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), ctx.Err()
@@ -120,6 +121,7 @@ func (e *AuditEngine) callModelWithFailover(
 			outputPlan := e.auditOutputPlan(profile, formatAttempt)
 			attemptContext, outputState := withAuditOutputAttempt(ctx, outputPlan)
 			attemptContext = context.WithValue(attemptContext, auditResumeChunksKey{}, profileChunks)
+			attemptContext = context.WithValue(attemptContext, auditChunkCheckpointKey{}, checkpoint)
 			decision, callMetadata, err := e.callModel(attemptContext, profile, text)
 			profileChunks = callMetadata
 			outputDiagnostics := outputState.snapshot(false)

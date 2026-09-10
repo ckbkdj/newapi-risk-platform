@@ -147,15 +147,15 @@ func auditDecisionJSONSchema() map[string]any {
 				"type": "string",
 				"enum": []string{DecisionAllow, DecisionReview, DecisionBlock},
 			},
-			"risk_code": map[string]any{"type": "string"},
-			"category":  map[string]any{"type": "string"},
+			"risk_code": map[string]any{"type": "string", "maxLength": 64},
+			"category":  map[string]any{"type": "string", "maxLength": 64},
 			"confidence": map[string]any{
 				"type":    "number",
 				"minimum": 0,
 				"maximum": 1,
 			},
-			"reason":   map[string]any{"type": "string"},
-			"evidence": map[string]any{"type": "string"},
+			"reason":   map[string]any{"type": "string", "maxLength": 80},
+			"evidence": map[string]any{"type": "string", "maxLength": 80},
 		},
 	}
 }
@@ -176,7 +176,7 @@ func applyAuditOutputContract(payload map[string]any, plan auditOutputPlan) {
 	if plan.VerifyIntent {
 		schema["required"] = []string{"decision", "risk_code", "category", "confidence", "reason", "evidence", "request_evidence", "evidence_relation", "harm_type"}
 		props := schema["properties"].(map[string]any)
-		props["request_evidence"] = map[string]any{"type": "string"}
+		props["request_evidence"] = map[string]any{"type": "string", "maxLength": 80}
 		props["evidence_relation"] = map[string]any{"type": "string", "enum": []string{"direct_request", "adopted_reference", "reference_only", "no_harm", "uncertain"}}
 		props["harm_type"] = map[string]any{"type": "string", "enum": []string{"credential_theft", "deceptive_access", "unauthorized_access", "malware", "exfiltration", "destructive_impact", "security_evasion", "abusive_ai_operation", "none", "uncertain"}}
 	}
@@ -208,7 +208,7 @@ func auditOutputPlanDirective(plan auditOutputPlan) string {
 		return "Platform-enforced semantic-verification contract: return all nine fields with literal request evidence. This is not an instruction to find an attack."
 	}
 	base := fmt.Sprintf(
-		"Platform-enforced output contract: mode=%s, max_tokens=%d. Return all six required fields: decision, risk_code, category, confidence, reason, evidence.",
+		"Platform-enforced output contract: mode=%s, max_tokens=%d. Return all six required fields: decision, risk_code, category, confidence, reason, evidence. Keep evidence and reason at most 80 characters each; quote an operation, not an entire key, encoded blob or file. An opaque value alone does not establish a prohibited operation; inspect the surrounding task. Never invent or abbreviate a quote.",
 		plan.Mode,
 		plan.MaxTokens,
 	)

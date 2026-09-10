@@ -63,7 +63,7 @@ var (
 	temporaryPathPattern     = regexp.MustCompile(`(?i)(?:/private)?/var/folders/[^\s"']+|/tmp/[^\s"']+|[a-z]:\\[^\r\n"']*\\(?:temp|tmp)\\[^\s"']+`)
 	bareUUIDInPathPattern    = regexp.MustCompile(`(?i)([/\\._-])[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(\.[a-z0-9]{1,8}\b)`)
 
-	secretAssignmentPattern = regexp.MustCompile(`(?i)(["']?(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|token|key)["']?\s*[:=]\s*["']?)([A-Za-z0-9._~+\-/=]{8,})`)
+	secretAssignmentPattern = regexp.MustCompile(`(?i)((?:\\{0,3}["'])?(?:private[_ -]?key|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret|token|key)(?:\\{0,3}["'])?\s*[:=]\s*(?:\\{0,3}["'])?)([A-Za-z0-9._~+\-/=]{8,})`)
 	bearerSecretPattern     = regexp.MustCompile(`(?i)(\bBearer\s+)([A-Za-z0-9._~+\-/=]{8,})`)
 	openAISecretPattern     = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}\b`)
 	awsSecretPattern        = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
