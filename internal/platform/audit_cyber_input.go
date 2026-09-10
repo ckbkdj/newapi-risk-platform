@@ -69,6 +69,21 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 		if role == "USER" {
 			out.ActiveUserMessages++
 		}
+		// Preserve the original representation for administrator rule matching.
+		if role == "TOOL_DATA" {
+			viewLimit := limit - b.Len() - len(role) - 7
+			if capacity > 0 && capacity-b.Len()-len(role)-7 < viewLimit {
+				viewLimit = capacity - b.Len() - len(role) - 7
+			}
+			view, decoded, err := auditToolJSONView(ctx, text, viewLimit)
+			out.SerializedToolDocuments += decoded
+			if err != nil {
+				workErr = err
+				out.addCoverageIssue("serialized_tool_projection_incomplete")
+				return
+			}
+			text = view
+		}
 		// Mask secret values only; do NOT remove text preceding "My request",
 		// clipboard-looking paths, tests, assertions or a safety reminder.
 		// One match pass counts and replaces secret assignments. Never duplicate

@@ -158,6 +158,7 @@ type AuditAttempt struct {
 }
 
 type AuditResult struct {
+	AuditSerializedToolDocuments    int                          `json:"audit_serialized_tool_documents,omitempty"`
 	AuditStageTimingsMS             map[string]int64             `json:"audit_stage_timings_ms,omitempty"`
 	AuditFailureStage               string                       `json:"audit_failure_stage,omitempty"`
 	AuditRequestedProfileID         *int64                       `json:"audit_requested_profile_id,omitempty"`

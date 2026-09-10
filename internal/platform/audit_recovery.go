@@ -121,6 +121,10 @@ func recordAuditDecisionMetadata(metadata map[string]any, result AuditResult) {
 	if len(result.AuditCoverageDetails) > 0 {
 		metadata["audit_coverage_details"] = result.AuditCoverageDetails
 	}
+	metadata["audit_serialized_tool_documents"] = result.AuditSerializedToolDocuments
+	if result.RuleMatch != nil {
+		metadata["audit_rule_input_view"] = result.RuleMatch.InputView
+	}
 	metadata["audit_input_contract"] = auditInputContractVersion
 	metadata["audit_output_contract"] = auditOutputContractVersion
 	metadata["gateway_build"] = CurrentBuildInformation()

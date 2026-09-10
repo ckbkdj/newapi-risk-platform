@@ -17,23 +17,24 @@ const (
 )
 
 type AuditTextExtraction struct {
-	ruleText               string // In-memory raw rule input; never serialized or persisted.
-	CoverageStatus         string
-	CoverageIssues         []string
-	CoverageDetails        []AuditCoverageDetail
-	ReferenceSpans         []auditReferenceSpan
-	Text                   string
-	Scope                  string
-	IntentBytes            int
-	RawIntentBytes         int
-	IgnoredContextBytes    int
-	IgnoredRoles           []string
-	PriorUserContextBytes  int
-	ActiveUserMessages     int
-	ContextActivated       bool
-	IgnoredInputTypes      []string
-	EphemeralArtifactCount int
-	SecretPlaceholderCount int
+	SerializedToolDocuments int
+	ruleText                string // In-memory raw rule input; never serialized or persisted.
+	CoverageStatus          string
+	CoverageIssues          []string
+	CoverageDetails         []AuditCoverageDetail
+	ReferenceSpans          []auditReferenceSpan
+	Text                    string
+	Scope                   string
+	IntentBytes             int
+	RawIntentBytes          int
+	IgnoredContextBytes     int
+	IgnoredRoles            []string
+	PriorUserContextBytes   int
+	ActiveUserMessages      int
+	ContextActivated        bool
+	IgnoredInputTypes       []string
+	EphemeralArtifactCount  int
+	SecretPlaceholderCount  int
 }
 
 type auditUserUnit struct {

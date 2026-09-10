@@ -24,6 +24,7 @@ var (
 )
 
 type RuleMatchDiagnostics struct {
+	InputView       string   `json:"input_view,omitempty"`
 	RuleID          int64    `json:"rule_id"`
 	RulePosition    int      `json:"rule_position"`
 	RuleCode        string   `json:"rule_code"`
