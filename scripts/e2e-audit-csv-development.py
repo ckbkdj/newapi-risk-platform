@@ -73,7 +73,7 @@ for name,body,want,calls in cases:
     status,data=call('/gateway/mock-main/v1/responses',body,ROUTE,rid)
     assert status==want,(name,status,data)
     meta=trace_for(rid)
-    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v11',meta
+    assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v13',meta
     assert meta['audit_http_calls']==calls,(name,meta)
     assert meta['upstream_started']==(want==200),(name,meta)
     assert 'extraction' in meta['audit_stage_timings_ms'],meta

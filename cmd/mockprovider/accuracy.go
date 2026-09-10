@@ -14,6 +14,14 @@ func mockAccuracyVerification(w http.ResponseWriter, request chatRequest) bool {
 		return false
 	}
 	control := messageText(request)
+	if strings.Contains(text, "v13-mechanism") {
+		mockV13Accuracy(w, text, control)
+		return true
+	}
+	if strings.Contains(text, "v12-mechanism") {
+		mockV12Accuracy(w, text, control)
+		return true
+	}
 	if strings.Contains(text, "v11-mechanism") {
 		mockV11Accuracy(w, text, control)
 		return true

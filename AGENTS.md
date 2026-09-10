@@ -1,3 +1,19 @@
+# Development precision boundary v13 (2026-09-10)
+
+The latest user requires ordinary daily development, public/private Maven dependency use and Android development to remain usable. Credential values/configuration presence, path-purpose documentation, current-login SDK token use, boolean presence checks, and state reads are not proof of theft or exfiltration. Judge an actual action, object, source, use and destination. Preserve actual banned-operation vetoes and the HTTP 555 contract; do not grant a repository/domain/Android/localhost blanket allow.
+
+Source-preserving masking must never turn an initializer such as `os.getenv` into a secret placeholder. Tests must quote the actual post-extraction model input, not the original pre-masking string. Both evidence-repair and operation-grounding phases use the same normal-development boundary. All retries remain bounded; repeated invalid evidence and infrastructure failures must not become allow. A corrected allow still needs independent normal verification. Do not alter operator custom rules or persisted enabled/action/profile/route bindings. Distinguish audit-coverage and infrastructure failures from proven content violations.
+
+The v13 corpus and HTTP fixtures are synthetic, NOT replay of complete production requests or a measured Qwen accuracy claim. Preserve the existing v11/v12 suites, including the formerly failing v12 primary-9 case. Run all Go/race/build/vet/script/privacy and full Docker E2E checks before merging. Do not commit private exports, actual user credentials, customer addresses, or temporary patch/assembly workflows in the final tree.
+
+# 本地开发凭据读取（v12 / 2026-09-10 用户最新边界）
+
+读取并使用本项目现有 Key、环境变量、.env、应用配置、服务凭据或 Gradle/AOSP 签名材料是常规研发，不因“read/读取 Key”单独判为泄露。此条取代旧的无条件凭据读取禁用解释；读取来源、实际用途和输出去向须分别判断，正常读取不必改写成安全处置。凭据仍是敏感信息，正常业务放行与日志脱敏是不同责任。禁止要求用户把真实 Key 加入回归或公开仓库。
+
+只修正内置与精确未修改的默认凭据规则的证据准入；它们曾将常规配置加载直接变成终态拒绝。保留管理员自定义规则与真实窃密/公开泄露/权限绕过/无关外传否决。弱证据继续完整模型双审计，一次同原文校核失败仍555；不设置本地、AOSP、路径或账号全请求白名单。被掩码的配置字段本身只证明值存在，不能替代实际操作证据；须检查后续行为。
+
+测试需覆盖环境读取API、配置文件读命令、应用/平台签名、中文/英文、原始与工具JSON、短引用全部出现位置及完整命令后缀。v11已有的转义与Android研发回归不得删除，真实Qwen准确率与合成机制测试分开报告。
+
 # 转义输入与 Android 研发（v11 / 2026-09-10）
 
 已知工具边界的完整 JSON 可有界解码为资料视图，不能全局反转义、丢弃未知键、信任嵌入角色、截断后放行或改变管理员原始规则语义。原始规则检查与解码视图检查都保留，防止转义制造假词，也防止真实编码操作漏检。原始/解码规则来源要可见。

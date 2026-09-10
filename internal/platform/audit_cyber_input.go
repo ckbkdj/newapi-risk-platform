@@ -88,11 +88,9 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 		// clipboard-looking paths, tests, assertions or a safety reminder.
 		// One match pass counts and replaces secret assignments. Never duplicate
 		// an expensive full-text regex scan merely to compute a counter.
-		text = secretAssignmentPattern.ReplaceAllStringFunc(text, func(match string) string {
-			out.SecretPlaceholderCount++
-			parts := secretAssignmentPattern.FindStringSubmatchIndex(match)
-			return match[parts[2]:parts[3]] + "[USER_PROVIDED_SECRET]"
-		})
+		var masked int
+		text, masked = maskCyberCredentialAssignments(text)
+		out.SecretPlaceholderCount += masked
 		if workErr = ctx.Err(); workErr != nil {
 			return
 		}

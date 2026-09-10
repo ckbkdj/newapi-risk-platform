@@ -38,6 +38,9 @@ func precisionRule(r compiledRule) bool {
 	if r.PatternType != "regex" {
 		return false
 	}
+	if r.Code == "CYBER_CREDENTIAL_ACCESS_REVIEW" {
+		return r.Pattern == shippedCredentialAccessPattern
+	}
 	if r.Code == "CYBER_SECURITY_EVASION" {
 		return r.Pattern == shippedSecurityEvasionPattern
 	}
@@ -74,12 +77,18 @@ func weakDevelopmentRuleEvidence(r compiledRule, text string, ev cyberRuleEviden
 	if !precisionRule(r) {
 		return ""
 	}
+	if (r.Code == "CYBER_CREDENTIAL_ACCESS_DISABLED" || r.Code == "CYBER_CREDENTIAL_ACCESS_REVIEW") && stateObjectNotCredential(text, ev) {
+		return "read_object_is_state_not_cross_clause_credential"
+	}
+	if routineCredentialRuleEvidence(r, text, ev) {
+		return "local_credential_loading_requires_semantic_audit"
+	}
 	if r.Code == "CYBER_SECURITY_TEST_DISABLED" && escapedMountMapCandidate(text, ev) {
 		return "escaped_linebreak_filesystem_row"
 	}
 	// A reference inside a complete plain-source search is not execution of the
 	// tool named in the search expression. All other text and rules still run.
-	if r.ID == 0 && (r.Category == "security_testing" || r.Category == "reverse_engineering" || r.Category == "exploitation" || r.Category == "system_configuration") && engineeringEvidenceAt(text, ev.start, ev.end) {
+	if r.ID == 0 && (r.Category == "security_testing" || r.Category == "reverse_engineering" || r.Category == "exploitation" || r.Category == "system_configuration") && (engineeringEvidenceAt(text, ev.start, ev.end) || developmentDataEvidenceAt(text, ev.start, ev.end)) {
 		return "ordinary_engineering_command_requires_semantic_audit"
 	}
 	if (r.Code == "CYBER_CREDENTIAL_ACCESS_DISABLED" || r.Code == "CYBER_SYSTEM_PROMPT_EXTRACTION" || r.Code == "CYBER_DATA_EXFILTRATION" || r.Code == "CYBER_SECURITY_EVASION") && negatedAuditAction(text, ev.start) {
