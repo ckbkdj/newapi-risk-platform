@@ -1,0 +1,32 @@
+name: Correct exact E2E engine assertion
+on:
+  push:
+    branches: [fix/preflight-local-dev-v9]
+    paths: [.github/workflows/repair-version-v9.yml]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/preflight-local-dev-v9
+      - shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/e2e.sh')
+          s = p.read_text()
+          old = 'assert qm["gateway_build"]["audit_engine"] == "cyber-deny-qwen27b.v8"'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, old.replace('.v8', '.v9')))
+          PY
+          bash -n scripts/e2e.sh
+          git add scripts/e2e.sh
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test(audit): expect exact v9 engine in existing complete E2E'
+          git push origin HEAD:refs/heads/fix/preflight-local-dev-v9
