@@ -1,0 +1,32 @@
+name: Export pinned v15 source for E2E diagnosis
+on:
+  push:
+    branches: [maintenance/v15-e2e-source-check]
+    paths: [.github/workflows/export-v15-e2e-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    if: github.repository == 'ckbkdj/newapi-risk-platform'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 36ce2744174e88461436b0ab21718df068c727ac
+          persist-credentials: false
+      - name: Archive only the pinned tracked source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 36ce2744174e88461436b0ab21718df068c727ac
+          test "$(git rev-parse HEAD^{tree})" = 41be87aaa932672e8ffb4ac03d01881eec8f51a9
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/v15-source.tar.gz"
+          git rev-parse HEAD HEAD^{tree} > "$RUNNER_TEMP/v15-source-refs.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pinned-v15-source
+          retention-days: 1
+          path: |
+            ${{ runner.temp }}/v15-source.tar.gz
+            ${{ runner.temp }}/v15-source-refs.txt
