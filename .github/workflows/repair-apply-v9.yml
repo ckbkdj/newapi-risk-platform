@@ -1,0 +1,41 @@
+name: Assemble validated CSV incident repair
+on:
+  push:
+    branches: [fix/csv-local-development-v9]
+    paths: [.github/workflows/repair-apply-v9.yml]
+permissions:
+  contents: write
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/csv-local-development-v9
+      - name: Apply exact patch and verify final source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          encoded = ''.join(Path(f'.repair-csv-v9/{i}.b64').read_text().strip() for i in range(3))
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'a7934ffa7aff8aafa1d13c8426658af271a3568afcfd0a32167a11838aaa31b3', 'patch checksum mismatch'
+          Path('/tmp/v9.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/v9.patch
+          git apply /tmp/v9.patch
+          git rm -r .repair-csv-v9
+          git add -A
+          git rm --cached .github/workflows/repair-export-v9.yml .github/workflows/repair-apply-v9.yml
+          TREE=$(git write-tree)
+          echo "Final source tree: ${TREE}"
+          test "${TREE}" = d974c01c6dca753affce81ed7daa5720092400de
+          git add .github/workflows/repair-export-v9.yml .github/workflows/repair-apply-v9.yml
+          git diff --cached --check
+          git diff --cached --exit-code -- .github/workflows
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(audit): local development evidence and bounded preprocessing diagnostics'
+          git push origin HEAD:refs/heads/fix/csv-local-development-v9
