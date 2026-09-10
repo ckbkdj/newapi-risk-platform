@@ -1,0 +1,20 @@
+name: Export pinned audit source
+on:
+  push:
+    branches: [fix/csv-local-development-v9]
+    paths: [.github/workflows/repair-export-v9.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 47ab8bfbf70b66b9d0dd14d2b9c4c16fba16c85a
+      - run: git archive --format=tar HEAD > /tmp/risk-v8.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: risk-v8-source
+          path: /tmp/risk-v8.tar
+          retention-days: 1
