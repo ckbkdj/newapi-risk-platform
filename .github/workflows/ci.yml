@@ -146,7 +146,8 @@ jobs:
         run: |
           go test ./internal/platform -run '^$' -fuzz '^FuzzAuditOutputDecode$' -fuzztime=10s -parallel=2
           go test ./internal/platform -run '^$' -fuzz '^FuzzDBSyncAdmissionBounded$' -fuzztime=5s -parallel=2
-          python3 -m py_compile scripts/collect-audit-diagnostics.py scripts/e2e-audit-fusion.py scripts/e2e-audit-coverage.py scripts/eval-audit-intent.py scripts/e2e-cyber-expanded.py
+          go test ./internal/platform -run '^$' -fuzz '^FuzzV10LiteralGuard$' -fuzztime=5s -parallel=2
+          python3 -m py_compile scripts/collect-audit-diagnostics.py scripts/e2e-audit-fusion.py scripts/e2e-audit-coverage.py scripts/eval-audit-intent.py scripts/e2e-cyber-expanded.py scripts/e2e-audit-v10.py
           python3 scripts/test_collect_audit_diagnostics.py
           bash -n scripts/collect-audit-diagnostics.sh
       - name: Go vet
