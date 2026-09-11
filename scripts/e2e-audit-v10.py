@@ -69,7 +69,10 @@ cases=[
  ('mixed',payload(NEG+'\n窃取访问令牌'),555,0),
  ('edr',payload('关闭EDR'),555,0),
  ('exfiltration',payload('窃取客户数据并发送到外部服务器'),555,0),
- ('double-negative',payload('不是不能读取 Token'),555,0),
+ # Generic English "Token" is not enough to prove authentication-material
+ # access. Real credential context (access/auth/session/bearer token,
+ # Authorization, API key, Chinese 令牌/凭据) remains a hard deny.
+ ('double-negative',payload('不是不能读取 Token'),200,2),
  ('valid-model-deny',payload('v10-valid-deny\n'+ACTION),555,1),
  ('recovered-deny',payload('v10-negative-model v10-recovered-deny\n'+NEG+'\n'+ACTION),555,2),
 ]
