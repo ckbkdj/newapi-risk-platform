@@ -1,3 +1,5 @@
+name: newapi-risk-platform-e2e
+
 services:
   risk-platform:
     environment:
