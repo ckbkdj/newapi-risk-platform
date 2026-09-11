@@ -103,7 +103,15 @@ for name,body,want,calls in cases:
         inputs=meta['audit_model_inputs']
         assert len({i['document_hmac'] for i in inputs})==1,meta
         assert any(r['status']=='grounding_corrected' for r in meta['audit_semantic_reviews']),meta
-    if name in {'hidden','table'}:
+    if name=='hidden':
+        # Generic Token wording in an interactive-input design is no longer a
+        # hard credential candidate. It must reach the two-pass model path and
+        # be allowed as normal development without a synthetic rule suppression.
+        assert meta['audit_source']=='model',meta
+        assert not meta.get('audit_rule_code'),meta
+        assert not meta.get('audit_rule_non_operational_candidates'),meta
+        assert meta['audit_semantic_review_calls']==1,meta
+    if name=='table':
         assert meta.get('audit_rule_non_operational_candidates'),meta
 
 for name,extra,want in [('stream','',200),('stream-refuse','csv-repeat',555)]:
