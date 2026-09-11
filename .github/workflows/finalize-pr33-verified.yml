@@ -1,0 +1,116 @@
+name: Finalize verified PR33 E2E repair
+on:
+  push:
+    branches: [chore/finalize-pr33-e2e-verified]
+    paths: [.github/workflows/finalize-pr33-verified.yml]
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+jobs:
+  verify-and-merge:
+    if: github.repository == 'ckbkdj/newapi-risk-platform'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Repair exact known test preimage, require final-head tests, and squash merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64, json, os, time, urllib.error, urllib.request
+          REPO = 'ckbkdj/newapi-risk-platform'
+          PREFIX = 'https://api.github.com/repos/' + REPO
+          BRANCH = 'fix/script-development-evidence-v15'
+          PATH = 'scripts/e2e-audit-v15.py'
+          HEADERS = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'authorized-pr33-finalization'}
+          def api(path, method='GET', data=None):
+              assert path.startswith('/') and not path.startswith('//')
+              body = None if data is None else json.dumps(data).encode()
+              req = urllib.request.Request(PREFIX + path, headers=HEADERS, method=method, data=body)
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  raw = response.read()
+                  return json.loads(raw) if raw else {}
+          def summary(message):
+              print(message, flush=True)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
+                  out.write(message + '\n')
+          def checked_pr():
+              p = api('/pulls/33')
+              assert p['head']['repo']['full_name'] == REPO and p['head']['ref'] == BRANCH
+              assert p['base']['ref'] == 'main' and not p['draft']
+              return p
+          p = checked_pr()
+          if p.get('merged'):
+              summary('PR33 already merged: ' + p['merge_commit_sha'])
+              raise SystemExit(0)
+          assert p['state'] == 'open'
+          base = p['base']['sha']
+          file = api('/contents/' + PATH + '?ref=' + p['head']['sha'])
+          source = base64.b64decode(file['content']).decode('utf-8')
+          old = "        else:\n            assert meta['audit_http_calls'] == 2, meta\nassert count == 88, count\n"
+          new = "        elif mode == 'invalid':\n            # One bounded JSON-format recovery repeats both required phases.\n            assert meta['audit_http_calls'] == 4, meta\n            assert meta['audit_semantic_review_calls'] == 2, meta\n            assert meta['audit_chunks_completed'] == 0, meta\n        else:\n            # A provider 503 is not a JSON-format error; retry_count is zero.\n            assert meta['audit_http_calls'] == 2, meta\n            assert meta['audit_semantic_review_calls'] == 1, meta\n            assert meta['audit_chunks_completed'] == 0, meta\nassert count == 88, count\n"
+          if source.count(old) == 1:
+              assert file['sha'] == '5f625059463229385f673f5809449a32f92f2909', 'unexpected preimage; manual review required'
+              fixed = source.replace(old, new, 1)
+              compile(fixed, PATH, 'exec')
+              current = checked_pr()
+              assert current['head']['sha'] == p['head']['sha'], 'concurrent source modification'
+              written = api('/contents/' + PATH, 'PUT', {'branch': BRANCH, 'sha': file['sha'], 'message': 'test: correct bounded verifier JSON recovery accounting', 'content': base64.b64encode(fixed.encode()).decode()})
+              summary('Repair committed: ' + written['commit']['sha'] + '. Awaiting independently triggered final-head CI and E2E.')
+          else:
+              assert "elif mode == 'invalid':" in source and "assert meta['audit_http_calls'] == 4, meta" in source, 'repair missing or source changed'
+              assert "assert meta['audit_semantic_review_calls'] == 2, meta" in source
+              summary('Bounded verifier accounting repair already present; requiring final-head validation.')
+          deadline = time.monotonic() + 2400
+          required = {'New API Risk Platform CI', 'New API Risk Platform E2E'}
+          previous_head = None
+          while time.monotonic() < deadline:
+              p = checked_pr()
+              if p.get('merged'):
+                  summary('PR33 merged by another authorized actor: ' + p['merge_commit_sha'])
+                  raise SystemExit(0)
+              assert p['state'] == 'open' and p['base']['sha'] == base, 'PR/base changed; revalidation required'
+              head = p['head']['sha']
+              if head != previous_head:
+                  summary('Checking final-head workflow runs: ' + head)
+                  previous_head = head
+              data = api('/actions/runs?head_sha=' + head + '&per_page=100')
+              selected = {}
+              for run in data.get('workflow_runs', []):
+                  if run.get('head_sha') != head or run.get('name') not in required:
+                      continue
+                  name = run['name']
+                  if name not in selected or run['id'] > selected[name]['id']:
+                      selected[name] = run
+              if set(selected) == required and all(r['status'] == 'completed' and r['conclusion'] == 'success' for r in selected.values()):
+                  for name, run in selected.items():
+                      jobs = api('/actions/runs/' + str(run['id']) + '/jobs?per_page=100')['jobs']
+                      assert jobs and all(j['status'] == 'completed' and j['conclusion'] == 'success' for j in jobs), 'missing/failed/skipped validation job'
+                      if name == 'New API Risk Platform CI':
+                          assert len(jobs) >= 2, 'container smoke validation missing'
+                  break
+              # A newer correction may be pushed while this isolated maintenance
+              # job waits. Failed checks never trigger merging or bypassing tests.
+              time.sleep(20)
+          else:
+              raise RuntimeError('No complete successful final-head CI/E2E within deadline; main remains unchanged.')
+          final_file = api('/contents/' + PATH + '?ref=' + head)
+          final_source = base64.b64decode(final_file['content']).decode('utf-8')
+          for invariant in ("assert status == 555", "meta['upstream_started'] is False", "not meta['audit_completed']", "meta['audit_effective_decision'] == 'block'", "assert count == 88", "assert meta['audit_http_calls'] == 4, meta", "assert meta['audit_semantic_review_calls'] == 2, meta"):
+              assert invariant in final_source, 'required failure invariant missing: ' + invariant
+          p = checked_pr()
+          assert p['head']['sha'] == head and p['base']['sha'] == base
+          assert api('/git/ref/heads/main')['object']['sha'] == base, 'main changed after validation'
+          head_tree = api('/git/commits/' + head)['tree']['sha']
+          validations = {name: {'id': r['id'], 'conclusion': r['conclusion']} for name, r in selected.items()}
+          receipt = api('/pulls/33/merge', 'PUT', {'sha': head, 'merge_method': 'squash', 'commit_title': 'fix(audit): normal script testing and verified bounded verifier recovery (v15) (#33)', 'commit_message': 'Preserve complete auditing, required verification, bounded failure recovery and HTTP 555. Correct E2E expectations for invalid-JSON output-format recovery. Final-head CI and full Docker E2E including container smoke passed. Synthetic tests are not production Qwen accuracy measurements. Validation: ' + json.dumps(validations)})
+          assert receipt.get('merged') is True, receipt
+          merged = checked_pr()
+          main_sha = api('/git/ref/heads/main')['object']['sha']
+          assert merged['merged'] and main_sha == merged['merge_commit_sha']
+          assert api('/git/commits/' + main_sha)['tree']['sha'] == head_tree, 'unexpected squash source tree'
+          summary(json.dumps({'merged': True, 'main': main_sha, 'tested_head': head, 'tree': head_tree, 'validations': validations}, ensure_ascii=False))
+          PY
