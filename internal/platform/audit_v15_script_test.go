@@ -115,6 +115,7 @@ func TestV15ScriptModelCorrectionRequiresFreshVerification(t *testing.T) {
 					if !in.SourceMatchesRequestText || in.DocumentHMAC != got.AuditModelInputs[0].DocumentHMAC {
 						t.Fatal("repair changed source or context")
 					}
+				}
 			})
 		}
 	}
