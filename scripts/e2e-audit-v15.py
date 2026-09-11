@@ -175,13 +175,22 @@ for mode, error_class in [('invalid', 'invalid_json'), ('unavailable', 'audit_se
         assert meta['upstream_started'] is False and meta['audit_effective_decision'] == 'block', meta
         assert not meta['audit_completed'] and meta['audit_error_class'] == error_class, meta
         assert meta['audit_model_attempts'] == 1 and not meta.get('audit_fallback_count', 0), meta
+        assert meta['audit_chunks_completed'] == 0, meta
         if mode == 'context':
             # At most a single plan plus four re-chunk plans, two workers each,
             # with a primary and required verifier. Cancellation may reduce work.
             assert 2 < meta['audit_http_calls'] <= 18, meta
             assert 1 <= meta['audit_chunk_retry_count'] <= 4 and meta['audit_chunk_count'] > 1, meta
-            assert meta['audit_chunks_completed'] == 0, meta
+        elif mode == 'invalid':
+            # Invalid JSON performs one bounded output-format recovery. Each
+            # format requires a fresh primary AND verifier; the persistent
+            # verifier failure must never reuse primary allow as a final allow.
+            assert meta['audit_http_calls'] == 4, meta
+            assert meta['audit_semantic_review_calls'] == 2, meta
         else:
+            # A provider 503 is not an output-format error. With retry_count=0
+            # there is only one primary and one failing required verifier.
             assert meta['audit_http_calls'] == 2, meta
+            assert meta['audit_semantic_review_calls'] == 1, meta
 assert count == 88, count
 print(f'v15 script evidence: {count} HTTP/SSE normal/correction, history/tool, bounded failure, custom-rule and actual-operation veto cases passed')
