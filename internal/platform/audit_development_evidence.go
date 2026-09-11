@@ -50,6 +50,9 @@ func precisionRule(r compiledRule) bool {
 	if r.Code == "CYBER_SYSTEM_PROMPT_EXTRACTION" {
 		return r.Pattern == shippedSystemPromptPattern
 	}
+	if r.Code == "CYBER_PROMPT_INJECTION" {
+		return r.Pattern == shippedPromptInjectionPattern
+	}
 	if r.ID == 0 {
 		for _, b := range cyberDenyBaseline {
 			if b.Code == r.Code {
@@ -76,6 +79,9 @@ func interactiveCredentialEvidence(source string, start, end int) bool {
 func weakDevelopmentRuleEvidence(r compiledRule, text string, ev cyberRuleEvidence) string {
 	if !precisionRule(r) {
 		return ""
+	}
+	if reason := scriptDevelopmentRuleEvidence(r, text, ev); reason != "" {
+		return reason
 	}
 	if (r.Code == "CYBER_CREDENTIAL_ACCESS_DISABLED" || r.Code == "CYBER_CREDENTIAL_ACCESS_REVIEW") && stateObjectNotCredential(text, ev) {
 		return "read_object_is_state_not_cross_clause_credential"

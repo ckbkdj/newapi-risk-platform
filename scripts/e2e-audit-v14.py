@@ -70,7 +70,7 @@ for ending,want in [('V14_TAIL_OK',200),('synthetic prohibited operation',555),(
         status,data=call('/gateway/v14-full/v1/'+endpoint,body,ROUTE,rid,stream)
         assert status==want,(rid,status,data)
         meta=trace_for(rid)
-        assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v14',meta
+        assert meta['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v15',meta
         assert meta['audit_chunk_count']>256 and meta['audit_http_calls']>256,meta
         assert meta['upstream_started']==(want==200),meta
         assert meta.get('audit_capacity_text_limit_bytes',0)==0,meta

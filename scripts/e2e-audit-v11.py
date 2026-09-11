@@ -57,7 +57,7 @@ def check(name, body, want, calls=None, stream=False):
     status, data = call('/gateway/mock-main/v1/responses', body, ROUTE, rid, stream=stream)
     assert status == want, (name, status, data)
     meta = trace_for(rid)
-    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v14', meta
+    assert meta['gateway_build']['audit_engine'] == 'cyber-deny-qwen27b.v15', meta
     assert meta['upstream_started'] == (want == 200), (name,meta)
     if calls is not None: assert meta['audit_http_calls'] == calls, (name,meta)
     if want == 200: assert meta['audit_completed'], (name,meta)

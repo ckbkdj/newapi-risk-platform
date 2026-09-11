@@ -51,7 +51,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if mockFullRequestV14(w, request) {
+	if mockFullRequestV14(w, request) || mockScriptV15(w, request) {
 		return
 	}
 	text := strings.ToLower(messageText(request))
