@@ -182,11 +182,11 @@ for mode, error_class in [('invalid', 'invalid_json'), ('unavailable', 'audit_se
             assert 2 < meta['audit_http_calls'] <= 18, meta
             assert 1 <= meta['audit_chunk_retry_count'] <= 4 and meta['audit_chunk_count'] > 1, meta
         elif mode == 'invalid':
-            # Invalid JSON performs one bounded output-format recovery. Each
-            # format requires a fresh primary AND verifier; the persistent
-            # verifier failure must never reuse primary allow as a final allow.
-            assert meta['audit_http_calls'] == 4, meta
-            assert meta['audit_semantic_review_calls'] == 2, meta
+            # retry_count=0 means a malformed required verifier has no extra
+            # output-format retry budget. One valid primary plus one invalid
+            # required verifier must fail closed; primary allow is never final.
+            assert meta['audit_http_calls'] == 2, meta
+            assert meta['audit_semantic_review_calls'] == 1, meta
         else:
             # A provider 503 is not an output-format error. With retry_count=0
             # there is only one primary and one failing required verifier.
