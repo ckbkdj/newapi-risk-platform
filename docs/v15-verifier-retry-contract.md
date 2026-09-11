@@ -4,11 +4,14 @@ This document describes acceptance criteria, not a claim that a particular run
 has passed or that production Qwen requests have been replayed.
 
 The `scripts/e2e-audit-v15.py` required-verifier fixtures must account for
-bounded output-format recovery separately from HTTP retries and context-length
-re-chunking. A persistent invalid-JSON verifier may require two complete
-primary/verifier pairs (four HTTP calls, two semantic reviews). A service error
-with `retry_count=0` is not an output-format error. Context-length recovery uses
-the existing finite re-chunk plan and may cancel parallel work.
+output-format recovery separately from HTTP retries and context-length
+re-chunking. The current fault profiles explicitly use `retry_count=0`, so a
+persistent invalid-JSON required verifier and a verifier service error each
+consume exactly one primary/verifier pair (two HTTP calls, one semantic review)
+and then fail closed. No cached or successful primary allow may stand in for the
+failed required verifier. Output-format recovery requires an explicit retry
+budget and, when tested separately, must remain bounded. Context-length recovery
+uses the existing finite re-chunk plan and may cancel parallel work.
 
 For every failure mode, both HTTP and SSE requests must continue to satisfy:
 
