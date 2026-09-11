@@ -19,6 +19,7 @@ var devAuthTransport = regexp.MustCompile(`(?i)(请求头|headers?|作为.{0,12}
 var devAuthMaterial = regexp.MustCompile(`(?i)(\b(?:token|jwt|session)\b|会话|令牌)`)
 var devExplicitOperation = regexp.MustCompile(`(?i)(窃取|盗取|绕过|伪造|冒用|跳过.{0,12}(?:验证|认证|校验|验签)|关闭.{0,12}(?:验证|认证|校验|验签)|他人.{0,12}(?:凭据|令牌|token)|公开.{0,12}(?:token|凭据|密钥)|外传|后门|\b(?:steal|stolen|bypass|forge|forged|exfil\w*|harvest|victim|unauthorized)\b|(?:disable|skip|ignore).{0,24}(?:auth|verification|signature))`)
 var markdownRuleBoundary = regexp.MustCompile(`\|[ \t]*(?:\r?\n|\\n)[ \t]*\|`)
+var defensiveXSSContext = regexp.MustCompile(`(?i)(?:(?:防(?:止|范|御)?|预防|避免|拦截|过滤|清洗|转义|编码|净化|修复|防护).{0,32}\bXSS\b|\bXSS\b.{0,32}(?:防护|过滤|清洗|转义|编码|净化|修复)|\b(?:sanitize|escape|filter|clean|prevent|protect|mitigat\w*|block)\b.{0,48}\bXSS\b|\bXSS\b.{0,48}\b(?:sanitiz\w*|escap\w*|filter\w*|clean\w*|prevent\w*|protect\w*|mitigat\w*)\b)`)
 
 // Scope negation to the matched action, never the whole request. Double
 // negatives and quoted "local/authorized" claims are not permissions.
@@ -76,6 +77,25 @@ func interactiveCredentialEvidence(source string, start, end int) bool {
 	return false
 }
 
+// Defensive source comments and sanitization code may literally contain phrases
+// such as "防 XSS攻击". That phrase describes the threat being mitigated, not an
+// operation to perform. Suppress only this individual shipped-baseline candidate;
+// later XSS payload/injection candidates in the same request are still scanned.
+func defensiveXSSEvidence(source string, ev cyberRuleEvidence) bool {
+	if ev.start < 0 || ev.end <= ev.start || ev.end > len(source) || !strings.Contains(strings.ToLower(ev.matchedRaw), "xss") {
+		return false
+	}
+	lineStart := strings.LastIndex(source[:ev.start], "\n") + 1
+	lineEnd := len(source)
+	if next := strings.IndexByte(source[ev.end:], '\n'); next >= 0 {
+		lineEnd = ev.end + next
+	}
+	if lineEnd-lineStart > 4096 {
+		return false
+	}
+	return defensiveXSSContext.MatchString(source[lineStart:lineEnd])
+}
+
 func weakDevelopmentRuleEvidence(r compiledRule, text string, ev cyberRuleEvidence) string {
 	if !precisionRule(r) {
 		return ""
@@ -91,6 +111,9 @@ func weakDevelopmentRuleEvidence(r compiledRule, text string, ev cyberRuleEviden
 	}
 	if r.Code == "CYBER_SECURITY_TEST_DISABLED" && escapedMountMapCandidate(text, ev) {
 		return "escaped_linebreak_filesystem_row"
+	}
+	if r.Code == "CYBER_EXPLOIT_TEST_DISABLED" && defensiveXSSEvidence(text, ev) {
+		return "defensive_xss_mitigation_requires_semantic_audit"
 	}
 	// A reference inside a complete plain-source search is not execution of the
 	// tool named in the search expression. All other text and rules still run.
