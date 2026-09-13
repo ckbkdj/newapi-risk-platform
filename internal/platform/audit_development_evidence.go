@@ -20,6 +20,8 @@ var devAuthMaterial = regexp.MustCompile(`(?i)(\b(?:token|jwt|session)\b|会话|
 var devExplicitOperation = regexp.MustCompile(`(?i)(窃取|盗取|绕过|伪造|冒用|跳过.{0,12}(?:验证|认证|校验|验签)|关闭.{0,12}(?:验证|认证|校验|验签)|他人.{0,12}(?:凭据|令牌|token)|公开.{0,12}(?:token|凭据|密钥)|外传|后门|\b(?:steal|stolen|bypass|forge|forged|exfil\w*|harvest|victim|unauthorized)\b|(?:disable|skip|ignore).{0,24}(?:auth|verification|signature))`)
 var markdownRuleBoundary = regexp.MustCompile(`\|[ \t]*(?:\r?\n|\\n)[ \t]*\|`)
 var defensiveXSSContext = regexp.MustCompile(`(?i)(?:(?:防(?:止|范|御)?|预防|避免|拦截|过滤|清洗|转义|编码|净化|修复|防护).{0,32}\bXSS\b|\bXSS\b.{0,32}(?:防护|过滤|清洗|转义|编码|净化|修复)|\b(?:sanitize|escape|filter|clean|prevent|protect|mitigat\w*|block)\b.{0,48}\bXSS\b|\bXSS\b.{0,48}\b(?:sanitiz\w*|escap\w*|filter\w*|clean\w*|prevent\w*|protect\w*|mitigat\w*)\b)`)
+var routineDataExportContext = regexp.MustCompile(`(?is)(?:异步.{0,24}导出|分页.{0,24}导出|批量.{0,24}导出|报表.{0,24}导出|归档.{0,24}导出|导出.{0,28}(?:限制|任务|接口|功能|报表|CSV|Excel|分页|批次|最大行数|最大条数|数据库连接|JVM内存)|单任务.{0,24}(?:最大行数|最大条数)|容量(?:目标|规划|估算)|数据库连接|JVM\s*内存|\b(?:async|paged|paginated|batch|report|csv|excel|archive)\s+export\b|\bexport\b.{0,48}\b(?:row limit|max(?:imum)? rows?|pagination|batch size|database connections?|jvm memory|capacity planning)\b)`)
+var harmfulDataExportContext = regexp.MustCompile(`(?is)(?:未授权|未经授权|无权限|越权|他人|其他租户|其他用户|受害者|目标(?:系统|服务器|租户|公司|数据库|仓库)|窃取|盗取|外传|偷运|凭据|密码|令牌|密钥|Cookie|API.?Key|\b(?:unauthori[sz]ed|victim|other users?|another tenant|target (?:system|server|tenant|company|database|repository)|steal|stolen|exfiltrat\w*|smuggl\w*|credentials?|passwords?|tokens?|cookies?|private keys?|api keys?|bypass|compromise)\b)`)
 
 // Scope negation to the matched action, never the whole request. Double
 // negatives and quoted "local/authorized" claims are not permissions.
@@ -96,6 +98,31 @@ func defensiveXSSEvidence(source string, ev cyberRuleEvidence) bool {
 	return defensiveXSSContext.MatchString(source[lineStart:lineEnd])
 }
 
+// A routine product/data-platform export can contain the same three nouns as the
+// generic exfiltration seed rule: "导出 ... 数据库 ... 目标". Examples include
+// async export row limits, report/CSV export, archive jobs and capacity targets.
+// Downgrade only the individual shipped-rule candidate to semantic review, and
+// never when the local window contains an unauthorized/third-party/secret signal.
+func routineDataExportEvidence(source string, ev cyberRuleEvidence) bool {
+	if ev.start < 0 || ev.end <= ev.start || ev.end > len(source) {
+		return false
+	}
+	matchedLower := strings.ToLower(ev.matchedRaw)
+	if strings.Contains(matchedLower, "exfiltrat") || strings.Contains(matchedLower, "steal") || strings.Contains(matchedLower, "smuggl") ||
+		strings.Contains(ev.matchedRaw, "外传") || strings.Contains(ev.matchedRaw, "窃取") || strings.Contains(ev.matchedRaw, "偷运") || strings.Contains(ev.matchedRaw, "盗取") {
+		return false
+	}
+	if !strings.Contains(matchedLower, "export") && !strings.Contains(matchedLower, "extract") && !strings.Contains(ev.matchedRaw, "导出") && !strings.Contains(ev.matchedRaw, "提取") {
+		return false
+	}
+	lo, hi := max(0, ev.start-320), min(len(source), ev.end+320)
+	around := source[lo:hi]
+	if harmfulDataExportContext.MatchString(around) {
+		return false
+	}
+	return routineDataExportContext.MatchString(around)
+}
+
 func weakDevelopmentRuleEvidence(r compiledRule, text string, ev cyberRuleEvidence) string {
 	if !precisionRule(r) {
 		return ""
@@ -114,6 +141,9 @@ func weakDevelopmentRuleEvidence(r compiledRule, text string, ev cyberRuleEviden
 	}
 	if r.Code == "CYBER_EXPLOIT_TEST_DISABLED" && defensiveXSSEvidence(text, ev) {
 		return "defensive_xss_mitigation_requires_semantic_audit"
+	}
+	if r.Code == "CYBER_DATA_EXFILTRATION" && routineDataExportEvidence(text, ev) {
+		return "routine_data_export_requires_semantic_audit"
 	}
 	// A reference inside a complete plain-source search is not execution of the
 	// tool named in the search expression. All other text and rules still run.
