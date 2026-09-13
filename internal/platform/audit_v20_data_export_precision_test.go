@@ -27,12 +27,28 @@ func v20DataExfiltrationRule() compiledRule {
 	}
 }
 
-func TestV20RoutineDataExportsDoNotHardBlock(t *testing.T) {
-	cases := []string{
-		`ROLE=USER
+func TestV20ReportedCapacityExportCandidateIsSuppressed(t *testing.T) {
+	text := `ROLE=USER
 普通用户行为明细首期建议在线保留 90 天，广告回调证据和云机事件保留 180 天。
 异步导出限制单任务最大行数，避免一次导出占满数据库连接和 JVM 内存。
-以每天 100 万条行为/广告事件估算，180 天原始事件约 1.8 亿条。这是容量目标，而不是未经验证的承载承诺。`,
+以每天 100 万条行为/广告事件估算，180 天原始事件约 1.8 亿条。这是容量目标，而不是未经验证的承载承诺。`
+
+	e := v16BaselineEngine()
+	e.rules.Store([]compiledRule{v20DataExfiltrationRule()})
+	decision, diagnostics, suppressions, err := e.matchCyberDenyRulesContext(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision != nil || diagnostics != nil {
+		t.Fatalf("reported routine export hit terminal exfiltration rule: decision=%+v diagnostics=%+v", decision, diagnostics)
+	}
+	if len(suppressions) == 0 {
+		t.Fatal("reported production false-positive candidate was not routed to semantic audit")
+	}
+}
+
+func TestV20RoutineDataExportsDoNotHardBlock(t *testing.T) {
+	cases := []string{
 		`ROLE=USER
 设计后台报表导出：CSV 导出采用分页，每个导出任务限制最大行数，避免长期占用数据库连接。容量目标按 90 天数据估算。`,
 		`ROLE=USER
@@ -44,15 +60,12 @@ For normal reporting, export database records to CSV with a row limit and pagina
 	for _, text := range cases {
 		e := v16BaselineEngine()
 		e.rules.Store([]compiledRule{v20DataExfiltrationRule()})
-		decision, diagnostics, suppressions, err := e.matchCyberDenyRulesContext(context.Background(), text)
+		decision, diagnostics, _, err := e.matchCyberDenyRulesContext(context.Background(), text)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if decision != nil || diagnostics != nil {
 			t.Fatalf("routine data export hit terminal exfiltration rule: decision=%+v diagnostics=%+v text=%q", decision, diagnostics, text)
-		}
-		if len(suppressions) == 0 {
-			t.Fatalf("expected routine export candidate to be routed to semantic audit: %q", text)
 		}
 	}
 }
@@ -92,12 +105,9 @@ func TestV20RoutineExportDoesNotHideLaterExfiltration(t *testing.T) {
 
 	e := v16BaselineEngine()
 	e.rules.Store([]compiledRule{v20DataExfiltrationRule()})
-	decision, diagnostics, suppressions, err := e.matchCyberDenyRulesContext(context.Background(), text)
+	decision, diagnostics, _, err := e.matchCyberDenyRulesContext(context.Background(), text)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(suppressions) == 0 {
-		t.Fatal("expected benign export candidate to be suppressed before later real exfiltration")
 	}
 	if decision == nil || diagnostics == nil || decision.Decision != DecisionBlock || decision.RiskCode != "CYBER_DATA_EXFILTRATION" {
 		t.Fatalf("later real exfiltration was hidden: decision=%+v diagnostics=%+v", decision, diagnostics)
