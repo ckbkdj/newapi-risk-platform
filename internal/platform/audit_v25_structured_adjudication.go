@@ -10,7 +10,7 @@ import (
 
 var (
 	serializedAuditEventHeaderV26 = regexp.MustCompile(`(?m)^\s*\[(\d{1,6})\]\s+(user|assistant|tool(?:\s+[A-Za-z0-9_.:-]+)?(?:\s+(?:call|result))?)\s*:\s*`)
-	semanticMentionFrameV26       = regexp.MustCompile(`(?i)(?:文档|记录|日志|表格|工作簿|描述|说明|提到|出现|字段|字符串|待复现|待验证|判断(?:是否|是不是)|是否需要|是不是需要|可能需要|考虑是否|reported|record(?:ed)?|document(?:ed)?|log(?:ged)?|spreadsheet|mentions?|describes?|whether|might need|may need|consider(?:ing)?\s+whether)`)
+	semanticMentionFrameV26       = regexp.MustCompile(`(?i)(?:文档|记录|日志|表格|工作簿|描述|说明|提到|出现|字段|字符串|翻译|总结|摘要|整理|改写|润色|校对|解释|引用|待复现|待验证|判断(?:是否|是不是)|是否需要|是不是需要|可能需要|考虑是否|\b(?:reports?|reported|records?|recorded|documents?|documented|logs?|logged|spreadsheet|mentions?|describes?|translate|translation|summari[sz]e|summary|rewrite|proofread|explain|quote|whether|might need|may need)\b|\bconsider(?:ing)?\s+whether\b)`)
 )
 
 // ROLE markers are a rendered transport representation, not authorization
