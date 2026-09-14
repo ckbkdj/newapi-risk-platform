@@ -67,7 +67,7 @@ jobs:
               'AUDIT_CONTEXT_TARGET_TOKENS': '0',
               'AUDIT_FALLBACK_CHUNK_BYTES': '196608',
               'AUDIT_CHUNK_OVERLAP_BYTES': '4096',
-              'AUDIT_CHUNK_CONCURRENCY': '2',
+              'AUDIT_CHUNK_CONCURRENCY': '4',
               'AUDIT_MAX_CHUNKS': '0',
               'AUDIT_REQUEST_TIMEOUT': '0s',
               'AUDIT_MODEL_CONCURRENCY': '16',
@@ -119,8 +119,18 @@ jobs:
           assert values['REQUEST_LARGE_BODY_MAX_CONCURRENCY'] == '4'
           assert values['AUDIT_TEXT_MAX_BYTES'] == '0'
           assert values['AUDIT_OUTPUT_MAX_TOKENS'] == '256'
+          assert values['AUDIT_CHUNK_CONCURRENCY'] == '4'
           assert values['AUDIT_MAX_CHUNKS'] == '0'
           PY
+
+          # Historical exact default 2 migrates to 4, while an explicit custom
+          # operator value is preserved.
+          sed -i 's/^AUDIT_CHUNK_CONCURRENCY=.*/AUDIT_CHUNK_CONCURRENCY=2/' .env
+          bash scripts/init-env.sh >/tmp/init-env-concurrency-2.txt
+          grep -qx 'AUDIT_CHUNK_CONCURRENCY=4' .env
+          sed -i 's/^AUDIT_CHUNK_CONCURRENCY=.*/AUDIT_CHUNK_CONCURRENCY=3/' .env
+          bash scripts/init-env.sh >/tmp/init-env-concurrency-3.txt
+          grep -qx 'AUDIT_CHUNK_CONCURRENCY=3' .env
 
       - name: Verify module lock and formatting
         run: |
