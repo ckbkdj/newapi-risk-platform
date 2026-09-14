@@ -28,16 +28,7 @@ var gitHistoryEvidenceV24 = regexp.MustCompile(`(?is)(?:(?:提交|commit).{0,120
 // These are concrete Cyber purposes for a Git-history operation. General HR,
 // attribution, timesheet, policy or honesty concerns are deliberately absent:
 // this gateway enforces Cyber capability, not every form of misconduct.
-var gitHistoryCyberPurposeV24 = regexp.MustCompile(`(?is)(?:
-	(?:隐藏|掩盖|清除|删除).{0,48}(?:入侵|攻击痕迹|后门|恶意(?:代码|提交|载荷)|取证证据|安全审计证据|安全日志)
-	|(?:植入|加入|注入).{0,48}(?:后门|木马|恶意代码|窃密|凭据窃取)
-	|(?:窃取|盗取|外传|偷运).{0,64}(?:凭据|密码|令牌|token|cookie|api.?key|客户数据|数据库|源代码)
-	|(?:绕过|规避|关闭|禁用).{0,48}(?:认证|权限|风控|审计|检测|安全控制|edr|antivirus)
-	|\b(?:cover\s+tracks?|conceal|hide|erase|remove)\b.{0,64}\b(?:intrusion|attack traces?|backdoor|malware|malicious commit|forensic evidence|security audit evidence|security logs?)\b
-	|\b(?:implant|inject|insert)\b.{0,64}\b(?:backdoor|malware|trojan|credential stealer)\b
-	|\b(?:steal|exfiltrat\w*|smuggl\w*)\b.{0,64}\b(?:credentials?|passwords?|tokens?|cookies?|api keys?|customer data|database|source code)\b
-	|\b(?:bypass|evade|disable)\b.{0,48}\b(?:authentication|authorization|security controls?|audit|detection|edr|antivirus)\b
-)`)
+var gitHistoryCyberPurposeV24 = regexp.MustCompile(`(?is)(?:(?:隐藏|掩盖|清除|删除).{0,48}(?:入侵|攻击痕迹|后门|恶意(?:代码|提交|载荷)|取证证据|安全审计证据|安全日志)|(?:植入|加入|注入).{0,48}(?:后门|木马|恶意代码|窃密|凭据窃取)|(?:窃取|盗取|外传|偷运).{0,64}(?:凭据|密码|令牌|token|cookie|api.?key|客户数据|数据库|源代码)|(?:绕过|规避|关闭|禁用).{0,48}(?:认证|权限|风控|审计|检测|安全控制|edr|antivirus)|\b(?:cover\s+tracks?|conceal|hide|erase|remove)\b.{0,64}\b(?:intrusion|attack traces?|backdoor|malware|malicious commit|forensic evidence|security audit evidence|security logs?)\b|\b(?:implant|inject|insert)\b.{0,64}\b(?:backdoor|malware|trojan|credential stealer)\b|\b(?:steal|exfiltrat\w*|smuggl\w*)\b.{0,64}\b(?:credentials?|passwords?|tokens?|cookies?|api keys?|customer data|database|source code)\b|\b(?:bypass|evade|disable)\b.{0,48}\b(?:authentication|authorization|security controls?|audit|detection|edr|antivirus)\b)`)
 
 // Qwen can drift from the Cyber-only taxonomy into generic fraud/compliance
 // judgements. Normalize only a very narrow class: a non-allow model verdict
