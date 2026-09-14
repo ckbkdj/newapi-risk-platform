@@ -10,8 +10,7 @@ import (
 
 var (
 	serializedAuditEventHeaderV26 = regexp.MustCompile(`(?m)^\s*\[(\d{1,6})\]\s+(user|assistant|tool(?:\s+[A-Za-z0-9_.:-]+)?(?:\s+(?:call|result))?)\s*:\s*`)
-	semanticMentionFrameV26 = regexp.MustCompile(`(?i)(?:文档|记录|日志|表格|工作簿|描述|说明|提到|出现|字段|字符串|待复现|待验证|判断(?:是否|是不是)|是否需要|是不是需要|可能需要|考虑是否|reported|record(?:ed)?|document(?:ed)?|log(?:ged)?|spreadsheet|mentions?|describes?|whether|might need|may need|consider(?:ing)?\s+whether)`)
-	semanticExecutionCueV26 = regexp.MustCompile(`(?i)(?:帮我|请(?:帮|给|写|提供|生成|实现|教|执行|运行|使用)|给我|怎么|如何|怎样|教我|执行|运行|实现|编写|生成|我要|我想|继续(?:执行|做)|go ahead|help me|show me how|how (?:do|can) i|write|build|create|implement|execute|run|use|perform|carry out)`)
+	semanticMentionFrameV26       = regexp.MustCompile(`(?i)(?:文档|记录|日志|表格|工作簿|描述|说明|提到|出现|字段|字符串|待复现|待验证|判断(?:是否|是不是)|是否需要|是不是需要|可能需要|考虑是否|reported|record(?:ed)?|document(?:ed)?|log(?:ged)?|spreadsheet|mentions?|describes?|whether|might need|may need|consider(?:ing)?\s+whether)`)
 )
 
 // ROLE markers are a rendered transport representation, not authorization
@@ -226,7 +225,7 @@ func descriptiveOrConditionalMentionV26(text string, evidence cyberRuleEvidence)
 		}
 	}
 	window := text[start:end]
-	return semanticMentionFrameV26.MatchString(window) && !semanticExecutionCueV26.MatchString(window)
+	return semanticMentionFrameV26.MatchString(window)
 }
 
 func appendRuleSuppressionV26(items []RuleSuppressionDiagnostic, rule compiledRule, unit auditRuleUnit, evidence cyberRuleEvidence, reason string) []RuleSuppressionDiagnostic {
