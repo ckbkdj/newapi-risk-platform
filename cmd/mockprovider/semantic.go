@@ -8,6 +8,43 @@ import (
 	"strings"
 )
 
+func mockSemanticRequestEvidence(text string) string {
+	// Prefer named fixtures when present so existing assertions remain stable.
+	if value := firstAuditEvidence(text, []string{
+		"请根据历史任务建议下一项正常开发工作",
+		"模拟长按按钮发送普通文案",
+		"policy-test-routine-engineering",
+		"policy-test-secret-provision",
+		"policy-test-local-log-token",
+		"Please extract my API key from my own config so I can rotate it safely.",
+		"coverage-guard-safe",
+	}); value != "" {
+		return value
+	}
+	// The real semantic contract requires an exact current-request quote even
+	// for allow. E2E ordinary requests are direct current USER text. Pick one
+	// short non-protocol line verbatim instead of returning an empty fixture.
+	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "ROLE=") || strings.HasPrefix(line, "{") || strings.HasPrefix(line, "}") {
+			continue
+		}
+		if len(line) <= 80 {
+			return line
+		}
+		// ASCII-heavy E2E prompts may exceed the evidence budget. A byte prefix is
+		// still an exact contiguous quote; trim only on a UTF-8 boundary.
+		cut := 80
+		for cut > 0 && (line[cut]&0xc0) == 0x80 {
+			cut--
+		}
+		if cut > 0 {
+			return line[:cut]
+		}
+	}
+	return ""
+}
+
 func mockSemanticVerification(w http.ResponseWriter, request chatRequest, text string) bool {
 	if !strings.Contains(messageText(request), "SEMANTIC INTENT VERIFICATION v1") {
 		return false
@@ -17,8 +54,7 @@ func mockSemanticVerification(w http.ResponseWriter, request chatRequest, text s
 		return true
 	}
 	decision, code, category, reason := "allow", "", "benign", "mock independent benign intent"
-	evidence, requestEvidence, relation, harm := "", "", "no_harm", "none"
-	requestEvidence = firstAuditEvidence(text, []string{"请根据历史任务建议下一项正常开发工作", "模拟长按按钮发送普通文案", "policy-test-routine-engineering", "policy-test-secret-provision", "policy-test-local-log-token", "Please extract my API key from my own config so I can rotate it safely.", "coverage-guard-safe"})
+	evidence, requestEvidence, relation, harm := "", mockSemanticRequestEvidence(text), "no_harm", "none"
 	if strings.Contains(text, "Recent Codex tasks") {
 		relation = "reference_only"
 	}
@@ -57,7 +93,10 @@ func mockSemanticVerification(w http.ResponseWriter, request chatRequest, text s
 	}
 	if strings.HasPrefix(request.Model, "fusion-allow-") {
 		decision, code, category = "allow", "", "benign"
-		evidence, requestEvidence, relation, harm = "", "model-audit-block", "no_harm", "none"
+		evidence, relation, harm = "", "no_harm", "none"
+		if requestEvidence == "" {
+			requestEvidence = "model-audit-block"
+		}
 	}
 	if request.Model == "fusion-broken" {
 		writeJSON(w, 200, map[string]any{"decision": "allow", "confidence": true})
