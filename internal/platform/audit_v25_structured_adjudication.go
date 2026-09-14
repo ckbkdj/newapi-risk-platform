@@ -158,11 +158,10 @@ func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text st
 }
 
 // The primary six-field classifier is intentionally compact for local models,
-// but its risk_code field is still free-form JSON. Only codes that are actually
-// enabled by the platform rule set are canonical enough for a single model deny
-// to be terminal. Invented labels such as CYBER_FRAUD or CYBER_DATA_TAMPERING
-// are routed to the stronger nine-field semantic contract instead of becoming
-// new policy by model fiat.
+// but its risk_code field is still free-form JSON. Keep the canonical lookup for
+// diagnostics and strict-precedence decisions; noncanonical candidates still
+// enter the compatibility adjudication path below so v24 scope normalization can
+// reject model-invented non-Cyber taxonomies without weakening real Cyber blocks.
 func (e *AuditEngine) canonicalCyberRiskCodeV25(code string) bool {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if code == "" {
@@ -193,32 +192,96 @@ func (e *AuditEngine) cyberCandidateNeedsSemanticAdjudicationV25(candidate Audit
 	}
 }
 
-// semanticAdjudicateCyberCandidateV25 uses the already-hardened nine-field
-// verifier contract (exact current request evidence + enumerated harm_type).
-// Verification errors, missing panel votes and unresolved disagreements remain
-// fail-closed. This is not a permissive fallback.
+// semanticAdjudicateCyberCandidateV25 deliberately reuses the proven v24
+// Cyber-only normalization and six-field independent second pass. The earlier
+// v25 experiment sent every benign allow through the nine-field operation-proof
+// verifier; local 27B models legitimately returned no request_evidence for
+// allow/no_harm, which converted ordinary Android/Gradle/SDK work into
+// AUDIT_MODEL_ERROR. Evidence/harm proof is still mandatory where the model is
+// asserting a harmful operation, while a benign allow uses the stable independent
+// classifier contract. Any verifier error or missing fusion vote remains
+// fail-closed, and any validated deny keeps strict precedence.
 func (e *AuditEngine) semanticAdjudicateCyberCandidateV25(ctx context.Context, profile AuditProfile, text, source string, candidate AuditDecision, state *auditSemanticState) (AuditDecision, error) {
+	candidate = normalizeCyberOnlyScopeV24(candidate, text, source)
+	normalized, err := cyberDenyVerdict(candidate)
+	if err != nil || normalized.Decision != DecisionAllow {
+		return normalized, err
+	}
+	candidate = normalized
+
 	review := AuditSemanticReview{Status: "error", Candidate: cleanSemanticDecision(candidate)}
 	defer func() { state.record(review) }()
 	verifyCtx := context.WithValue(ctx, cyberDenySecondPassKey{}, true)
-
-	var verified AuditDecision
-	var err error
+	verifier, verifierErr := e.semanticVerifierProfile(ctx, profile)
+	if verifierErr != nil {
+		return AuditDecision{}, verifierErr
+	}
+	profiles := []AuditProfile{verifier}
+	var fusion *AuditFusionResult
 	if _, enabled := auditProfileExtra(profile)["_risk_fusion_profile_ids"]; enabled {
-		var fusion *AuditFusionResult
-		verified, fusion, err = e.fuseAuditIntent(verifyCtx, profile, text, source, state)
+		profiles, _, err = e.auditFusionProfiles(ctx, profile)
+		if err != nil {
+			return AuditDecision{}, err
+		}
+		fusion = &AuditFusionResult{Strategy: "cyber_deny_overrides.v1", Status: "error"}
 		review.Fusion = fusion
-	} else {
-		var verifier AuditProfile
-		verifier, err = e.semanticVerifierProfile(verifyCtx, profile)
-		if err == nil {
-			review.ProfileID, review.Model = verifier.ID, verifier.Model
-			verified, review.Attempts, err = e.verifyAuditIntent(verifyCtx, verifier, text, source, state)
+	}
+
+	var failure error
+	last := candidate
+	for _, p := range profiles {
+		if !state.reserveReview() {
+			return AuditDecision{}, newAuditModelCallError("semantic_review_budget", 0, "Cyber verification budget exhausted", nil)
+		}
+		plan := e.auditOutputPlan(p, 0)
+		if p.ID == profile.ID {
+			plan = auditOutputPlanFromContext(ctx)
+		}
+		plan.VerifyIntent = false
+		callCtx, outputState := withAuditOutputAttempt(verifyCtx, plan)
+		d, callErr := e.callCyberGroundedModel(callCtx, p, text, source)
+		if class, _, _ := auditModelErrorDetails(callErr); class == "invalid_evidence" {
+			callErr = newAuditModelCallError("cyber_evidence_unresolved", 0, "non-allow verifier evidence is unresolved", callErr)
+		}
+		if callErr == nil {
+			d = normalizeCyberOnlyScopeV24(d, text, source)
+			d, callErr = cyberDenyVerdict(d)
+		}
+		if callErr != nil {
+			diag := outputState.snapshot(true)
+			diag.Mode, diag.MaxTokens, diag.Failed = plan.Mode, plan.MaxTokens, true
+			callErr = annotateAuditOutputError(callErr, diag)
+		}
+
+		vote := AuditFusionVote{ProfileID: p.ID, Model: p.Model}
+		review.ProfileID, review.Model = p.ID, p.Model
+		if callErr != nil {
+			vote.ErrorClass, _, _ = auditModelErrorDetails(callErr)
+			failure = callErr
+		} else {
+			clean := cleanSemanticDecision(d)
+			vote.Outcome = &clean
+			last = d
+		}
+		if fusion != nil {
+			fusion.Votes = append(fusion.Votes, vote)
+		}
+		if callErr == nil && d.Decision != DecisionAllow {
+			if fusion != nil {
+				fusion.Status = "deny_override"
+				fusion.Disagreement = true
+			}
+			return finishSemanticReview(candidate, d, &review), nil
 		}
 	}
-	if err != nil {
-		return AuditDecision{}, err
+	if failure != nil {
+		if fusion != nil {
+			return AuditDecision{}, newAuditModelCallError("fusion_incomplete", 0, "Cyber fusion has missing or invalid assessments; cannot allow", failure)
+		}
+		return AuditDecision{}, failure
 	}
-	out := finishSemanticReview(candidate, verified, &review)
-	return cyberDenyVerdict(out)
+	if fusion != nil {
+		fusion.Status = "all_allow"
+	}
+	return finishSemanticReview(candidate, last, &review), nil
 }
