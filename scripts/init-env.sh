@@ -93,7 +93,7 @@ audit_defaults = {
     "AUDIT_CONTEXT_TARGET_TOKENS": "0",
     "AUDIT_FALLBACK_CHUNK_BYTES": "196608",
     "AUDIT_CHUNK_OVERLAP_BYTES": "4096",
-    "AUDIT_CHUNK_CONCURRENCY": "2",
+    "AUDIT_CHUNK_CONCURRENCY": "4",
     "AUDIT_MAX_CHUNKS": "0",
     "AUDIT_REQUEST_TIMEOUT": "0s",
     "AUDIT_MODEL_CONCURRENCY": "16",
@@ -110,6 +110,11 @@ for key, default in audit_defaults.items():
         should_set = True
         warnings.append(
             "AUDIT_OUTPUT_MAX_TOKENS was increased from 128 to 256 so the six-field structured policy JSON is not truncated."
+        )
+    if key == "AUDIT_CHUNK_CONCURRENCY" and current == "2":
+        should_set = True
+        warnings.append(
+            "AUDIT_CHUNK_CONCURRENCY legacy default was increased from 2 to 4 so long-context audit chunks do not queue in three serial waves before upstream starts."
         )
     if key == "AUDIT_MAX_CHUNKS" and current in {"64", "256"}:
         should_set = True
