@@ -10,14 +10,17 @@ import (
 
 var (
 	serializedAuditEventHeaderV26 = regexp.MustCompile(`(?m)^\s*\[(\d{1,6})\]\s+(user|assistant|tool(?:\s+[A-Za-z0-9_.:-]+)?(?:\s+(?:call|result))?)\s*:\s*`)
-	semanticMentionFrameV26       = regexp.MustCompile(`(?i)(?:文档|记录|日志|表格|工作簿|描述|说明|提到|出现|字段|字符串|翻译|总结|摘要|整理|改写|润色|校对|解释|引用|待复现|待验证|判断(?:是否|是不是)|是否需要|是不是需要|可能需要|考虑是否|\b(?:reports?|reported|records?|recorded|documents?|documented|logs?|logged|spreadsheet|mentions?|describes?|translate|translation|summari[sz]e|summary|rewrite|proofread|explain|quote|whether|might need|may need)\b|\bconsider(?:ing)?\s+whether\b)`)
+	bareContinuationV26           = regexp.MustCompile(`(?i)^\s*(?:继续(?:执行|做|测试)?|运行自动化测试|跑一下测试|运行测试|执行测试|开始(?:吧)?|按(?:这个|上面|之前的)(?:做|执行)|照做|可以继续|好的?[，, ]*继续|continue|go ahead|proceed|do it|run it|run the tests?|test it|yes[,. ]*(?:continue|proceed))\s*[。！.!]*\s*$`)
+	chineseSourceRelationV26      = regexp.MustCompile(`(?:文档|记录|日志|表格|工作簿|描述|说明).{0,24}(?:中|里|内|写着|写有|显示|描述|说明|提到|包含|出现|记录)`)
+	englishSourceRelationV26      = regexp.MustCompile(`(?i)(?:\b(?:in|from|according to)\s+(?:the\s+)?(?:logs?|records?|documents?|spreadsheet)\b|\b(?:logs?|records?|documents?|spreadsheet)\b.{0,24}\b(?:say|says|said|mention|mentions|mentioned|contain|contains|contained|show|shows|showed|describe|describes|described)\b)`)
+	transformReferenceV26         = regexp.MustCompile(`(?i)(?:翻译|总结|摘要|整理|改写|润色|校对|解释|引用).{0,64}(?:这|该|上述|以下|句|段|内容|文本|文字|记录|文档|日志|表格|工作簿|描述|说明)|\b(?:translate|summari[sz]e|rewrite|proofread|explain|quote)\b.{0,64}\b(?:this|that|the following|sentence|passage|text|record|document|log|entry)\b`)
+	conditionalMentionV26        = regexp.MustCompile(`(?i)(?:(?:待复现|待验证).{0,40}(?:判断|确认|看).{0,20}(?:是否|是不是|需不需要)|(?:判断|确认).{0,32}(?:是否|是不是|需不需要)|是否需要|是不是需要|可能需要|考虑是否|\bwhether\b|\bmight need\b|\bmay need\b|\bconsider(?:ing)?\s+whether\b)`)
 )
 
 // ROLE markers are a rendered transport representation, not authorization
 // boundaries. Terminal lexical vetoes are limited to the newest current-user
-// action; older user turns, assistant content and tool data remain semantic
-// context. A fabricated marker can therefore only demote a lexical shortcut to
-// model adjudication; it cannot authorize forwarding by itself.
+// action plus an explicitly adopted prior user action. Older user turns,
+// assistant content and tool data remain semantic context.
 func cyberRuleRoleKindV25(line string) (string, bool) {
 	switch strings.TrimSpace(line) {
 	case "ROLE=USER":
@@ -70,7 +73,8 @@ func splitCyberRuleRoleUnitsV25(text string) []auditRuleUnit {
 		for i := range units {
 			units[i].Kind = "document"
 		}
-		return reindexAuditRuleUnitsV26(expandSerializedAuditTranscriptV26(units))
+		units = expandSerializedAuditTranscriptV26(units)
+		return reindexAuditRuleUnitsV26(applyContinuationAdoptionV26(units))
 	}
 
 	lastUser := -1
@@ -86,11 +90,12 @@ func splitCyberRuleRoleUnitsV25(text string) []auditRuleUnit {
 		}
 		for i := range units {
 			if units[i].Kind == "user" && (i < activeStart || i > lastUser) {
-				units[i].Kind = "user_referenced"
+				units[i].Kind = "user_history"
 			}
 		}
 	}
-	return reindexAuditRuleUnitsV26(expandSerializedAuditTranscriptV26(units))
+	units = expandSerializedAuditTranscriptV26(units)
+	return reindexAuditRuleUnitsV26(applyContinuationAdoptionV26(units))
 }
 
 func reindexAuditRuleUnitsV26(units []auditRuleUnit) []auditRuleUnit {
@@ -154,7 +159,7 @@ func expandSerializedAuditTranscriptV26(units []auditRuleUnit) []auditRuleUnit {
 			}
 			kind := kinds[i]
 			if kind == "user" && (i < activeStart || i > lastUser) {
-				kind = "user_referenced"
+				kind = "user_history"
 			}
 			out = append(out, auditRuleUnit{Kind: kind, Text: body})
 		}
@@ -192,11 +197,41 @@ func serializedAuditEventKindV26(header string) string {
 	}
 }
 
+// A bare continuation adopts the preceding explicit USER action, not assistant
+// or tool text. This preserves "继续/run the tests" after a prohibited request
+// without letting risky words in tool output become user intent.
+func applyContinuationAdoptionV26(units []auditRuleUnit) []auditRuleUnit {
+	current := make([]int, 0, 2)
+	for i := range units {
+		if units[i].Kind == "user" {
+			current = append(current, i)
+		}
+	}
+	if len(current) == 0 {
+		return units
+	}
+	for _, i := range current {
+		if !bareContinuationV26.MatchString(strings.TrimSpace(units[i].Text)) {
+			return units
+		}
+	}
+	firstCurrent := current[0]
+	for i := firstCurrent - 1; i >= 0; i-- {
+		if units[i].Kind == "user_history" {
+			units[i].Kind = "user_adopted"
+			break
+		}
+	}
+	return units
+}
+
 func semanticOnlyRuleMatchV26(rule compiledRule, unit auditRuleUnit, evidence cyberRuleEvidence) string {
-	if unit.Kind != "user" && unit.Kind != "document" {
+	if unit.Kind != "user" && unit.Kind != "user_adopted" && unit.Kind != "document" {
 		return "non_current_provenance_requires_semantic_review"
 	}
-	if rule.Action == DecisionReview || rule.Action == DecisionAllow || strings.EqualFold(strings.TrimSpace(rule.Category), "policy_evasion") {
+	// Only known shipped guard/review rules are demoted. Custom operator rules
+	// keep their historical hard-veto semantics and are never silently weakened.
+	if rule.Code == "CYBER_UNTRUSTED_CONTEXT_CLAIM" || ((rule.Action == DecisionReview || rule.Action == DecisionAllow) && precisionRule(rule)) {
 		return "lexical_guard_requires_semantic_review"
 	}
 	if descriptiveOrConditionalMentionV26(unit.Text, evidence) {
@@ -206,14 +241,14 @@ func semanticOnlyRuleMatchV26(rule compiledRule, unit auditRuleUnit, evidence cy
 }
 
 func descriptiveOrConditionalMentionV26(text string, evidence cyberRuleEvidence) bool {
-	start := evidence.start - 192
+	start := evidence.start - 224
 	if start < 0 {
 		start = 0
 	}
 	for start > 0 && !utf8.RuneStart(text[start]) {
 		start--
 	}
-	end := evidence.end + 192
+	end := evidence.end + 224
 	if end > len(text) {
 		end = len(text)
 	}
@@ -225,7 +260,10 @@ func descriptiveOrConditionalMentionV26(text string, evidence cyberRuleEvidence)
 		}
 	}
 	window := text[start:end]
-	return semanticMentionFrameV26.MatchString(window)
+	return chineseSourceRelationV26.MatchString(window) ||
+		englishSourceRelationV26.MatchString(window) ||
+		transformReferenceV26.MatchString(window) ||
+		conditionalMentionV26.MatchString(window)
 }
 
 func appendRuleSuppressionV26(items []RuleSuppressionDiagnostic, rule compiledRule, unit auditRuleUnit, evidence cyberRuleEvidence, reason string) []RuleSuppressionDiagnostic {
