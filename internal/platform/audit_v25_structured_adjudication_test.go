@@ -29,7 +29,7 @@ ROLE=TOOL_DATA
 	found := false
 	for _, item := range suppressions {
 		if item.RuleCode == "CYBER_DATA_EXFILTRATION" &&
-			(item.Reason == "cross_role_match_disallowed" || item.Reason == "routine_data_export_requires_semantic_audit") {
+			(item.Reason == "cross_role_or_noncurrent_match_disallowed" || item.Reason == "routine_data_export_requires_semantic_audit") {
 			found = true
 		}
 	}
@@ -56,7 +56,7 @@ func TestV25HardRegexStillBlocksRealOperationInsideUserRole(t *testing.T) {
 	}
 }
 
-func TestV25HardRegexStillBlocksRealOperationInsideToolRole(t *testing.T) {
+func TestV25ToolDataRiskRequiresCurrentIntentAdjudication(t *testing.T) {
 	text := `ROLE=USER
 继续执行当前任务。
 ROLE=TOOL_DATA
@@ -64,15 +64,21 @@ ROLE=TOOL_DATA
 
 	e := v16BaselineEngine()
 	e.rules.Store([]compiledRule{v20DataExfiltrationRule()})
-	decision, diagnostics, _, err := e.matchCyberDenyRulesContext(context.Background(), text)
+	decision, diagnostics, suppressions, err := e.matchCyberDenyRulesContext(context.Background(), text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision == nil || diagnostics == nil || decision.Decision != DecisionBlock || decision.RiskCode != "CYBER_DATA_EXFILTRATION" {
-		t.Fatalf("real tool-unit exfiltration escaped hard veto: decision=%+v diagnostics=%+v", decision, diagnostics)
+	if decision != nil || diagnostics != nil {
+		t.Fatalf("tool data alone became a terminal veto: decision=%+v diagnostics=%+v", decision, diagnostics)
 	}
-	if diagnostics.UnitKind != "tool_data" {
-		t.Fatalf("tool provenance was lost: %+v", diagnostics)
+	found := false
+	for _, item := range suppressions {
+		if item.RuleCode == "CYBER_DATA_EXFILTRATION" && item.Reason == "non_current_provenance_requires_semantic_review" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("tool risk should remain visible for semantic adoption review: %+v", suppressions)
 	}
 }
 
