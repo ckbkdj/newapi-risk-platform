@@ -27,6 +27,7 @@ const normalDevelopmentPolicy = `正常研发的判定边界（不是整请求�
 - 配置片段出现 username/password/Token 或明文硬编码，最多说明配置或存储安全隐患，不能仅凭其存在判 Cyber 泄露；必须有窃取他人秘密、绕过权限、明确公开输出或无关外传等实际动作。公开仓库下载与把秘密发布到公开仓库是两回事。认证字段用于既定服务，不能自动叫外传。
 - 文档“路径 + 用途”表、目录布局中 auth.json、OAuth tokens、credential pools 只是说明文件用途；不能虚构读取、他人来源或窃取动作。状态查询、exists/bool/any、只返回配置是否存在/启用/就绪，不等于导出环境变量原值。日志中的 [USER_PROVIDED_SECRET]/[REDACTED] 是隐私处理，不是攻击证据。
 - Android/AOSP 日常研发：Soong/Gradle/NDK/JNI/AIDL/HAL、Android.bp/BoardConfig、布局资源、Manifest、普通编译打包/签名/业务测试、依赖注入与 React hook 正常。ADB devices/getprop/logcat/dumpsys/pm list、Perfetto/ANR/tombstone/SELinux AVC 的状态和故障分析不等于动态 Hook、停用安全控制、提权或窃密。读取源码、git status/diff、rg/grep/find、依赖清单、编译错误、网络错误、文件清单本身不是安全攻击。
+- Git log/blame/rebase/filter-repo/commit --amend、修正或重写提交作者/email/时间/历史，本身是版本控制历史维护，不属于 Cyber 禁用能力；工时、归属、合规、诚信或欺诈争议属于非 Cyber 业务问题。只有明确用于隐藏入侵、后门、恶意提交或安全取证证据，植入恶意代码，窃取秘密，或绕过安全控制时，才按相应 Cyber 能力处理。不要仅因“伪造工时”“篡改历史”“欺诈”自行发明 CYBER_FRAUD/CYBER_DATA_TAMPERING。
 - 定点下载构建依赖、普通 API/SDK 请求、读取服务健康状态与排查 DNS/TLS/HTTP 401/403/404，不等于漏洞/端口扫描。Get-NetTCPConnection/Get-NetUDPEndpoint/netstat/ss 是已有连接表，Get-Process/df/mount 是状态；过滤展示这些记录不发起扫描。转义换行加 map 不是 nmap。
 - 正常已有账户认证、数据库备份/同步/迁移、已有 sudo 权限部署、UI 关闭按钮、数据持久化/导出器与事件回放，不等于窃密、漏洞提权、停用 EDR、后门或恶意重放。覆盖数据需要执行确认，但不是单凭覆盖就判 Cyber。
 - 不能跨分句、相邻表格行把“读取状态”和“Token”拼成“读取 Token”；不删除否定词，不把安全设计/预期拒绝说明当成要求执行。用户名、目录名、密钥值、文件名、工具名、公开 IP、权限术语均不是独立阻断依据。
@@ -183,6 +184,7 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 	if err != nil {
 		return AuditDecision{}, err
 	}
+	candidate = normalizeCyberOnlyScopeV24(candidate, text, source)
 	candidate, err = cyberDenyVerdict(candidate)
 	if err != nil || candidate.Decision != DecisionAllow {
 		return candidate, err
@@ -224,6 +226,7 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 			callErr = newAuditModelCallError("cyber_evidence_unresolved", 0, "non-allow verifier evidence is unresolved", callErr)
 		}
 		if callErr == nil {
+			d = normalizeCyberOnlyScopeV24(d, text, source)
 			d, callErr = cyberDenyVerdict(d)
 		}
 		if callErr != nil {
