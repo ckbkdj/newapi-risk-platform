@@ -8,6 +8,11 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	trustedRuleUnitPrefixV26    = "\x1eRISK_UNIT:"
+	trustedRuleUnitHeaderEndV26 = "\x1f\n"
+)
+
 var (
 	serializedAuditEventHeaderV26 = regexp.MustCompile(`(?m)^\s*\[(\d{1,6})\]\s+(user|assistant|tool(?:\s+[A-Za-z0-9_.:-]+)?(?:\s+(?:call|result))?)\s*:\s*`)
 	bareContinuationV26           = regexp.MustCompile(`(?i)^\s*(?:继续(?:执行|做|测试)?|运行自动化测试|跑一下测试|运行测试|执行测试|开始(?:吧)?|按(?:这个|上面|之前的)(?:做|执行)|照做|可以继续|好的?[，, ]*继续|continue|go ahead|proceed|do it|run it|run the tests?|test it|yes[,. ]*(?:continue|proceed))\s*[。！.!]*\s*$`)
@@ -17,10 +22,73 @@ var (
 	conditionalMentionV26         = regexp.MustCompile(`(?i)(?:(?:待复现|待验证).{0,40}(?:判断|确认|看).{0,20}(?:是否|是不是|需不需要)|(?:判断|确认).{0,32}(?:是否|是不是|需不需要)|是否需要|是不是需要|可能需要|考虑是否|\bwhether\b|\bmight need\b|\bmay need\b|\bconsider(?:ing)?\s+whether\b)`)
 )
 
-// ROLE markers are a rendered transport representation, not authorization
-// boundaries. Terminal lexical vetoes are limited to the newest current-user
-// action plus an explicitly adopted prior user action. Older user turns,
-// assistant content and tool data remain semantic context.
+// renderTrustedRuleUnitV26 is used only for the in-memory hard-rule view. User
+// text cannot forge a boundary because the control delimiters are escaped before
+// concatenation. The human-readable ROLE= view remains available to the model
+// and diagnostics, but it no longer defines the production security boundary.
+func renderTrustedRuleUnitV26(role, text string) string {
+	text = strings.ReplaceAll(text, "\x1e", `\u001e`)
+	text = strings.ReplaceAll(text, "\x1f", `\u001f`)
+	return trustedRuleUnitPrefixV26 + role + trustedRuleUnitHeaderEndV26 + text
+}
+
+func trustedRuleKindV26(role string) string {
+	switch strings.ToUpper(strings.TrimSpace(role)) {
+	case "USER":
+		return "user"
+	case "USER_REFERENCED":
+		return "user_referenced"
+	case "ASSISTANT_REFERENCED":
+		return "assistant_referenced"
+	case "ASSISTANT_DATA":
+		return "assistant_data"
+	case "TOOL_ACTION":
+		return "tool_action"
+	case "TOOL_DATA":
+		return "tool_data"
+	default:
+		return "document"
+	}
+}
+
+func splitTrustedCyberRuleUnitsV26(text string) ([]auditRuleUnit, bool) {
+	if !strings.Contains(text, trustedRuleUnitPrefixV26) {
+		return nil, false
+	}
+	units := make([]auditRuleUnit, 0, 8)
+	cursor := 0
+	for cursor < len(text) {
+		rel := strings.Index(text[cursor:], trustedRuleUnitPrefixV26)
+		if rel < 0 {
+			break
+		}
+		header := cursor + rel + len(trustedRuleUnitPrefixV26)
+		headerEndRel := strings.Index(text[header:], trustedRuleUnitHeaderEndV26)
+		if headerEndRel < 0 {
+			break
+		}
+		headerEnd := header + headerEndRel
+		role := text[header:headerEnd]
+		bodyStart := headerEnd + len(trustedRuleUnitHeaderEndV26)
+		nextRel := strings.Index(text[bodyStart:], "\n"+trustedRuleUnitPrefixV26)
+		bodyEnd := len(text)
+		if nextRel >= 0 {
+			bodyEnd = bodyStart + nextRel
+		}
+		body := strings.TrimSpace(text[bodyStart:bodyEnd])
+		if body != "" {
+			units = append(units, auditRuleUnit{Kind: trustedRuleKindV26(role), Text: body})
+		}
+		if nextRel < 0 {
+			break
+		}
+		cursor = bodyEnd + 1
+	}
+	return units, len(units) > 0
+}
+
+// Human-readable markers remain supported for tests, dry-run helpers and old
+// diagnostics. Production ruleText uses the trusted control-delimited form.
 func cyberRuleRoleKindV25(line string) (string, bool) {
 	switch strings.TrimSpace(line) {
 	case "ROLE=USER":
@@ -31,6 +99,8 @@ func cyberRuleRoleKindV25(line string) (string, bool) {
 		return "assistant_referenced", true
 	case "ROLE=ASSISTANT_DATA":
 		return "assistant_data", true
+	case "ROLE=TOOL_ACTION":
+		return "tool_action", true
 	case "ROLE=TOOL_DATA":
 		return "tool_data", true
 	default:
@@ -39,6 +109,10 @@ func cyberRuleRoleKindV25(line string) (string, bool) {
 }
 
 func splitCyberRuleRoleUnitsV25(text string) []auditRuleUnit {
+	if units, ok := splitTrustedCyberRuleUnitsV26(text); ok {
+		return prepareCyberRuleUnitsV26(units)
+	}
+
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	lines := strings.Split(text, "\n")
 	units := make([]auditRuleUnit, 0, 8)
@@ -51,7 +125,7 @@ func splitCyberRuleRoleUnitsV25(text string) []auditRuleUnit {
 		if value == "" {
 			return
 		}
-		units = append(units, auditRuleUnit{Index: len(units) + 1, Kind: kind, Text: value})
+		units = append(units, auditRuleUnit{Kind: kind, Text: value})
 	}
 	for _, line := range lines {
 		if nextKind, ok := cyberRuleRoleKindV25(line); ok {
@@ -67,16 +141,17 @@ func splitCyberRuleRoleUnitsV25(text string) []auditRuleUnit {
 	}
 	flush()
 	if len(units) == 0 && strings.TrimSpace(text) != "" {
-		units = append(units, auditRuleUnit{Index: 1, Kind: "document", Text: strings.TrimSpace(text)})
+		units = append(units, auditRuleUnit{Kind: "document", Text: strings.TrimSpace(text)})
 	}
 	if !seenRole {
 		for i := range units {
 			units[i].Kind = "document"
 		}
-		units = expandSerializedAuditTranscriptV26(units)
-		return reindexAuditRuleUnitsV26(applyContinuationAdoptionV26(units))
 	}
+	return prepareCyberRuleUnitsV26(units)
+}
 
+func prepareCyberRuleUnitsV26(units []auditRuleUnit) []auditRuleUnit {
 	lastUser := -1
 	for i := range units {
 		if units[i].Kind == "user" {
@@ -226,7 +301,7 @@ func applyContinuationAdoptionV26(units []auditRuleUnit) []auditRuleUnit {
 }
 
 func semanticOnlyRuleMatchV26(rule compiledRule, unit auditRuleUnit, evidence cyberRuleEvidence) string {
-	if unit.Kind != "user" && unit.Kind != "user_adopted" && unit.Kind != "document" {
+	if unit.Kind != "user" && unit.Kind != "user_adopted" && unit.Kind != "tool_action" && unit.Kind != "document" {
 		return "non_current_provenance_requires_semantic_review"
 	}
 	// Only known shipped guard/review rules are demoted. Custom operator rules
