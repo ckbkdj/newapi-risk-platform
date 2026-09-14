@@ -3,7 +3,6 @@ package platform
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 )
 
