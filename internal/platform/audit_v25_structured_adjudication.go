@@ -2,16 +2,23 @@ package platform
 
 import (
 	"context"
+	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
-// v25 stops hard lexical rules from manufacturing a relationship across
-// independent request roles. The Cyber extractor emits one ROLE= marker for each
-// user/tool/assistant-data document. A hard regex may span arbitrary text inside
-// one role document, but it must not join words from different role documents.
-// Cross-role intent/adoption is semantic and is evaluated by the model over the
-// complete request after the lexical pass.
+var (
+	serializedAuditEventHeaderV26 = regexp.MustCompile(`(?m)^\s*\[(\d{1,6})\]\s+(user|assistant|tool(?:\s+[A-Za-z0-9_.:-]+)?(?:\s+(?:call|result))?)\s*:\s*`)
+	semanticMentionFrameV26 = regexp.MustCompile(`(?i)(?:文档|记录|日志|表格|工作簿|描述|说明|提到|出现|字段|字符串|待复现|待验证|判断(?:是否|是不是)|是否需要|是不是需要|可能需要|考虑是否|reported|record(?:ed)?|document(?:ed)?|log(?:ged)?|spreadsheet|mentions?|describes?|whether|might need|may need|consider(?:ing)?\s+whether)`)
+	semanticExecutionCueV26 = regexp.MustCompile(`(?i)(?:帮我|请(?:帮|给|写|提供|生成|实现|教|执行|运行|使用)|给我|怎么|如何|怎样|教我|执行|运行|实现|编写|生成|我要|我想|继续(?:执行|做)|go ahead|help me|show me how|how (?:do|can) i|write|build|create|implement|execute|run|use|perform|carry out)`)
+)
+
+// ROLE markers are a rendered transport representation, not authorization
+// boundaries. Terminal lexical vetoes are limited to the newest current-user
+// action; older user turns, assistant content and tool data remain semantic
+// context. A fabricated marker can therefore only demote a lexical shortcut to
+// model adjudication; it cannot authorize forwarding by itself.
 func cyberRuleRoleKindV25(line string) (string, bool) {
 	switch strings.TrimSpace(line) {
 	case "ROLE=USER":
@@ -64,15 +71,171 @@ func splitCyberRuleRoleUnitsV25(text string) []auditRuleUnit {
 		for i := range units {
 			units[i].Kind = "document"
 		}
+		return reindexAuditRuleUnitsV26(expandSerializedAuditTranscriptV26(units))
 	}
-	return units
+
+	lastUser := -1
+	for i := range units {
+		if units[i].Kind == "user" {
+			lastUser = i
+		}
+	}
+	if lastUser >= 0 {
+		activeStart := lastUser
+		for activeStart > 0 && units[activeStart-1].Kind == "user" {
+			activeStart--
+		}
+		for i := range units {
+			if units[i].Kind == "user" && (i < activeStart || i > lastUser) {
+				units[i].Kind = "user_referenced"
+			}
+		}
+	}
+	return reindexAuditRuleUnitsV26(expandSerializedAuditTranscriptV26(units))
 }
 
-// matchCyberRuleStructuredV25 preserves all existing rule semantics inside a
-// source unit, including precision suppressions and overlapping candidates, but
-// never allows a dot-all expression to cross a role boundary. This applies to
-// operator regexes too: a regex relationship spanning independent roles is not
-// a valid hard lexical fact; the full semantic audit still sees every role.
+func reindexAuditRuleUnitsV26(units []auditRuleUnit) []auditRuleUnit {
+	out := units[:0]
+	for _, unit := range units {
+		unit.Text = strings.TrimSpace(unit.Text)
+		if unit.Text == "" {
+			continue
+		}
+		unit.Index = len(out) + 1
+		out = append(out, unit)
+	}
+	return out
+}
+
+// Agent clients sometimes serialize internal events into one outer USER string,
+// e.g. "[43] tool ... call:" followed by "[45] user: 继续". Require a
+// monotonically increasing multi-event sequence with at least one non-user event
+// before treating it as transcript history. Only the final contiguous user event
+// run remains current for lexical enforcement.
+func expandSerializedAuditTranscriptV26(units []auditRuleUnit) []auditRuleUnit {
+	out := make([]auditRuleUnit, 0, len(units)+4)
+	for _, unit := range units {
+		if unit.Kind != "user" && unit.Kind != "document" {
+			out = append(out, unit)
+			continue
+		}
+		matches := serializedAuditEventHeaderV26.FindAllStringSubmatchIndex(unit.Text, -1)
+		if len(matches) < 2 || !validSerializedAuditTranscriptV26(unit.Text, matches) {
+			out = append(out, unit)
+			continue
+		}
+		kinds := make([]string, len(matches))
+		lastUser := -1
+		for i, match := range matches {
+			kinds[i] = serializedAuditEventKindV26(unit.Text[match[4]:match[5]])
+			if kinds[i] == "user" {
+				lastUser = i
+			}
+		}
+		if lastUser < 0 {
+			out = append(out, unit)
+			continue
+		}
+		activeStart := lastUser
+		for activeStart > 0 && kinds[activeStart-1] == "user" {
+			activeStart--
+		}
+		if prefix := strings.TrimSpace(unit.Text[:matches[0][0]]); prefix != "" {
+			out = append(out, auditRuleUnit{Kind: "user_referenced", Text: prefix})
+		}
+		for i, match := range matches {
+			start := match[1]
+			end := len(unit.Text)
+			if i+1 < len(matches) {
+				end = matches[i+1][0]
+			}
+			body := strings.TrimSpace(unit.Text[start:end])
+			if body == "" {
+				continue
+			}
+			kind := kinds[i]
+			if kind == "user" && (i < activeStart || i > lastUser) {
+				kind = "user_referenced"
+			}
+			out = append(out, auditRuleUnit{Kind: kind, Text: body})
+		}
+	}
+	return out
+}
+
+func validSerializedAuditTranscriptV26(text string, matches [][]int) bool {
+	previous := -1
+	nonUser := false
+	for _, match := range matches {
+		value, err := strconv.Atoi(text[match[2]:match[3]])
+		if err != nil || value <= previous {
+			return false
+		}
+		previous = value
+		if serializedAuditEventKindV26(text[match[4]:match[5]]) != "user" {
+			nonUser = true
+		}
+	}
+	return nonUser
+}
+
+func serializedAuditEventKindV26(header string) string {
+	header = strings.ToLower(strings.TrimSpace(header))
+	switch {
+	case header == "user":
+		return "user"
+	case header == "assistant":
+		return "assistant_data"
+	case strings.HasPrefix(header, "tool"):
+		return "tool_data"
+	default:
+		return "user_referenced"
+	}
+}
+
+func semanticOnlyRuleMatchV26(rule compiledRule, unit auditRuleUnit, evidence cyberRuleEvidence) string {
+	if unit.Kind != "user" && unit.Kind != "document" {
+		return "non_current_provenance_requires_semantic_review"
+	}
+	if rule.Action == DecisionReview || rule.Action == DecisionAllow || strings.EqualFold(strings.TrimSpace(rule.Category), "policy_evasion") {
+		return "lexical_guard_requires_semantic_review"
+	}
+	if descriptiveOrConditionalMentionV26(unit.Text, evidence) {
+		return "descriptive_or_conditional_mention_requires_semantic_review"
+	}
+	return ""
+}
+
+func descriptiveOrConditionalMentionV26(text string, evidence cyberRuleEvidence) bool {
+	start := evidence.start - 192
+	if start < 0 {
+		start = 0
+	}
+	for start > 0 && !utf8.RuneStart(text[start]) {
+		start--
+	}
+	end := evidence.end + 192
+	if end > len(text) {
+		end = len(text)
+	}
+	for end < len(text) && !utf8.RuneStart(text[end]) {
+		end++
+		if end >= len(text) {
+			end = len(text)
+			break
+		}
+	}
+	window := text[start:end]
+	return semanticMentionFrameV26.MatchString(window) && !semanticExecutionCueV26.MatchString(window)
+}
+
+func appendRuleSuppressionV26(items []RuleSuppressionDiagnostic, rule compiledRule, unit auditRuleUnit, evidence cyberRuleEvidence, reason string) []RuleSuppressionDiagnostic {
+	if reason == "" || len(items) >= 16 {
+		return items
+	}
+	return append(items, RuleSuppressionDiagnostic{RuleCode: rule.Code, UnitIndex: unit.Index, Reason: reason, MatchedText: redactCyberTraceText(evidence.matchedRaw)})
+}
+
 func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text string) (cyberRuleEvidence, bool, auditRuleUnit, []RuleSuppressionDiagnostic, error) {
 	units := splitCyberRuleRoleUnitsV25(text)
 	var suppressions []RuleSuppressionDiagnostic
@@ -87,53 +250,42 @@ func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text st
 			folded = auditCanonicalFold(unit.Text)
 		}
 		evidence, matched := matchCyberRuleEvidence(rule, unit.Text, lower, folded)
-		if rule.PatternType == "regex" && precisionRule(rule) {
-			offset := 0
-			for matched {
-				if err := ctx.Err(); err != nil {
-					return cyberRuleEvidence{}, false, auditRuleUnit{}, suppressions, err
-				}
-				reason := weakDevelopmentRuleEvidence(rule, unit.Text, evidence)
-				if reason == "" {
-					break
-				}
-				if len(suppressions) < 16 {
-					suppressions = append(suppressions, RuleSuppressionDiagnostic{
-						RuleCode:    rule.Code,
-						UnitIndex:   unit.Index,
-						Reason:      reason,
-						MatchedText: redactCyberTraceText(evidence.matchedRaw),
-					})
-				}
-				candidateCount++
-				if candidateCount >= 1024 {
-					return cyberRuleEvidence{}, false, auditRuleUnit{}, suppressions, newAuditModelCallError("cyber_rule_candidate_budget", 0, "too many unresolved rule candidates; no authorization to forward", nil)
-				}
-				_, width := utf8.DecodeRuneInString(unit.Text[evidence.start:])
-				offset = evidence.start + max(1, width)
-				if offset >= len(unit.Text) {
-					matched = false
-					break
-				}
-				location := rule.regularExpression.FindStringIndex(unit.Text[offset:])
-				matched = location != nil
-				if matched {
-					evidence = cyberRuleEvidence{
-						start:      offset + location[0],
-						end:        offset + location[1],
-						matchedRaw: unit.Text[offset+location[0] : offset+location[1]],
-					}
-				}
+		offset := 0
+		for matched {
+			if err := ctx.Err(); err != nil {
+				return cyberRuleEvidence{}, false, auditRuleUnit{}, suppressions, err
 			}
-		}
-		if matched {
-			return evidence, true, unit, suppressions, nil
+			reason := ""
+			if rule.PatternType == "regex" && precisionRule(rule) {
+				reason = weakDevelopmentRuleEvidence(rule, unit.Text, evidence)
+			}
+			if reason == "" {
+				reason = semanticOnlyRuleMatchV26(rule, unit, evidence)
+			}
+			if reason == "" {
+				return evidence, true, unit, suppressions, nil
+			}
+			suppressions = appendRuleSuppressionV26(suppressions, rule, unit, evidence, reason)
+			candidateCount++
+			if candidateCount >= 1024 {
+				return cyberRuleEvidence{}, false, auditRuleUnit{}, suppressions, newAuditModelCallError("cyber_rule_candidate_budget", 0, "too many unresolved rule candidates; no authorization to forward", nil)
+			}
+			if rule.PatternType != "regex" {
+				break
+			}
+			_, width := utf8.DecodeRuneInString(unit.Text[evidence.start:])
+			offset = evidence.start + max(1, width)
+			if offset >= len(unit.Text) {
+				break
+			}
+			location := rule.regularExpression.FindStringIndex(unit.Text[offset:])
+			matched = location != nil
+			if matched {
+				evidence = cyberRuleEvidence{start: offset + location[0], end: offset + location[1], matchedRaw: unit.Text[offset+location[0] : offset+location[1]]}
+			}
 		}
 	}
 
-	// Observability only: if the legacy whole-document matcher would have fired
-	// but no source unit did, record why the hard candidate was discarded. Never
-	// use this diagnostic-only match as authorization or as a block.
 	if len(suppressions) == 0 && strings.TrimSpace(text) != "" {
 		lower := strings.ToLower(text)
 		folded := ""
@@ -141,27 +293,18 @@ func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text st
 			folded = auditCanonicalFold(text)
 		}
 		if evidence, legacyMatched := matchCyberRuleEvidence(rule, text, lower, folded); legacyMatched {
-			reason := "cross_role_match_disallowed"
+			reason := "cross_role_or_noncurrent_match_disallowed"
 			if rule.PatternType == "regex" && precisionRule(rule) {
 				if specific := weakDevelopmentRuleEvidence(rule, text, evidence); specific != "" {
 					reason = specific
 				}
 			}
-			suppressions = append(suppressions, RuleSuppressionDiagnostic{
-				RuleCode:    rule.Code,
-				Reason:      reason,
-				MatchedText: redactCyberTraceText(evidence.matchedRaw),
-			})
+			suppressions = appendRuleSuppressionV26(suppressions, rule, auditRuleUnit{}, evidence, reason)
 		}
 	}
 	return cyberRuleEvidence{}, false, auditRuleUnit{}, suppressions, nil
 }
 
-// The primary six-field classifier is intentionally compact for local models,
-// but its risk_code field is still free-form JSON. Keep the canonical lookup for
-// diagnostics and strict-precedence decisions; noncanonical candidates still
-// enter the compatibility adjudication path below so v24 scope normalization can
-// reject model-invented non-Cyber taxonomies without weakening real Cyber blocks.
 func (e *AuditEngine) canonicalCyberRiskCodeV25(code string) bool {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if code == "" {
@@ -192,15 +335,9 @@ func (e *AuditEngine) cyberCandidateNeedsSemanticAdjudicationV25(candidate Audit
 	}
 }
 
-// semanticAdjudicateCyberCandidateV25 deliberately reuses the proven v24
-// Cyber-only normalization and six-field independent second pass. The earlier
-// v25 experiment sent every benign allow through the nine-field operation-proof
-// verifier; local 27B models legitimately returned no request_evidence for
-// allow/no_harm, which converted ordinary Android/Gradle/SDK work into
-// AUDIT_MODEL_ERROR. Evidence/harm proof is still mandatory where the model is
-// asserting a harmful operation, while a benign allow uses the stable independent
-// classifier contract. Any verifier error or missing fusion vote remains
-// fail-closed, and any validated deny keeps strict precedence.
+// Reuse the proven v24 Cyber-only normalization and six-field independent second
+// pass. Benign allow/no_harm results are not required to quote proof of absence,
+// while verifier errors, incomplete fusion and validated denials remain fail-closed.
 func (e *AuditEngine) semanticAdjudicateCyberCandidateV25(ctx context.Context, profile AuditProfile, text, source string, candidate AuditDecision, state *auditSemanticState) (AuditDecision, error) {
 	candidate = normalizeCyberOnlyScopeV24(candidate, text, source)
 	normalized, err := cyberDenyVerdict(candidate)
