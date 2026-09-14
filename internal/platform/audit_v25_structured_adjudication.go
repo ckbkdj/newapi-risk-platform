@@ -130,6 +130,30 @@ func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text st
 			return evidence, true, unit, suppressions, nil
 		}
 	}
+
+	// Observability only: if the legacy whole-document matcher would have fired
+	// but no source unit did, record why the hard candidate was discarded. Never
+	// use this diagnostic-only match as authorization or as a block.
+	if len(suppressions) == 0 && strings.TrimSpace(text) != "" {
+		lower := strings.ToLower(text)
+		folded := ""
+		if len(text) > 8192 {
+			folded = auditCanonicalFold(text)
+		}
+		if evidence, legacyMatched := matchCyberRuleEvidence(rule, text, lower, folded); legacyMatched {
+			reason := "cross_role_match_disallowed"
+			if rule.PatternType == "regex" && precisionRule(rule) {
+				if specific := weakDevelopmentRuleEvidence(rule, text, evidence); specific != "" {
+					reason = specific
+				}
+			}
+			suppressions = append(suppressions, RuleSuppressionDiagnostic{
+				RuleCode:    rule.Code,
+				Reason:      reason,
+				MatchedText: redactCyberTraceText(evidence.matchedRaw),
+			})
+		}
+	}
 	return cyberRuleEvidence{}, false, auditRuleUnit{}, suppressions, nil
 }
 
