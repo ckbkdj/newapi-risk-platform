@@ -108,6 +108,10 @@ func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text strin
 		if !matched {
 			continue
 		}
+		if demoteGenericSecurityTestingRuleV28(r) {
+			weak = appendRuleSuppressionV26(weak, r, unit, evidence, "generic_security_testing_requires_semantic_review")
+			continue
+		}
 		diagnostic := buildRuleMatchDiagnostics(r, i+1, unit.Text, evidence)
 		diagnostic.UnitIndex = unit.Index
 		diagnostic.UnitKind = unit.Kind
@@ -152,8 +156,8 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 	// Model-only block/review decisions must first survive the deterministic v28
 	// evidence gate. Weak noun/topic evidence and defensive asset-security work
 	// become provisional allows, which are then sent through the existing
-	// independent verifier pass. Hard rule matches are evaluated before this path
-	// and are unaffected.
+	// independent verifier pass. Hard custom rule matches are evaluated before
+	// this path and remain unaffected.
 	candidate = normalizeCyberEvidenceGateV28(candidate, text, source)
 	if e.cyberCandidateNeedsSemanticAdjudicationV25(candidate) {
 		return e.semanticAdjudicateCyberCandidateV25(ctx, profile, text, source, candidate, state)
