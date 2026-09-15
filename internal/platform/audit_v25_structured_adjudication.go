@@ -304,8 +304,12 @@ func semanticOnlyRuleMatchV26(rule compiledRule, unit auditRuleUnit, evidence cy
 	if unit.Kind != "user" && unit.Kind != "user_adopted" && unit.Kind != "tool_action" && unit.Kind != "document" {
 		return "non_current_provenance_requires_semantic_review"
 	}
+	if evidenceInsideEmbeddedReferenceV27(unit.Text, evidence) {
+		return "embedded_reference_requires_semantic_review"
+	}
 	// Only known shipped guard/review rules are demoted. Custom operator rules
-	// keep their historical hard-veto semantics and are never silently weakened.
+	// keep their historical hard-veto semantics outside reference data and are
+	// never silently weakened for the active operation itself.
 	if rule.Code == "CYBER_UNTRUSTED_CONTEXT_CLAIM" || ((rule.Action == DecisionReview || rule.Action == DecisionAllow) && precisionRule(rule)) {
 		return "lexical_guard_requires_semantic_review"
 	}
@@ -323,9 +327,6 @@ func descriptiveOrConditionalMentionV26(text string, evidence cyberRuleEvidence)
 	if start < 0 {
 		start = 0
 	}
-	// A descriptive cue in a neighboring sentence or clause must not demote the
-	// current operation. Clip the left side to the closest hard boundary before
-	// the matched evidence.
 	if rel := strings.LastIndexAny(text[start:evidence.start], "。！？!?；;\n"); rel >= 0 {
 		boundary := start + rel
 		_, size := utf8.DecodeRuneInString(text[boundary:])
@@ -341,8 +342,6 @@ func descriptiveOrConditionalMentionV26(text string, evidence cyberRuleEvidence)
 	if end > len(text) {
 		end = len(text)
 	}
-	// Likewise, do not let a later sentence describing records/logs retroactively
-	// convert this evidence into a quotation or hypothetical mention.
 	if rel := strings.IndexAny(text[evidence.end:end], "。！？!?；;\n"); rel >= 0 {
 		end = evidence.end + rel
 	}
