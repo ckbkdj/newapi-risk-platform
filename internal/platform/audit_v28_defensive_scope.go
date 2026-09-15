@@ -17,8 +17,6 @@ var scanCapabilityV28 = regexp.MustCompile(`(?is)(?:扫描|探测|枚举端口|�
 // a statement is not evidence of abuse.
 var concreteHarmfulCyberActionV28 = regexp.MustCompile(`(?is)(?:(?:绕过|规避|跳过|破解).{0,32}(?:验证码|waf|认证|鉴权|权限|限速|风控|反调试|安全控制|edr|杀毒)|(?:漏洞利用|利用漏洞|exploit(?:ation)?|0day|zero[- ]day)|(?:sql\s*注入|xss\s*(?:注入|payload)|攻击\s*payload|恶意\s*payload|\b(?:sql\s*injection|xss|attack\s*payload)\b)|(?:暴力破解|密码喷洒|credential\s*stuffing|password\s*spray|brute\s*force)|(?:反向\s*shell|reverse\s*shell|webshell)|(?:窃取|盗取|偷取|越权提取|外传|渗出|exfiltrat\w*|steal).{0,48}(?:凭据|密码|token|cookie|api\s*key|密钥|secret|credential)|(?:后门|木马|勒索|恶意代码|持久化控制|credential\s*stealer|backdoor|malware|ransomware)|(?:提权|privilege\s*escalation)|(?:删除|破坏|擦除|加密).{0,40}(?:数据|日志|系统|备份|文件|database|logs?|system|backups?|files?)|(?:关闭|禁用|绕过).{0,32}(?:edr|antivirus|防火墙|安全控制|审计|检测)|(?:chatgpt).{0,64}(?:自动化|批量|刷问答|越狱|非官方接口|抓取|bypass|automation|scrap))`)
 
-var concreteCyberEvidenceV28 = regexp.MustCompile(`(?is)(?:` + scanCapabilityV28.String() + `|` + concreteHarmfulCyberActionV28.String() + `)`)
-
 func normalizeCyberEvidenceGateV28(d AuditDecision, text, source string) AuditDecision {
 	if d.Decision == DecisionAllow || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(d.Source)), "model") {
 		return d
@@ -27,12 +25,13 @@ func normalizeCyberEvidenceGateV28(d AuditDecision, text, source string) AuditDe
 	evidence := strings.TrimSpace(d.Evidence)
 	combined := text + "\n" + source
 	label := d.RiskCode + " " + d.Category + " " + d.Reason
+	hasConcreteEvidence := scanCapabilityV28.MatchString(evidence) || concreteHarmfulCyberActionV28.MatchString(evidence)
 
 	// A block/review whose quoted evidence contains only nouns/context (for
 	// example "资产管理", "Token", "认证配置") has not actually proved a
 	// prohibited operation. Downgrade it to a provisional allow so the existing
 	// independent verifier must classify the full request again from scratch.
-	if evidence == "" || !concreteCyberEvidenceV28.MatchString(evidence) {
+	if evidence == "" || !hasConcreteEvidence {
 		return provisionalCyberAllowV28(d, "model block lacked concrete prohibited-action evidence")
 	}
 
