@@ -93,9 +93,13 @@ for name,output in [('disk-json',json.dumps({'output':DISK})),('disk-json-twice'
     meta=check(name,{'model':'normal','input':[{'role':'user','content':PREFIX+('v11-weak v11-tool-integrity' if name=='tool-command' else 'explain disk status')},{'type':'function_call_output','output':output}]},200,3 if name=='tool-command' else 2)
     assert meta['audit_serialized_tool_documents']>=1,meta
 
-meta=check('escaped-real-scanner',{'model':'normal','input':[{'role':'user','content':PREFIX+'analyze supplied text'},{'type':'function_call_output','output':json.dumps({'cmd':'ordinary\nnmap -sV 192.0.2.1'})}]},555,0)
-assert meta['audit_rule_input_view']=='decoded_tool_text',meta
+# A completed tool/function output is untrusted evidence, not a new user command.
+# It must remain in the two-pass audit input, but it cannot become a terminal
+# lexical veto by itself. TOOL_ACTION has separate hard-veto coverage.
+meta=check('escaped-real-scanner',{'model':'normal','input':[{'role':'user','content':PREFIX+'analyze supplied text'},{'type':'function_call_output','output':json.dumps({'cmd':'ordinary\nnmap -sV 192.0.2.1'})}]},200,2)
+assert meta['audit_serialized_tool_documents']>=1,meta
+assert any(s.get('reason')=='non_current_provenance_requires_semantic_review' for s in meta.get('audit_rule_suppressions',[])),meta
 for name,marker,want in [('stream','v11-weak',200),('stream-repeat','v11-weak v11-repeat',555)]:
     b=dict(body(marker+'\n'+TCP),model='stream-normal',stream=True)
     check(name,b,want,3 if want==200 else 2,stream=True)
-print(f'v11 regressions: {count} HTTP/SSE cases; Android corpus, escaped tool data, bounded observation correction, exact input integrity and terminal denials passed')
+print(f'v11 regressions: {count} HTTP/SSE cases; Android corpus, tool-output provenance, bounded observation correction, exact input integrity and terminal denials passed')

@@ -3,9 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 const cyberDenyMode = "cyber_deny"
@@ -46,6 +44,7 @@ const CyberDenyAuditSystemPrompt = `你是商业网关的 Cyber 禁用分类器�
 5. 主动连接探测/枚举端口、扫描网络、高频/压力请求，以及实际修改底层系统/内核/防火墙/安全控制配置；不要把正常应用配置、编译配置或被动状态查询误归此类。
 ` + normalDevelopmentPolicy + `
 引用验证与决策：匹配原文只证明位置，不证明禁用操作成立。block/review 必须引用实际操作相关的连续原文，不能只引用路径/凭据字段后臆造窃取或他人来源。疑似禁用操作且确有未解决风险才 review；普通开发、代码日志、认证配置本身不构成这种风险。明确没有禁用操作则 allow。即使某段是正常开发，也不能忽略另一段真实禁用操作。
+risk_code 只能表达上述 Cyber 能力，不得把一般合规、诚信、版权、工时、业务欺诈、版本控制历史维护等非 Cyber 问题自行包装为新的 CYBER_* 类别。拿不准是否属于上述 Cyber 能力时使用 review，不要发明新政策。
 只输出一个六字段 JSON：decision=allow|block|review，risk_code=CYBER_*或空，category=类别，confidence=0到1数字，reason=不超过80字的分类依据，evidence=从 JSON 解码后的 request_text 逐字复制的一处连续原文(不超过80字)。不得翻译、拼接、删改否定或编造引用；request_context 不替代 request_text 证据。block/review 必须有 evidence；allow 的 risk_code 和 evidence 必须为空。不要输出思维链、解释正文、Markdown 或 <think>。`
 
 func cyberDenyActive(ctx context.Context) bool {
@@ -68,23 +67,21 @@ func cyberDenyProfile(p AuditProfile) AuditProfile {
 }
 
 // The enabled Cyber rule table is a deny list, including legacy review/allow
-// rows. Evaluate before model selection. No model, profile exception, priority
-// allow, quote classification or confidence can undo a rule trigger.
+// rows. Evaluate before model selection. Hard lexical relationships are valid
+// only inside one source role document; cross-role adoption is semantic.
 func (e *AuditEngine) matchCyberDenyRules(text string) (*AuditDecision, *RuleMatchDiagnostics) {
 	d, diagnostic, _, _ := e.matchCyberDenyRulesContext(context.Background(), text)
 	return d, diagnostic
 }
 
-// Precision checks apply only to known shipped patterns, before a rule is a
-// valid veto. An operator's custom pattern is never silently weakened.
+// Every regex/contains/exact rule is evaluated inside independently extracted
+// ROLE units. This prevents dot-all expressions from joining a benign user plan
+// to unrelated tool JSON keys or a later tool result. Precision suppressions are
+// still candidate-local and custom operator rules remain hard vetoes when they
+// actually match inside one source unit.
 func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text string) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic, error) {
 	loaded, _ := e.rules.Load().([]compiledRule)
 	rules := append(append([]compiledRule(nil), loaded...), cyberDenyBaseline...)
-	lower := strings.ToLower(text)
-	folded := ""
-	if len(text) > 8192 {
-		folded = auditCanonicalFold(text)
-	}
 	var weak []RuleSuppressionDiagnostic
 	for i, r := range rules {
 		if err := ctx.Err(); err != nil {
@@ -95,58 +92,24 @@ func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text strin
 		}
 		// Correct only the unchanged shipped expression. Its Chinese alternatives
 		// duplicated ASCII acronyms without boundaries (e.g. saveDraft -> EDR).
-		// Re-run the whole expression with complete ASCII targets so an earlier
-		// real target cannot be lost to a later substring false match.
 		if r.Code == "CYBER_SECURITY_EVASION" && precisionRule(r) {
 			r.regularExpression = completeSecurityTarget
 		}
-		evidence, matched := matchCyberRuleEvidence(r, text, lower, folded)
-		if r.PatternType == "regex" && precisionRule(r) {
-			offset, count := 0, 0
-			for matched {
-				if err := ctx.Err(); err != nil {
-					return nil, nil, weak, err
-				}
-				reason := weakDevelopmentRuleEvidence(r, text, evidence)
-				if reason == "" {
-					break
-				}
-				if len(weak) < 16 {
-					weak = append(weak, RuleSuppressionDiagnostic{RuleCode: r.Code, Reason: reason})
-				}
-				count++
-				if count >= 1024 {
-					return nil, nil, weak, newAuditModelCallError("cyber_rule_candidate_budget", 0, "too many unresolved rule candidates; no authorization to forward", nil)
-				}
-				// Move by one UTF-8 rune to preserve overlapping operational matches.
-				_, width := utf8.DecodeRuneInString(text[evidence.start:])
-				offset = evidence.start + max(1, width)
-				if offset >= len(text) {
-					matched = false
-					break
-				}
-				location := r.regularExpression.FindStringIndex(text[offset:])
-				matched = location != nil
-				if matched {
-					evidence = cyberRuleEvidence{start: offset + location[0], end: offset + location[1], matchedRaw: text[offset+location[0] : offset+location[1]]}
-				}
+		evidence, matched, unit, suppressions, err := matchCyberRuleStructuredV25(ctx, r, text)
+		for _, item := range suppressions {
+			if len(weak) < 16 {
+				weak = append(weak, item)
 			}
 		}
-		if !matched && r.PatternType == "exact" {
-			for _, unit := range splitAuditRuleUnits(text) {
-				if ev, hit := matchCyberRuleEvidence(r, unit.Text, strings.ToLower(unit.Text)); hit {
-					evidence, matched = ev, true
-					break
-				}
-			}
-		}
-		if err := ctx.Err(); err != nil {
+		if err != nil {
 			return nil, nil, weak, err
 		}
 		if !matched {
 			continue
 		}
-		diagnostic := buildRuleMatchDiagnostics(r, i+1, text, evidence)
+		diagnostic := buildRuleMatchDiagnostics(r, i+1, unit.Text, evidence)
+		diagnostic.UnitIndex = unit.Index
+		diagnostic.UnitKind = unit.Kind
 		d := AuditDecision{Decision: DecisionBlock, RiskCode: r.Code, Category: r.Category, Source: "rule", RuleID: r.ID, Reason: "enabled Cyber rule triggered; prohibited by business policy (testing/debugging is not an exemption)"}
 		return &d, &diagnostic, weak, nil
 	}
@@ -184,85 +147,13 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 	if err != nil {
 		return AuditDecision{}, err
 	}
-	candidate = normalizeCyberOnlyScopeV24(candidate, text, source)
-	candidate, err = cyberDenyVerdict(candidate)
-	if err != nil || candidate.Decision != DecisionAllow {
-		return candidate, err
+
+	// Explicit canonical model blocks keep strict deny precedence. Allows,
+	// reviews and model-invented/noncanonical CYBER_* labels are independently
+	// adjudicated using the stronger nine-field evidence/harm contract. Missing
+	// or invalid adjudication remains fail-closed.
+	if e.cyberCandidateNeedsSemanticAdjudicationV25(candidate) {
+		return e.semanticAdjudicateCyberCandidateV25(ctx, profile, text, source, candidate, state)
 	}
-	review := AuditSemanticReview{Status: "error", Candidate: cleanSemanticDecision(candidate)}
-	defer func() { state.record(review) }()
-	verifyCtx := context.WithValue(ctx, cyberDenySecondPassKey{}, true)
-	verifier, verifierErr := e.semanticVerifierProfile(ctx, profile)
-	if verifierErr != nil {
-		return AuditDecision{}, verifierErr
-	}
-	profiles := []AuditProfile{verifier}
-	var fusion *AuditFusionResult
-	if _, enabled := auditProfileExtra(profile)["_risk_fusion_profile_ids"]; enabled {
-		// Validate legacy adjudicator configuration, but do not let an arbiter
-		// authorize something a panel member denied.
-		profiles, _, err = e.auditFusionProfiles(ctx, profile)
-		if err != nil {
-			return AuditDecision{}, err
-		}
-		fusion = &AuditFusionResult{Strategy: "cyber_deny_overrides.v1", Status: "error"}
-		review.Fusion = fusion
-	}
-	var failure error
-	last := candidate
-	for _, p := range profiles {
-		if !state.reserveReview() {
-			return AuditDecision{}, newAuditModelCallError("semantic_review_budget", 0, "Cyber verification budget exhausted", nil)
-		}
-		// Same six-field contract, with no candidate verdict or reasoning supplied.
-		plan := e.auditOutputPlan(p, 0)
-		if p.ID == profile.ID {
-			plan = auditOutputPlanFromContext(ctx)
-		}
-		plan.VerifyIntent = false
-		callCtx, outputState := withAuditOutputAttempt(verifyCtx, plan)
-		d, callErr := e.callCyberGroundedModel(callCtx, p, text, source)
-		if class, _, _ := auditModelErrorDetails(callErr); class == "invalid_evidence" {
-			callErr = newAuditModelCallError("cyber_evidence_unresolved", 0, "non-allow verifier evidence is unresolved", callErr)
-		}
-		if callErr == nil {
-			d = normalizeCyberOnlyScopeV24(d, text, source)
-			d, callErr = cyberDenyVerdict(d)
-		}
-		if callErr != nil {
-			diag := outputState.snapshot(true)
-			diag.Mode, diag.MaxTokens, diag.Failed = plan.Mode, plan.MaxTokens, true
-			callErr = annotateAuditOutputError(callErr, diag)
-		}
-		vote := AuditFusionVote{ProfileID: p.ID, Model: p.Model}
-		review.ProfileID, review.Model = p.ID, p.Model
-		if callErr != nil {
-			vote.ErrorClass, _, _ = auditModelErrorDetails(callErr)
-			failure = callErr
-		} else {
-			clean := cleanSemanticDecision(d)
-			vote.Outcome = &clean
-			last = d
-		}
-		if fusion != nil {
-			fusion.Votes = append(fusion.Votes, vote)
-		}
-		if callErr == nil && d.Decision != DecisionAllow {
-			if fusion != nil {
-				fusion.Status = "deny_override"
-				fusion.Disagreement = true
-			}
-			return finishSemanticReview(candidate, d, &review), nil
-		}
-	}
-	if failure != nil {
-		if fusion != nil {
-			return AuditDecision{}, newAuditModelCallError("fusion_incomplete", 0, "Cyber fusion has missing or invalid assessments; cannot allow", failure)
-		}
-		return AuditDecision{}, failure
-	}
-	if fusion != nil {
-		fusion.Status = "all_allow"
-	}
-	return finishSemanticReview(candidate, last, &review), nil
+	return cyberDenyVerdict(candidate)
 }

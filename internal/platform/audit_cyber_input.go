@@ -61,7 +61,10 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 			return
 		}
 		out.RawIntentBytes += len(text)
-		rawValue := "ROLE=" + role + "\n" + text
+
+		// Hard-rule provenance uses non-forgeable internal delimiters. A user can
+		// type ROLE=TOOL_DATA in ordinary text without changing source identity.
+		rawValue := renderTrustedRuleUnitV26(role, text)
 		if raw.Len()+len(rawValue)+1 > limit {
 			out.addCoverageIssue("input_text_truncated")
 		}
@@ -69,8 +72,11 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 		if role == "USER" {
 			out.ActiveUserMessages++
 		}
-		// Preserve the original representation for administrator rule matching.
-		if role == "TOOL_DATA" {
+
+		// Preserve the original representation for administrator rule matching,
+		// while the model gets a decoded/normalized JSON view. Pending tool calls
+		// are TOOL_ACTION; completed outputs/results are TOOL_DATA.
+		if role == "TOOL_DATA" || role == "TOOL_ACTION" {
 			viewLimit := limit - b.Len() - len(role) - 7
 			if capacity > 0 && capacity-b.Len()-len(role)-7 < viewLimit {
 				viewLimit = capacity - b.Len() - len(role) - 7
@@ -86,8 +92,6 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 		}
 		// Mask secret values only; do NOT remove text preceding "My request",
 		// clipboard-looking paths, tests, assertions or a safety reminder.
-		// One match pass counts and replaces secret assignments. Never duplicate
-		// an expensive full-text regex scan merely to compute a counter.
 		var masked int
 		text, masked = maskCyberCredentialAssignments(text)
 		out.SecretPlaceholderCount += masked
@@ -124,7 +128,7 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 		}
 		switch x := v.(type) {
 		case string:
-			appendText(role, x, role != "USER")
+			appendText(role, x, role != "USER" && role != "TOOL_ACTION")
 		case []any:
 			for index, item := range x {
 				collect(item, role, path+"["+strconv.Itoa(index)+"]", depth+1)
@@ -156,7 +160,9 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 				out.IgnoredInputTypes = append(out.IgnoredInputTypes, "REASONING")
 				out.IgnoredContextBytes += countContextTextBytes(x, "")
 				return
-			case "function_call", "custom_tool_call", "tool_search_call", "function_call_output", "custom_tool_call_output", "tool_search_output", "function":
+			case "function_call", "custom_tool_call", "tool_search_call", "function":
+				role = "TOOL_ACTION"
+			case "function_call_output", "custom_tool_call_output", "tool_search_output":
 				role = "TOOL_DATA"
 			case "", "message", "input_text", "text", "output_text":
 			default:
@@ -182,15 +188,15 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 			for _, key := range []string{"content", "text", "input", "prompt", "query", "arguments", "output", "tool_calls", "function_call", "function"} {
 				if child, exists := x[key]; exists {
 					found = true
-					if role == "TOOL_DATA" && (key == "arguments" || key == "output") {
+					if (role == "TOOL_DATA" || role == "TOOL_ACTION") && (key == "arguments" || key == "output") {
 						if str, ok := child.(string); ok {
-							appendText(role, str, true)
+							appendText(role, str, role != "TOOL_ACTION")
 						} else {
 							data, err := json.Marshal(child)
 							if err != nil {
 								out.coverageProblem("unsupported_input_content", path, kind, role)
 							} else {
-								appendText(role, string(data), true)
+								appendText(role, string(data), role != "TOOL_ACTION")
 							}
 						}
 					} else {

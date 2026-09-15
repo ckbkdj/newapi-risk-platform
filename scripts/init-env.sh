@@ -193,6 +193,19 @@ if is_placeholder(admin_password):
 elif len(admin_password) < 14:
     errors.append("BOOTSTRAP_ADMIN_PASSWORD exists but is shorter than 14 characters")
 
+# Viewer is deliberately a separate credential and is never derived from the
+# administrator password. Existing values are preserved so upgrades/restarts do
+# not rotate an account that people use only for observation.
+viewer_user = values.get("BOOTSTRAP_VIEWER_USERNAME", "").strip() or "viewer"
+text = set_value(text, "BOOTSTRAP_VIEWER_USERNAME", viewer_user)
+viewer_password = values.get("BOOTSTRAP_VIEWER_PASSWORD", "")
+if is_placeholder(viewer_password):
+    viewer_password = secrets.token_urlsafe(24)
+    text = set_value(text, "BOOTSTRAP_VIEWER_PASSWORD", viewer_password)
+    generated["BOOTSTRAP_VIEWER_PASSWORD"] = viewer_password
+elif len(viewer_password) < 14:
+    errors.append("BOOTSTRAP_VIEWER_PASSWORD exists but is shorter than 14 characters")
+
 if errors:
     for error in errors:
         print(f"ERROR: {error}")
@@ -209,6 +222,12 @@ if "BOOTSTRAP_ADMIN_PASSWORD" in generated:
     print("Save this password now. It is written to .env and will not be printed on later runs.")
 else:
     print("Admin password: existing value preserved in .env")
+print(f"Viewer username: {viewer_user}")
+if "BOOTSTRAP_VIEWER_PASSWORD" in generated:
+    print(f"Viewer password: {generated['BOOTSTRAP_VIEWER_PASSWORD']}")
+    print("Save this viewer password now. It is written to .env and will not be printed on later runs.")
+else:
+    print("Viewer password: existing value preserved in .env")
 for warning in warnings:
     print(f"WARNING: {warning}")
 PY

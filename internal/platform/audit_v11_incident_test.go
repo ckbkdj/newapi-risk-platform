@@ -198,17 +198,31 @@ func TestV11GroundingFailuresAndRealDenials(t *testing.T) {
 		})
 	}
 }
-func TestV11CustomRulesStillVeto(t *testing.T) {
+
+func TestV11CustomRulesRespectToolOutputProvenance(t *testing.T) {
 	for _, pattern := range []string{`nmap`, `Get-NetTCPConnection`} {
-		e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) { t.Fatal("custom veto reached model"); return nil, nil })
-		r := testCompiledRule("CYBER_SECURITY_TEST_DISABLED", "security_testing", pattern, DecisionBlock)
-		r.ID = 123
-		e.rules.Store([]compiledRule{r})
-		b, _ := json.Marshal(map[string]any{"input": []any{map[string]string{"type": "function_call_output", "output": quotedV11(v11Disk) + "\n" + v11TCP}}})
-		got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, b)
-		if got.RuleID != 123 || got.Decision != DecisionBlock {
-			t.Fatal("custom rule changed")
-		}
+		t.Run(pattern, func(t *testing.T) {
+			var calls atomic.Int32
+			e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
+			})
+			r := testCompiledRule("CYBER_SECURITY_TEST_DISABLED", "security_testing", pattern, DecisionBlock)
+			r.ID = 123
+			e.rules.Store([]compiledRule{r})
+			b, _ := json.Marshal(map[string]any{"input": []any{map[string]string{"role": "user", "content": "Analyze the completed tool output only"}, map[string]string{"type": "function_call_output", "output": quotedV11(v11Disk) + "\n" + v11TCP}}})
+			got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, b)
+			if got.Decision != DecisionAllow || calls.Load() != 2 || got.AuditSemanticReviewCalls != 1 || len(got.AuditRuleSuppressions) == 0 {
+				t.Fatalf("custom rule ignored tool-output provenance: %+v calls=%d", got, calls.Load())
+			}
+
+			calls.Store(0)
+			direct, _ := json.Marshal(map[string]string{"input": "Run " + pattern + " now"})
+			got = e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, direct)
+			if got.RuleID != 123 || got.Decision != DecisionBlock || got.Source != "rule" || calls.Load() != 0 {
+				t.Fatalf("custom rule lost current-user veto: %+v calls=%d", got, calls.Load())
+			}
+		})
 	}
 }
 func FuzzV11EngineeringSuffixCannotQualify(f *testing.F) {
@@ -282,16 +296,17 @@ func TestV11AndroidCorpusRuleAndDoublePass(t *testing.T) {
 		})
 	}
 }
-func TestV11SerializedRealOperationsCannotHideInEscapes(t *testing.T) {
+func TestV11SerializedToolOutputCannotBecomeCurrentOperation(t *testing.T) {
 	for _, text := range []string{`{"output":"ordinary\nnmap -sV 192.0.2.1"}`, `{"cmd":"\u006e\u006d\u0061\u0070 -sV 192.0.2.1"}`, quotedV11(`{"output":"ordinary\nnmap -sV 192.0.2.1"}`)} {
+		var calls atomic.Int32
 		e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
-			t.Fatal("decoded scan escaped rule gate")
-			return nil, nil
+			calls.Add(1)
+			return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 		})
-		b, _ := json.Marshal(map[string]any{"input": []any{map[string]string{"type": "function_call_output", "output": text}}})
+		b, _ := json.Marshal(map[string]any{"input": []any{map[string]string{"role": "user", "content": "Analyze this completed tool output"}, map[string]string{"type": "function_call_output", "output": text}}})
 		got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, b)
-		if got.Source != "rule" || got.Decision != DecisionBlock || got.RiskCode != "CYBER_SECURITY_TEST_DISABLED" || got.RuleMatch.InputView != "decoded_tool_text" {
-			t.Fatalf("encoded rule lost: %+v", got.RuleMatch)
+		if got.Decision != DecisionAllow || calls.Load() != 2 || got.AuditSerializedToolDocuments < 1 || len(got.AuditRuleSuppressions) == 0 {
+			t.Fatalf("encoded tool output became current operation: %+v calls=%d", got, calls.Load())
 		}
 	}
 }
