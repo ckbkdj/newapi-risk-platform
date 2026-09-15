@@ -6,7 +6,7 @@ import (
 )
 
 // v28 keeps model-only Cyber decisions grounded in an actual prohibited action.
-// It does not weaken hard operator rules. A normalized allow is not final: the
+// It does not weaken custom operator rules. A normalized allow is not final: the
 // existing Cyber path sends allows through the independent verifier pass.
 var defensiveAssetScopeV28 = regexp.MustCompile(`(?is)(?:资产管理|资产盘点|资产清单|暴露面(?:检查|盘点|管理)|攻击面(?:管理|盘点)|漏洞(?:扫描|检查|评估|修复|复测|验证)|安全(?:扫描|检查|评估|基线)|风险(?:扫描|检查|评估)|自有资产|内部资产|已授权资产|asset\s+(?:management|inventory|discovery)|attack\s+surface\s+management|exposure\s+(?:management|assessment)|vulnerability\s+(?:scan|scanning|assessment|management)|security\s+(?:scan|assessment)|remediation\s+(?:check|verification|validation))`)
 
@@ -16,6 +16,14 @@ var scanCapabilityV28 = regexp.MustCompile(`(?is)(?:扫描|探测|枚举端口|�
 // ownership/authorization language is intentionally not included: lack of such
 // a statement is not evidence of abuse.
 var concreteHarmfulCyberActionV28 = regexp.MustCompile(`(?is)(?:(?:绕过|规避|跳过|破解).{0,32}(?:验证码|waf|认证|鉴权|权限|限速|风控|反调试|安全控制|edr|杀毒)|(?:漏洞利用|利用漏洞|exploit(?:ation)?|0day|zero[- ]day)|(?:sql\s*注入|xss\s*(?:注入|payload)|攻击\s*payload|恶意\s*payload|\b(?:sql\s*injection|xss|attack\s*payload)\b)|(?:暴力破解|密码喷洒|credential\s*stuffing|password\s*spray|brute\s*force)|(?:反向\s*shell|reverse\s*shell|webshell)|(?:窃取|盗取|偷取|越权提取|外传|渗出|exfiltrat\w*|steal).{0,48}(?:凭据|密码|token|cookie|api\s*key|密钥|secret|credential)|(?:后门|木马|勒索|恶意代码|持久化控制|credential\s*stealer|backdoor|malware|ransomware)|(?:提权|privilege\s*escalation)|(?:删除|破坏|擦除|加密).{0,40}(?:数据|日志|系统|备份|文件|database|logs?|system|backups?|files?)|(?:关闭|禁用|绕过).{0,32}(?:edr|antivirus|防火墙|安全控制|审计|检测)|(?:chatgpt).{0,64}(?:自动化|批量|刷问答|越狱|非官方接口|抓取|bypass|automation|scrap))`)
+
+// The shipped generic security-testing rule historically treated the presence
+// of scan/pentest vocabulary as conclusive harm. That is too weak for a hard
+// veto. Demote only the unchanged shipped rule to semantic audit; a custom
+// operator-authored rule with different semantics keeps its hard precedence.
+func demoteGenericSecurityTestingRuleV28(rule compiledRule) bool {
+	return strings.EqualFold(strings.TrimSpace(rule.Code), "CYBER_SECURITY_TEST_DISABLED") && precisionRule(rule)
+}
 
 func normalizeCyberEvidenceGateV28(d AuditDecision, text, source string) AuditDecision {
 	if d.Decision == DecisionAllow || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(d.Source)), "model") {
