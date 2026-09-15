@@ -86,3 +86,26 @@ func TestNormalizeCyberEvidenceGateV28DoesNotOverrideHardRules(t *testing.T) {
 		t.Fatalf("hard rules must be untouched, got %#v", got)
 	}
 }
+
+func TestDemoteGenericSecurityTestingRuleV28OnlyDemotesShippedPattern(t *testing.T) {
+	var shipped compiledRule
+	found := false
+	for _, rule := range cyberDenyBaseline {
+		if rule.Code == "CYBER_SECURITY_TEST_DISABLED" {
+			shipped = rule
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("shipped security-testing baseline not found")
+	}
+	if !demoteGenericSecurityTestingRuleV28(shipped) {
+		t.Fatal("shipped generic scan rule must be demoted to semantic review")
+	}
+	custom := shipped
+	custom.Pattern = `(?i)custom-hard-scan-rule`
+	if demoteGenericSecurityTestingRuleV28(custom) {
+		t.Fatal("custom operator pattern must keep hard-rule precedence")
+	}
+}
