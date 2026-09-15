@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -55,6 +56,14 @@ func main() {
 	security := platform.NewSecurity(cfg)
 	if err := store.Bootstrap(startupContext, cfg, security); err != nil {
 		logger.Error("bootstrap failed", "error", err)
+		os.Exit(1)
+	}
+	viewerUsername := strings.TrimSpace(os.Getenv("BOOTSTRAP_VIEWER_USERNAME"))
+	if viewerUsername == "" {
+		viewerUsername = "viewer"
+	}
+	if err := store.BootstrapViewer(startupContext, viewerUsername, os.Getenv("BOOTSTRAP_VIEWER_PASSWORD")); err != nil {
+		logger.Error("viewer bootstrap failed", "error", err)
 		os.Exit(1)
 	}
 	redisGuard := platform.NewRedisGuard(startupContext, cfg, logger)
