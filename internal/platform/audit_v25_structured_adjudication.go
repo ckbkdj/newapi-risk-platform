@@ -316,16 +316,35 @@ func semanticOnlyRuleMatchV26(rule compiledRule, unit auditRuleUnit, evidence cy
 }
 
 func descriptiveOrConditionalMentionV26(text string, evidence cyberRuleEvidence) bool {
+	if evidence.start < 0 || evidence.end < evidence.start || evidence.end > len(text) {
+		return false
+	}
 	start := evidence.start - 224
 	if start < 0 {
 		start = 0
 	}
+	// A descriptive cue in a neighboring sentence or clause must not demote the
+	// current operation. Clip the left side to the closest hard boundary before
+	// the matched evidence.
+	if rel := strings.LastIndexAny(text[start:evidence.start], "。！？!?；;\n"); rel >= 0 {
+		boundary := start + rel
+		_, size := utf8.DecodeRuneInString(text[boundary:])
+		if size > 0 {
+			start = boundary + size
+		}
+	}
 	for start > 0 && !utf8.RuneStart(text[start]) {
 		start--
 	}
+
 	end := evidence.end + 224
 	if end > len(text) {
 		end = len(text)
+	}
+	// Likewise, do not let a later sentence describing records/logs retroactively
+	// convert this evidence into a quotation or hypothetical mention.
+	if rel := strings.IndexAny(text[evidence.end:end], "。！？!?；;\n"); rel >= 0 {
+		end = evidence.end + rel
 	}
 	for end < len(text) && !utf8.RuneStart(text[end]) {
 		end++
