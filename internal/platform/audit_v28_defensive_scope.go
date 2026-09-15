@@ -19,10 +19,19 @@ var concreteHarmfulCyberActionV28 = regexp.MustCompile(`(?is)(?:(?:绕过|规避
 
 // The shipped generic security-testing rule historically treated the presence
 // of scan/pentest vocabulary as conclusive harm. That is too weak for a hard
-// veto. Demote only the unchanged shipped rule to semantic audit; a custom
-// operator-authored rule with different semantics keeps its hard precedence.
+// veto. Demote only the unchanged shipped baseline pattern to semantic audit;
+// administrator-authored rules with different patterns keep hard precedence.
 func demoteGenericSecurityTestingRuleV28(rule compiledRule) bool {
-	return strings.EqualFold(strings.TrimSpace(rule.Code), "CYBER_SECURITY_TEST_DISABLED") && precisionRule(rule)
+	if !strings.EqualFold(strings.TrimSpace(rule.Code), "CYBER_SECURITY_TEST_DISABLED") {
+		return false
+	}
+	for _, baseline := range cyberDenyBaseline {
+		if !strings.EqualFold(strings.TrimSpace(baseline.Code), "CYBER_SECURITY_TEST_DISABLED") {
+			continue
+		}
+		return strings.TrimSpace(rule.Pattern) == strings.TrimSpace(baseline.Pattern)
+	}
+	return false
 }
 
 func normalizeCyberEvidenceGateV28(d AuditDecision, text, source string) AuditDecision {
