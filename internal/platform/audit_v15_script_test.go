@@ -334,5 +334,6 @@ func FuzzV15ScriptEvidenceBounds(f *testing.F) {
 			if got := check(source, ev); got && !valid {
 				t.Fatal("invalid range admitted")
 			}
+		}
 	})
 }
