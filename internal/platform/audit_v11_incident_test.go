@@ -305,7 +305,7 @@ func TestV11SerializedToolOutputCannotBecomeCurrentOperation(t *testing.T) {
 		})
 		b, _ := json.Marshal(map[string]any{"input": []any{map[string]string{"role": "user", "content": "Analyze this completed tool output"}, map[string]string{"type": "function_call_output", "output": text}}})
 		got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, b)
-		if got.Decision != DecisionAllow || calls.Load() != 2 || got.SerializedToolDocuments < 1 || len(got.AuditRuleSuppressions) == 0 {
+		if got.Decision != DecisionAllow || calls.Load() != 2 || got.AuditSerializedToolDocuments < 1 || len(got.AuditRuleSuppressions) == 0 {
 			t.Fatalf("encoded tool output became current operation: %+v calls=%d", got, calls.Load())
 		}
 	}
