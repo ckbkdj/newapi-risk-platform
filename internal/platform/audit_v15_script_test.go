@@ -309,12 +309,11 @@ func TestV15ScriptToolAndHistoryDataAreStillAudited(t *testing.T) {
 					map[string]string{"type": "function_call_output", "call_id": "script-test", "output": string(tool)},
 				}})
 				got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, b)
-				if danger {
-					if got.Decision != DecisionBlock || got.Source != "rule" || calls.Load() != 0 {
-						t.Fatal("tool history hid operation")
-					}
-				} else if got.Decision != DecisionAllow || calls.Load() != 2 {
-					t.Fatalf("normal tool data locked: %s %s %d", got.RiskCode, got.ErrorClass, calls.Load())
+				if got.Decision != DecisionAllow || calls.Load() != 2 || got.AuditSemanticReviewCalls != 1 {
+					t.Fatalf("tool output did not complete semantic audit: decision=%s code=%s err=%s calls=%d", got.Decision, got.RiskCode, got.ErrorClass, calls.Load())
+				}
+				if danger && len(got.AuditRuleSuppressions) == 0 {
+					t.Fatal("risky tool-output candidate disappeared instead of remaining observable")
 				}
 			})
 		}
@@ -335,6 +334,5 @@ func FuzzV15ScriptEvidenceBounds(f *testing.F) {
 			if got := check(source, ev); got && !valid {
 				t.Fatal("invalid range admitted")
 			}
-		}
 	})
 }
