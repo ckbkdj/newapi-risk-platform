@@ -346,10 +346,16 @@ func TestBoundaryReferenceRuleCandidateCannotSkipVerificationOnPrimaryAllow(t *t
 			engine.rules.Store([]compiledRule{testCompiledRule("CYBER_MOCK_REFERENCE", "test", "获取第三方凭据并外传", DecisionBlock)})
 			body, _ := json.Marshal(map[string]string{"input": request + "\n" + boundaryHistory("获取第三方凭据并外传")})
 			result := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
-			if result.Decision != DecisionBlock || result.AuditSemanticReviewCalls != 0 || result.AuditHTTPCalls != 0 || result.RuleMatch == nil {
-				t.Fatalf("enabled rule was not terminal: %+v", result)
+			if result.AuditHTTPCalls != 2 || result.AuditSemanticReviewCalls != 1 || len(result.AuditRuleSuppressions) == 0 {
+				t.Fatalf("reference candidate skipped required semantic verification: %+v", result)
 			}
-
+			if adopt {
+				if result.Decision != DecisionBlock || result.ErrorClass != "" {
+					t.Fatalf("adopted harmful reference escaped: %+v", result)
+				}
+			} else if result.Decision != DecisionAllow || result.ErrorClass != "" {
+				t.Fatalf("reference-only history poisoned current benign task: %+v", result)
+			}
 		})
 	}
 }
