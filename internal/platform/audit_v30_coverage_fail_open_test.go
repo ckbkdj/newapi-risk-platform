@@ -2,6 +2,7 @@ package platform
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +16,7 @@ func TestV30UnknownProtocolItemIsWarningOnly(t *testing.T) {
 		t.Fatalf("unknown item diagnostic mismatch: %+v", got.CoverageDetails)
 	}
 	encoded, _ := json.Marshal(got.CoverageDetails)
-	if string(encoded) == "" || containsAny(string(encoded), "private_future_type", "PRIVATE_VALUE") {
+	if strings.Contains(string(encoded), "private_future_type") || strings.Contains(string(encoded), "PRIVATE_VALUE") {
 		t.Fatalf("private unknown protocol values leaked: %s", encoded)
 	}
 }
@@ -33,25 +34,4 @@ func TestV30NonTextCoverageIsIncompleteButDecisionFailsOpen(t *testing.T) {
 	if decision.Decision != DecisionAllow || decision.Source != "coverage_fail_open_v29" || decision.RiskCode != "" {
 		t.Fatalf("coverage uncertainty must fail open: %+v", decision)
 	}
-}
-
-func containsAny(s string, values ...string) bool {
-	for _, value := range values {
-		if value != "" && stringContains(s, value) {
-			return true
-		}
-	}
-	return false
-}
-
-func stringContains(s, sub string) bool {
-	if len(sub) == 0 {
-		return true
-	}
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
