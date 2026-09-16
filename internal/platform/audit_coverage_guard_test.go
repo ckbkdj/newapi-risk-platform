@@ -99,9 +99,6 @@ func TestCoverageGuardUnknownResponseItemsAreDiagnosticOnly(t *testing.T) {
 	if got.Decision != DecisionAllow || got.ErrorClass != "" || got.AuditCoverageStatus != "complete" || calls.Load() != 2 {
 		t.Fatalf("forward-compatible item stopped audit: %+v calls=%d", got, calls.Load())
 	}
-	if !strings.Contains(got.TextForDebugForTests(), "") {
-		// Intentionally empty: production AuditResult never exposes request text.
-	}
 	seenFuture, seenImage := false, false
 	for _, detail := range got.AuditCoverageDetails {
 		switch detail.ContentType {
