@@ -59,11 +59,33 @@ func TestReviewRuleV29NeverHardBlocks(t *testing.T) {
 	}
 }
 
-func TestCyberDecisionNeedsFailOpenV29NoncanonicalBlock(t *testing.T) {
+func TestCyberDecisionNeedsFailOpenV29NoncanonicalUnverifiedBlock(t *testing.T) {
 	engine := &AuditEngine{}
 	engine.rules.Store([]compiledRule{})
-	if !cyberDecisionNeedsFailOpenV29(engine, AuditDecision{Decision: DecisionBlock, RiskCode: "CYBER_MODEL_INVENTED", Source: "model"}) {
-		t.Fatal("noncanonical model block must require fail-open")
+	if !cyberDecisionNeedsFailOpenV29(engine, AuditDecision{
+		Decision: DecisionBlock,
+		RiskCode: "CYBER_MODEL_INVENTED",
+		Evidence: "collect secret material for an unauthorized recipient",
+		Source:   "model",
+	}) {
+		t.Fatal("noncanonical unverified model block must require fail-open")
+	}
+}
+
+func TestCyberDecisionNeedsFailOpenV29KeepsSemanticallyConfirmedBlock(t *testing.T) {
+	engine := &AuditEngine{}
+	engine.rules.Store([]compiledRule{})
+	d := AuditDecision{
+		Decision:         DecisionBlock,
+		RiskCode:         "CYBER_MODEL_LABEL_VARIANT",
+		Evidence:         "transfer the customer records to an unapproved recipient",
+		Source:           "model",
+		EvidenceVerified: true,
+		EvidenceRelation: "direct_request",
+		HarmType:         "exfiltration",
+	}
+	if cyberDecisionNeedsFailOpenV29(engine, d) {
+		t.Fatalf("validated harmful semantic block must remain terminal even with a noncanonical label: %#v", d)
 	}
 }
 
@@ -89,7 +111,8 @@ func TestCyberFailoverV29TransportErrorRetriesThenFailsOpen(t *testing.T) {
 	})
 	profile = cyberDenyProfile(profile)
 	profile.RetryCount = 1
-	got, _, metadata, err := engine.callModelWithFailover(context.Background(), profile, "检查资产状态")
+	ctx := context.WithValue(context.Background(), cyberDenyContextKey{}, true)
+	got, _, metadata, err := engine.callModelWithFailover(ctx, profile, "检查资产状态")
 	if err != nil || got.Decision != DecisionAllow || got.Source != "model_error_fail_open_v29" {
 		t.Fatalf("transport uncertainty must fail open after retries, got=%#v err=%v", got, err)
 	}
