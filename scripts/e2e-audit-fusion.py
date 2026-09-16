@@ -17,18 +17,27 @@ b=profile('fusion-allow-b')['id']
 deny=profile('fusion-deny')['id']
 broken=profile('fusion-broken')['id']
 root=0
-for name,panel,arbiter,decision,status,error in [
-    ('consensus',[a,b],None,'allow','all_allow',''),
-    ('disagreement',[a,deny],None,'block','deny_override',''),
-    ('adjudication',[a,deny],b,'block','deny_override',''),
-    ('incomplete',[a,broken],None,'block','error','fusion_incomplete'),
+for name,panel,arbiter,decision,status in [
+    ('consensus',[a,b],None,'allow','all_allow'),
+    # A panel disagreement whose deny vote only cites the synthetic topic word
+    # "fusion-case" has no concrete prohibited-action evidence. v29+ therefore
+    # records deny_override/disagreement telemetry but fails open.
+    ('disagreement',[a,deny],None,'allow','deny_override'),
+    ('adjudication',[a,deny],b,'allow','deny_override'),
+    # A missing/broken panel member is audit uncertainty, not authorization to
+    # synthesize a 555. The failure remains observable in the fusion record.
+    ('incomplete',[a,broken],None,'allow','error'),
 ]:
     extra={'_risk_policy_mode':'internal_engineering','_risk_fusion_profile_ids':panel}
     if arbiter:extra['_risk_fusion_adjudicator_profile_id']=arbiter
     root=profile('fusion-primary',extra,root)['id']
     result=post('/api/admin/v1/audit/dry-run',{'profile_id':root,'text':'fusion-case'})['result']
     assert result['decision']==decision,(name,result)
-    assert result.get('error_class','')==error,(name,result)
-    assert result['audit_semantic_reviews'][0]['fusion']['status']==status,(name,result)
+    assert result.get('error_class','')=='',(name,result)
+    reviews=result.get('audit_semantic_reviews') or []
+    assert reviews and reviews[0].get('fusion'),(name,result)
+    assert reviews[0]['fusion']['status']==status,(name,result)
+    if name!='consensus':
+        assert result.get('source') in {'verifier_uncertainty_fail_open_v29','model_error_fail_open_v29','model_uncertainty_fail_open_v29'},(name,result)
     assert result['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v15', (name, result['gateway_build'])
-print('Strict Fusion all-allow, deny override, arbiter non-override and invalid vote E2E passed')
+print('Fusion consensus and all unconfirmed disagreement/incomplete cases fail open with diagnostics')
