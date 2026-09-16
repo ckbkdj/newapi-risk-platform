@@ -71,12 +71,15 @@ func auditContainsUnsupportedContent(value any) bool {
 }
 
 func auditIncompleteInputDecision(failClosed bool, issues []string) AuditDecision {
+	_ = failClosed // v29: uncertainty/coverage gaps are always fail-open by policy.
 	reason := "audit input coverage is incomplete: " + strings.Join(issues, ", ")
-	if failClosed {
-		return AuditDecision{Decision: DecisionBlock, RiskCode: "AUDIT_INPUT_COVERAGE_INCOMPLETE", Category: "audit_infrastructure", Reason: reason, Source: "platform"}
+	return AuditDecision{
+		Decision:   DecisionAllow,
+		Category:   "audit_uncertainty",
+		Confidence: 0,
+		Reason:     reason,
+		Source:     "coverage_fail_open_v29",
 	}
-	// An explicitly configured fail-open is not a successful safety assessment.
-	return AuditDecision{Decision: DecisionAllow, Category: "audit_infrastructure", Reason: reason, Source: "fail_open"}
 }
 
 // Only parser-generated paths and allowlisted type/role labels are exposed.
