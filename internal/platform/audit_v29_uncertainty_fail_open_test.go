@@ -42,6 +42,23 @@ func TestCyberDenyVerdictV29LowConfidenceAllowStillAllows(t *testing.T) {
 	}
 }
 
+func TestReviewRuleV29NeverHardBlocks(t *testing.T) {
+	engine := &AuditEngine{}
+	engine.rules.Store([]compiledRule{
+		testCompiledRule("CYBER_CREDENTIAL_ACCESS_REVIEW", "credential_access", `(?i)读取.{0,32}Authorization`, DecisionReview),
+	})
+	matched, _, suppressions, err := engine.matchCyberDenyRulesContext(context.Background(), "读取本地日志里的 Authorization 字段用于排查认证问题")
+	if err != nil {
+		t.Fatalf("review rule match failed: %v", err)
+	}
+	if matched != nil {
+		t.Fatalf("review rule must never become a hard block: %#v", matched)
+	}
+	if len(suppressions) == 0 {
+		t.Fatal("review rule should remain observable as a semantic-only signal")
+	}
+}
+
 func TestCyberDecisionNeedsFailOpenV29NoncanonicalBlock(t *testing.T) {
 	engine := &AuditEngine{}
 	engine.rules.Store([]compiledRule{})
