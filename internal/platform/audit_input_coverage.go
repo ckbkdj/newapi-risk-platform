@@ -39,12 +39,10 @@ func (r *AuditTextExtraction) addCoverageIssue(issue string) {
 	if issue == "" {
 		return
 	}
-	// v30: an unknown/unsupported Responses item is an observability warning,
-	// not a reason to stop auditing known text and not a reason to return 555.
-	// New Responses API item types can appear before this gateway is updated.
-	// Keep their paths/types in CoverageDetails while continuing with the text
-	// projection we understand. Truly unusable input (invalid JSON, truncation,
-	// missing continuation context, etc.) remains incomplete and fails open.
+	// Unknown future protocol item types are an observability warning: known
+	// textual children can still be audited. By contrast, explicit non-text
+	// modalities are genuinely outside the text auditor, so coverage is marked
+	// incomplete. Both cases are fail-open at the decision layer.
 	if issue != "unsupported_input_content" {
 		r.CoverageStatus = "incomplete"
 	}
@@ -107,12 +105,24 @@ type AuditCoverageDetail struct {
 	Role        string `json:"role"`
 }
 
+func auditNonTextContentType(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "image", "image_url", "input_image", "input_audio", "audio", "video", "input_video", "file", "input_file", "file_id", "file_data":
+		return true
+	default:
+		return false
+	}
+}
+
 func (r *AuditTextExtraction) coverageProblem(code, path, kind, role string) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if code == "unsupported_input_content" && auditNonTextContentType(kind) {
+		code = "unsupported_nontext_content"
+	}
 	r.addCoverageIssue(code)
 	if len(r.CoverageDetails) >= 32 {
 		return
 	}
-	kind = strings.ToLower(strings.TrimSpace(kind))
 	if kind == "" || !auditSafeContentTypePattern.MatchString(kind) {
 		kind = "unknown"
 	}
