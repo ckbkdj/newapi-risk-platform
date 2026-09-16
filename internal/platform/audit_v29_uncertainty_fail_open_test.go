@@ -66,12 +66,17 @@ func TestAuditIncompleteInputDecisionV29AlwaysFailsOpen(t *testing.T) {
 	}
 }
 
-func TestCyberDenyModelV29TransportErrorFailsOpen(t *testing.T) {
+func TestCyberFailoverV29TransportErrorRetriesThenFailsOpen(t *testing.T) {
 	engine, profile := incidentEngine(t, func(*http.Request) (*http.Response, error) {
 		return nil, context.DeadlineExceeded
 	})
-	got, err := engine.callCyberDenyModel(context.Background(), cyberDenyProfile(profile), "检查资产状态", "检查资产状态")
+	profile = cyberDenyProfile(profile)
+	profile.RetryCount = 1
+	got, _, metadata, err := engine.callModelWithFailover(context.Background(), profile, "检查资产状态")
 	if err != nil || got.Decision != DecisionAllow || got.Source != "model_error_fail_open_v29" {
-		t.Fatalf("transport uncertainty must fail open, got=%#v err=%v", got, err)
+		t.Fatalf("transport uncertainty must fail open after retries, got=%#v err=%v", got, err)
+	}
+	if metadata.AttemptCount != 2 || len(metadata.Attempts) != 2 || metadata.Attempts[0].Success || metadata.Attempts[1].Success {
+		t.Fatalf("transport retry diagnostics were lost: %#v", metadata.Attempts)
 	}
 }
