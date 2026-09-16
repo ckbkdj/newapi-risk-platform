@@ -143,7 +143,9 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 	ctx, state := withAuditSemanticState(ctx)
 	candidate, err := e.callCyberGroundedModel(ctx, profile, text, source)
 	if err != nil {
-		return cyberModelErrorAllowV29(err), nil
+		// Preserve retry/fallback semantics. The outer audit layer converts the
+		// final exhausted audit error to an observable allow.
+		return candidate, err
 	}
 
 	// Model-only block/review decisions must first survive the deterministic v28
@@ -163,7 +165,9 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 	// an explicit prohibited action missed by the primary can still be confirmed.
 	verified, verifyErr := e.semanticAdjudicateCyberCandidateV25(ctx, profile, text, source, candidate, state)
 	if verifyErr != nil {
-		return cyberModelErrorAllowV29(verifyErr), nil
+		// Do not turn verifier failure into a block here. Return it to the outer
+		// audit layer, which records diagnostics and fails open after retries.
+		return AuditDecision{}, verifyErr
 	}
 	verified = normalizeCyberEvidenceGateV28(verified, text, source)
 	if cyberDecisionNeedsFailOpenV29(e, verified) {
