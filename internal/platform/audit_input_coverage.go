@@ -19,6 +19,10 @@ var standaloneContinuationPattern = regexp.MustCompile(`(?i)^\s*(?:请\s*)?(?:�
 // This is not a ban on fully specified ordinary unit tests.
 var executionFollowupPattern = regexp.MustCompile(`(?i)^\s*(?:请\s*)?(?:跑一下(?:测试)?|运行(?:测试|自动化测试|回归测试)|执行(?:测试|脚本)|run (?:the )?(?:tests|script)|rerun (?:the )?tests|test it)\s*[。.!！]?\s*$`)
 
+// Content type values are protocol identifiers, not free-form user text. Keep
+// forward-compatible identifiers observable without leaking arbitrary values.
+var auditSafeContentTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,63}$`)
+
 func auditActiveTurnStart(units []auditUserUnit) int {
 	if len(units) == 0 {
 		return 0
@@ -31,7 +35,19 @@ func auditActiveTurnStart(units []auditUserUnit) int {
 }
 
 func (r *AuditTextExtraction) addCoverageIssue(issue string) {
-	r.CoverageStatus = "incomplete"
+	issue = strings.TrimSpace(issue)
+	if issue == "" {
+		return
+	}
+	// v30: an unknown/unsupported Responses item is an observability warning,
+	// not a reason to stop auditing known text and not a reason to return 555.
+	// New Responses API item types can appear before this gateway is updated.
+	// Keep their paths/types in CoverageDetails while continuing with the text
+	// projection we understand. Truly unusable input (invalid JSON, truncation,
+	// missing continuation context, etc.) remains incomplete and fails open.
+	if issue != "unsupported_input_content" {
+		r.CoverageStatus = "incomplete"
+	}
 	for _, existing := range r.CoverageIssues {
 		if existing == issue {
 			return
@@ -71,7 +87,7 @@ func auditContainsUnsupportedContent(value any) bool {
 }
 
 func auditIncompleteInputDecision(failClosed bool, issues []string) AuditDecision {
-	_ = failClosed // v29: uncertainty/coverage gaps are always fail-open by policy.
+	_ = failClosed // v29+: uncertainty/coverage gaps are always fail-open by policy.
 	reason := "audit input coverage is incomplete: " + strings.Join(issues, ", ")
 	return AuditDecision{
 		Decision:   DecisionAllow,
@@ -82,8 +98,8 @@ func auditIncompleteInputDecision(failClosed bool, issues []string) AuditDecisio
 	}
 }
 
-// Only parser-generated paths and allowlisted type/role labels are exposed.
-// Unknown types can contain arbitrary private text, so their value is not logged.
+// Paths are parser-generated. Type values are exposed only when they look like
+// bounded protocol identifiers; arbitrary values are normalized to "unknown".
 type AuditCoverageDetail struct {
 	Code        string `json:"code"`
 	Path        string `json:"path"`
@@ -96,13 +112,12 @@ func (r *AuditTextExtraction) coverageProblem(code, path, kind, role string) {
 	if len(r.CoverageDetails) >= 32 {
 		return
 	}
-	switch kind {
-	case "input_image", "image_url", "input_audio", "audio", "output_audio", "video", "input_file", "file", "item_reference", "refusal", "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output", "tool_search_call", "tool_search_output", "message", "input_text", "text", "output_text":
-	default:
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind == "" || !auditSafeContentTypePattern.MatchString(kind) {
 		kind = "unknown"
 	}
 	switch role {
-	case "USER", "ASSISTANT_DATA", "TOOL_DATA":
+	case "USER", "ASSISTANT_DATA", "TOOL_DATA", "TOOL_ACTION":
 	default:
 		role = "unknown"
 	}
