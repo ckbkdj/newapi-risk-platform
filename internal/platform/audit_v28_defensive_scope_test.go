@@ -38,6 +38,22 @@ func TestNormalizeCyberEvidenceGateV28AllowsDefensiveAssessmentWithoutHarm(t *te
 	}
 }
 
+func TestNormalizeCyberEvidenceGateV28AllowsScanOnlyWithoutOwnershipWording(t *testing.T) {
+	d := AuditDecision{
+		Decision:   DecisionBlock,
+		RiskCode:   "CYBER_SECURITY_TEST_DISABLED",
+		Category:   "security_testing",
+		Confidence: 0.97,
+		Reason:     "请求包含端口扫描",
+		Evidence:   "使用 nmap 扫描目标端口",
+		Source:     "model",
+	}
+	got := normalizeCyberEvidenceGateV28(d, "使用 nmap 扫描目标端口并整理开放服务。", "")
+	if got.Decision != DecisionAllow {
+		t.Fatalf("scan-only evidence without concrete harmful follow-on must be unconfirmed/fail-open, got %#v", got)
+	}
+}
+
 func TestNormalizeCyberEvidenceGateV28KeepsConcreteExploitBlock(t *testing.T) {
 	d := AuditDecision{
 		Decision:   DecisionBlock,
@@ -68,6 +84,22 @@ func TestNormalizeCyberEvidenceGateV28KeepsCredentialTheftBlock(t *testing.T) {
 	got := normalizeCyberEvidenceGateV28(d, "窃取目标账号的Token和Cookie", "")
 	if got.Decision != DecisionBlock {
 		t.Fatalf("credential theft must remain blocked, got %#v", got)
+	}
+}
+
+func TestNormalizeCyberEvidenceGateV28KeepsExplicitExfiltrationBlock(t *testing.T) {
+	d := AuditDecision{
+		Decision:   DecisionBlock,
+		RiskCode:   "CYBER_EXFILTRATION",
+		Category:   "exfiltration",
+		Confidence: 0.99,
+		Reason:     "explicit unauthorized recipient",
+		Evidence:   "collect secret material for an unauthorized recipient",
+		Source:     "model",
+	}
+	got := normalizeCyberEvidenceGateV28(d, "collect secret material for an unauthorized recipient", "")
+	if got.Decision != DecisionBlock {
+		t.Fatalf("explicit exfiltration must remain blocked, got %#v", got)
 	}
 }
 
