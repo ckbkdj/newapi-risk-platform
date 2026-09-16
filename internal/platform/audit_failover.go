@@ -58,6 +58,7 @@ func (e *AuditEngine) callModelWithFailover(
 		profiles = append(profiles, profile)
 	}
 
+	usedProfile := root
 	failOpen := func(err error) (AuditDecision, AuditProfile, auditFailoverMetadata, error) {
 		finalMetadata := semanticState.metadata(metadata)
 		if cyberDenyActive(ctx) {
@@ -69,7 +70,6 @@ func (e *AuditEngine) callModelWithFailover(
 		return AuditDecision{}, usedProfile, finalMetadata, err
 	}
 
-	usedProfile := root
 	var lastErr error
 	for profileIndex, profile := range profiles {
 		if ctx.Err() != nil {
