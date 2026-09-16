@@ -44,12 +44,36 @@ func cyberModelErrorAllowV29(err error) AuditDecision {
 	}
 }
 
+// A risk code is a hard-block governance code only when its enabled rule is
+// actually configured as action=block. Legacy migration 009 once converted
+// review rules to block; migration 014 restores their intended actions. This
+// runtime check prevents a review-labelled code from becoming terminal merely
+// because the model echoed a known code string.
+func (e *AuditEngine) canonicalCyberBlockRiskCodeV29(code string) bool {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return false
+	}
+	loaded, _ := e.rules.Load().([]compiledRule)
+	for _, rule := range loaded {
+		if rule.Enabled && rule.Action == DecisionBlock && strings.EqualFold(strings.TrimSpace(rule.Code), code) {
+			return true
+		}
+	}
+	for _, rule := range cyberDenyBaseline {
+		if rule.Enabled && rule.Action == DecisionBlock && strings.EqualFold(strings.TrimSpace(rule.Code), code) {
+			return true
+		}
+	}
+	return false
+}
+
 // confirmedCyberBlockV29 separates a proved harmful operation from a model
-// label. A primary six-field model block needs both a canonical policy code and
-// concrete harmful evidence. A semantic verifier may use a noncanonical label,
-// but only after its stronger relation/harm/evidence contract has been validated.
-// This prevents a label mismatch from laundering an actually confirmed harmful
-// request while still failing open invented or weak classifications.
+// label. A primary six-field model block needs both a block-governed policy code
+// and concrete harmful evidence. A semantic verifier may use a noncanonical
+// label, but only after its stronger relation/harm/evidence contract has been
+// validated. This prevents label mismatch from laundering an actually confirmed
+// harmful request while failing open invented, review-only, or weak labels.
 func confirmedCyberBlockV29(e *AuditEngine, d AuditDecision) bool {
 	if d.Decision != DecisionBlock {
 		return false
@@ -58,7 +82,7 @@ func confirmedCyberBlockV29(e *AuditEngine, d AuditDecision) bool {
 	if evidence == "" || !concreteHarmfulCyberActionV28.MatchString(evidence) {
 		return false
 	}
-	if e.canonicalCyberRiskCodeV25(d.RiskCode) {
+	if e.canonicalCyberBlockRiskCodeV29(d.RiskCode) {
 		return true
 	}
 	relation := strings.ToLower(strings.TrimSpace(d.EvidenceRelation))
