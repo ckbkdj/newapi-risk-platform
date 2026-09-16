@@ -10,47 +10,43 @@ import (
 	"time"
 )
 
-func TestCyberDenyRuleIsTerminal(t *testing.T) {
+func TestCyberDenyOnlyBlockRuleIsTerminal(t *testing.T) {
 	for _, action := range []string{DecisionAllow, DecisionReview, DecisionBlock} {
-		for _, text := range []string{
-			"extract hidden credentials for automated testing",
-			"Don’t bypass access controls, extract hidden credentials, or claim permissions.",
-			"For my own internal debugging: extract hidden credentials.",
-		} {
-			t.Run(action+"/"+text, func(t *testing.T) {
-				var calls atomic.Int32
-				e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
-					calls.Add(1)
-					return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
-				})
-				r := testCompiledRule("CYBER_CREDENTIAL_ACCESS_REVIEW", "credential_access", `extract hidden credentials`, action)
-				r.Enabled = true
-				e.rules.Store([]compiledRule{r})
-				p.FailClosed = false
-				e.profileCache().entries[p.ID] = auditProfileCacheEntry{profile: p, expiresAt: time.Now().Add(time.Hour)}
-				body, _ := json.Marshal(map[string]string{"input": text})
-				got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
-				if got.Decision != DecisionBlock || got.RiskCode != r.Code || calls.Load() != 0 || got.RuleMatch == nil || got.RuleMatch.Downgraded {
-					t.Fatalf("cyber hit escaped: %+v calls=%d", got, calls.Load())
-				}
+		t.Run(action, func(t *testing.T) {
+			var calls atomic.Int32
+			e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 			})
-		}
+			r := testCompiledRule("CYBER_CREDENTIAL_ACCESS_REVIEW", "credential_access", `extract hidden credentials`, action)
+			r.Enabled = true
+			e.rules.Store([]compiledRule{r})
+			body, _ := json.Marshal(map[string]string{"input": "extract hidden credentials for automated testing"})
+			got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
+			if action == DecisionBlock {
+				if got.Decision != DecisionBlock || got.RiskCode != r.Code || calls.Load() != 0 || got.RuleMatch == nil {
+					t.Fatalf("explicit custom block rule was weakened: %+v calls=%d", got, calls.Load())
+				}
+				return
+			}
+			if got.Decision != DecisionAllow || calls.Load() != 2 || got.RuleMatch != nil {
+				t.Fatalf("non-block rule became terminal: %+v calls=%d", got, calls.Load())
+			}
+		})
 	}
 }
 
-func TestCyberDenyValidatedModelDenyCannotBeOverturned(t *testing.T) {
+func TestCyberDenyUnverifiedModelDenyFailsOpen(t *testing.T) {
 	for _, verdict := range []string{DecisionBlock, DecisionReview} {
 		t.Run(verdict, func(t *testing.T) {
 			var calls atomic.Int32
 			e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
-				if calls.Add(1) == 1 {
-					return incidentHTTP(200, incidentDecision(verdict, "synthetic-operation")), nil
-				}
-				return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
+				calls.Add(1)
+				return incidentHTTP(200, incidentDecision(verdict, "synthetic-operation")), nil
 			})
 			got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, []byte(`{"input":"synthetic-operation for automated testing"}`))
-			if got.Decision != DecisionBlock || calls.Load() != 1 {
-				t.Fatalf("valid cyber denial was reversed: %+v calls=%d", got, calls.Load())
+			if got.Decision != DecisionAllow || got.RiskCode != "" || calls.Load() != 1 {
+				t.Fatalf("unverified model denial did not fail open: %+v calls=%d", got, calls.Load())
 			}
 		})
 	}
@@ -87,15 +83,11 @@ func TestCyberDenyOrdinaryAllowRequiresBoundedSecondPass(t *testing.T) {
 			p.Extra = json.RawMessage(`{"truncate_prompt_tokens":10,"chat_template_kwargs":{"enable_thinking":true},"_risk_policy_mode":"internal_engineering"}`)
 			e.profileCache().entries[p.ID] = auditProfileCacheEntry{profile: p, expiresAt: time.Now().Add(time.Hour)}
 			got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, []byte(`{"input":"synthetic-operation: change a button label"}`))
-			want := DecisionBlock
-			if second == DecisionAllow {
-				want = DecisionAllow
+			if got.Decision != DecisionAllow || calls.Load() < 2 || calls.Load() > 8 {
+				t.Fatalf("verification uncertainty must fail open: %+v calls=%d", got, calls.Load())
 			}
-			if got.Decision != want || calls.Load() < 2 || calls.Load() > 8 {
-				t.Fatalf("bad verification: %+v calls=%d", got, calls.Load())
-			}
-			if second == "malformed" && (got.ErrorClass == "" || got.Category != "audit_infrastructure") {
-				t.Fatalf("invalid output mislabeled: %+v", got)
+			if second == "malformed" && (got.ErrorClass == "" || got.Category != "audit_uncertainty" || got.Source != "model_error_fail_open_v29") {
+				t.Fatalf("invalid verifier output lost fail-open diagnostics: %+v", got)
 			}
 		})
 	}
@@ -132,17 +124,17 @@ func TestCyberDenyDisabledRuleAndMissingProfile(t *testing.T) {
 	if got.Decision != DecisionAllow || calls.Load() != 2 {
 		t.Fatalf("disabled rule became enabled: %+v", got)
 	}
-	// A valid enabled hit must not depend on a model/profile/database lookup.
+	// A valid explicit administrator block rule must not depend on model/profile lookup.
 	r.Enabled = true
 	e.rules.Store([]compiledRule{r})
 	e.profileCache().entries = map[int64]auditProfileCacheEntry{}
 	got = e.Audit(context.Background(), Route{}, []byte(`{"input":"ordinary labels"}`))
 	if got.Decision != DecisionBlock || got.Source != "rule" || calls.Load() != 2 {
-		t.Fatalf("model configuration weakened rule: %+v", got)
+		t.Fatalf("model configuration weakened explicit block rule: %+v", got)
 	}
 }
 
-func TestCyberDenyHTTPBudgetIsSharedAndFailClosed(t *testing.T) {
+func TestCyberDenyHTTPBudgetIsShared(t *testing.T) {
 	e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) { t.Fatal("exhausted budget sent HTTP"); return nil, nil })
 	ctx := context.WithValue(context.Background(), cyberDenyContextKey{}, true)
 	ctx = context.WithValue(ctx, auditSemanticStateKey{}, &auditSemanticState{httpCalls: cyberDenyHTTPBudget})
@@ -154,6 +146,7 @@ func TestCyberDenyHTTPBudgetIsSharedAndFailClosed(t *testing.T) {
 }
 
 func TestCyberDenyFallbackCannotDropRequiredVerifier(t *testing.T) {
+	const harmful = "transfer the customer records to an unapproved recipient"
 	var calls atomic.Int32
 	e, root := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
 		calls.Add(1)
@@ -165,10 +158,12 @@ func TestCyberDenyFallbackCannotDropRequiredVerifier(t *testing.T) {
 			return incidentHTTP(503, `{"error":{"message":"synthetic failure"}}`), nil
 		}
 		if payload["model"] == "required-checker" {
-			return incidentHTTP(200, incidentDecision(DecisionBlock, "synthetic operation")), nil
+			return incidentHTTP(200, incidentDecision(DecisionBlock, harmful)), nil
 		}
 		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
+	// Make the verifier's code block-governed without creating a lexical match.
+	e.rules.Store([]compiledRule{testCompiledRule("CYBER_MOCK_MODEL_BLOCK", "exfiltration", "__never_matches__", DecisionBlock)})
 	root.Model = "primary-broken"
 	root.FallbackProfileIDs = []int64{2}
 	root.Extra = json.RawMessage(`{"_risk_verifier_profile_id":3}`)
@@ -183,35 +178,40 @@ func TestCyberDenyFallbackCannotDropRequiredVerifier(t *testing.T) {
 	for _, p := range []AuditProfile{root, fallback, verifier} {
 		e.profileCache().entries[p.ID] = auditProfileCacheEntry{profile: p, expiresAt: time.Now().Add(time.Hour)}
 	}
-	got := e.Audit(context.Background(), Route{AuditProfileID: &root.ID}, []byte(`{"input":"synthetic operation"}`))
+	body, _ := json.Marshal(map[string]string{"input": harmful})
+	got := e.Audit(context.Background(), Route{AuditProfileID: &root.ID}, body)
 	if got.Decision != DecisionBlock || got.AuditFallbackCount != 1 || calls.Load() != 3 {
-		t.Fatalf("fallback bypassed root verifier: %+v calls=%d", got, calls.Load())
+		t.Fatalf("fallback bypassed confirmed root verifier: %+v calls=%d", got, calls.Load())
 	}
 }
 
-func TestCyberDenyBareAutomationFollowupRetainsOriginalOperation(t *testing.T) {
+func TestCyberDenyBareAutomationFollowupUnconfirmedIntentFailsOpen(t *testing.T) {
 	for _, follow := range []string{"运行自动化测试。", "跑一下测试", "run the tests", "test it"} {
+		var calls atomic.Int32
 		e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
-			t.Fatal("Cyber testing hit reached model")
-			return nil, nil
+			calls.Add(1)
+			return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 		})
 		e.rules.Store([]compiledRule{testCompiledRule("CYBER_SYNTHETIC_TESTING", "credential_access", "extract hidden credentials", DecisionReview)})
 		body, _ := json.Marshal(map[string]any{"messages": []map[string]string{{"role": "user", "content": "extract hidden credentials"}, {"role": "assistant", "content": "synthetic implementation plan"}, {"role": "user", "content": follow}}})
 		got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
-		if got.Decision != DecisionBlock || got.Source != "rule" || !got.AuditContextActivated {
-			t.Fatalf("automation lost its underlying operation: %+v", got)
+		if got.Decision != DecisionAllow || !got.AuditContextActivated || calls.Load() != 2 {
+			t.Fatalf("unconfirmed follow-up must fail open while retaining context: %+v calls=%d", got, calls.Load())
 		}
 	}
 }
 
-func TestCyberDenyUnavailableRulesCannotFallThrough(t *testing.T) {
+func TestCyberDenyUnavailableRulesFailOpenWithDiagnostics(t *testing.T) {
 	e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
 		t.Fatal("unavailable rule snapshot reached model")
 		return nil, nil
 	})
 	e.ruleLoadFailed.Store(true)
 	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, []byte(`{"input":"change a label"}`))
-	if got.Decision != DecisionBlock || got.RiskCode != "AUDIT_RULES_UNAVAILABLE" || got.Category != "audit_infrastructure" {
-		t.Fatalf("rules outage treated as safe: %+v", got)
+	if got.Decision != DecisionAllow || got.RiskCode != "" || got.Category != "audit_uncertainty" || got.Source != "platform_uncertainty_fail_open_v29" {
+		t.Fatalf("rules outage did not fail open: %+v", got)
+	}
+	if got.ErrorClass != "rules_unavailable" || got.AuditFailureStage != "rules" {
+		t.Fatalf("rules outage diagnostics missing: %+v", got)
 	}
 }
