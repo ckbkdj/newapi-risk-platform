@@ -44,9 +44,9 @@ const CyberDenyAuditSystemPrompt = `你是商业网关的 Cyber 禁用分类器�
 4. Selenium/Puppeteer/Playwright/脚本自动化操控 ChatGPT 网页、批量刷问答、越狱测试、非官方接口抓取及绕过行为验证。普通业务 UI 测试不因此变成 ChatGPT 网页自动化。
 5. 为推进实际攻击而进行的主动连接探测/端口枚举、高频攻击/压力请求，以及明确修改底层系统/内核/防火墙/安全控制以实现绕过或破坏；正常资产发现、防御扫描、应用配置、编译配置或被动状态查询不属于此类。
 ` + normalDevelopmentPolicy + `
-引用验证与决策：匹配原文只证明位置，不证明禁用操作成立。block/review 必须引用实际禁用操作本身的连续原文，evidence 内必须能看到具体动作，不能只引用“资产管理”“漏洞扫描”“Token”“认证”“配置”“端口”等主题词或名词后再在 reason 中补全恶意目的。不能只引用路径/凭据字段后臆造窃取或他人来源。疑似禁用操作且确有未解决的具体动作才 review；普通开发、防御安全、代码日志、认证配置本身不构成这种风险。明确没有禁用操作则 allow。即使某段是正常开发，也不能忽略另一段真实禁用操作。
-risk_code 只能表达上述 Cyber 能力，不得把一般合规、诚信、版权、工时、业务欺诈、版本控制历史维护等非 Cyber 问题自行包装为新的 CYBER_* 类别。拿不准是否存在具体禁用动作时，不得因为缺少资产归属说明而 block；只有原文确有具体风险动作但关系无法判定时才 review。
-只输出一个六字段 JSON：decision=allow|block|review，risk_code=CYBER_*或空，category=类别，confidence=0到1数字，reason=不超过80字的分类依据，evidence=从 JSON 解码后的 request_text 逐字复制的一处连续原文(不超过80字)。不得翻译、拼接、删改否定或编造引用；request_context 不替代 request_text 证据。block/review 必须有 evidence，且 evidence 必须直接包含实际禁用操作；allow 的 risk_code 和 evidence 必须为空。不要输出思维链、解释正文、Markdown 或 <think>。`
+引用验证与决策：匹配原文只证明位置，不证明禁用操作成立。block 必须引用实际禁用操作本身的连续原文，evidence 内必须能看到具体动作，不能只引用“资产管理”“漏洞扫描”“Token”“认证”“配置”“端口”等主题词或名词后再在 reason 中补全恶意目的。不能只引用路径/凭据字段后臆造窃取或他人来源。普通开发、防御安全、代码日志、认证配置本身不构成风险证据。明确没有禁用操作则 allow；无法确认、证据不足、需要进一步核实、对象关系不清或仅有风险术语时也必须 allow，不能要求用户补充“自有/授权”说明后才放行。即使某段是正常开发，也不能忽略另一段真实且有直接证据的禁用操作。
+risk_code 只能表达上述 Cyber 能力，不得把一般合规、诚信、版权、工时、业务欺诈、版本控制历史维护等非 Cyber 问题自行包装为新的 CYBER_* 类别。拿不准是否存在具体禁用动作时必须 allow。review 仅为协议兼容保留，不得用来表示“需要核实后再决定”；本策略下任何这种不确定性都应返回 allow。
+只输出一个六字段 JSON：decision=allow|block|review，risk_code=CYBER_*或空，category=类别，confidence=0到1数字，reason=不超过80字的分类依据，evidence=从 JSON 解码后的 request_text 逐字复制的一处连续原文(不超过80字)。不得翻译、拼接、删改否定或编造引用；request_context 不替代 request_text 证据。block 必须有 evidence，且 evidence 必须直接包含实际禁用操作；allow/review 的 risk_code 和 evidence 必须为空。不要输出思维链、解释正文、Markdown 或 <think>。`
 
 func cyberDenyActive(ctx context.Context) bool {
 	active, _ := ctx.Value(cyberDenyContextKey{}).(bool)
@@ -122,45 +122,52 @@ func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text strin
 }
 
 func cyberDenyVerdict(d AuditDecision) (AuditDecision, error) {
-	if d.Decision == DecisionAllow {
-		if cyberDeniedCategory(d.Category) {
-			return AuditDecision{}, newAuditModelCallError("cyber_output_conflict", 0, "allow conflicts with a prohibited Cyber category", nil)
+	switch d.Decision {
+	case DecisionAllow:
+		if cyberDeniedCategory(d.Category) || d.RiskCode != "" || !auditConfidenceMeets(d, .9) {
+			return cyberUncertaintyAllowV29(d, "model allow was contradictory or low-confidence; unconfirmed risk is fail-open", "model_uncertainty_fail_open_v29"), nil
 		}
-		if d.RiskCode != "" || !auditConfidenceMeets(d, .9) {
-			return AuditDecision{}, newAuditModelCallError("audit_uncertain_allow", 0, "allow is contradictory or lacks sufficient confidence; no authorization to forward", nil)
-		}
+		d.RiskCode = ""
+		d.Evidence = ""
 		return d, nil
+	case DecisionReview:
+		return cyberUncertaintyAllowV29(d, "model returned review; review/verification uncertainty is fail-open", "model_review_fail_open_v29"), nil
+	case DecisionBlock:
+		return d, nil
+	default:
+		return cyberUncertaintyAllowV29(d, "model returned an unknown decision; unconfirmed risk is fail-open", "model_uncertainty_fail_open_v29"), nil
 	}
-	// Raw parsing and quote validation already succeeded. A review is denied as
-	// unresolved, not relabelled as proof of a malicious act.
-	if d.Decision == DecisionReview {
-		d.policyOriginalDecision = d.Decision
-		d.Decision = DecisionBlock
-		if d.RiskCode == "" {
-			d.RiskCode = "AUDIT_REVIEW_REQUIRED"
-		}
-	}
-	return d, nil
 }
 
 func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfile, text, source string) (AuditDecision, error) {
 	ctx, state := withAuditSemanticState(ctx)
 	candidate, err := e.callCyberGroundedModel(ctx, profile, text, source)
-	if class, _, _ := auditModelErrorDetails(err); class == "invalid_evidence" {
-		return candidate, annotateAuditOutputError(newAuditModelCallError("cyber_evidence_unresolved", 0, "non-allow evidence is unresolved; cannot retry until allow", err), auditDiagnosticsFromError(auditOutputPlanFromContext(ctx), err))
-	}
 	if err != nil {
-		return AuditDecision{}, err
+		return cyberModelErrorAllowV29(err), nil
 	}
 
 	// Model-only block/review decisions must first survive the deterministic v28
-	// evidence gate. Weak noun/topic evidence and defensive asset-security work
-	// become provisional allows, which are then sent through the existing
-	// independent verifier pass. Hard custom rule matches are evaluated before
-	// this path and remain unaffected.
+	// evidence gate. Weak noun/topic evidence, scan-only evidence without a
+	// concrete harmful follow-on, and defensive asset-security work are fail-open.
 	candidate = normalizeCyberEvidenceGateV28(candidate, text, source)
-	if e.cyberCandidateNeedsSemanticAdjudicationV25(candidate) {
-		return e.semanticAdjudicateCyberCandidateV25(ctx, profile, text, source, candidate, state)
+	if cyberDecisionNeedsFailOpenV29(e, candidate) {
+		return cyberUncertaintyAllowV29(candidate, "Cyber decision requires additional verification; uncertainty is fail-open", "model_uncertainty_fail_open_v29"), nil
 	}
-	return cyberDenyVerdict(candidate)
+
+	// A direct canonical block with concrete evidence is confirmed and terminal.
+	if candidate.Decision == DecisionBlock {
+		return cyberDenyVerdict(candidate)
+	}
+
+	// Preserve the independent verifier/fusion path for a clean primary allow so
+	// an explicit prohibited action missed by the primary can still be confirmed.
+	verified, verifyErr := e.semanticAdjudicateCyberCandidateV25(ctx, profile, text, source, candidate, state)
+	if verifyErr != nil {
+		return cyberModelErrorAllowV29(verifyErr), nil
+	}
+	verified = normalizeCyberEvidenceGateV28(verified, text, source)
+	if cyberDecisionNeedsFailOpenV29(e, verified) {
+		return cyberUncertaintyAllowV29(verified, "Cyber verifier could not produce a confirmed canonical block; uncertainty is fail-open", "verifier_uncertainty_fail_open_v29"), nil
+	}
+	return cyberDenyVerdict(verified)
 }
