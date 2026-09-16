@@ -58,11 +58,22 @@ func (e *AuditEngine) callModelWithFailover(
 		profiles = append(profiles, profile)
 	}
 
+	failOpen := func(err error) (AuditDecision, AuditProfile, auditFailoverMetadata, error) {
+		finalMetadata := semanticState.metadata(metadata)
+		if cyberDenyActive(ctx) {
+			// v29: retry/fallback/verification work is still performed first. If
+			// no model can produce a confirmed decision, preserve all attempt
+			// diagnostics and authorize forwarding rather than manufacturing 555.
+			return cyberModelErrorAllowV29(err), usedProfile, finalMetadata, nil
+		}
+		return AuditDecision{}, usedProfile, finalMetadata, err
+	}
+
 	usedProfile := root
 	var lastErr error
 	for profileIndex, profile := range profiles {
 		if ctx.Err() != nil {
-			return AuditDecision{}, usedProfile, semanticState.metadata(metadata), ctx.Err()
+			return failOpen(ctx.Err())
 		}
 		if metadata.AttemptCount >= maxAuditTotalAttempts {
 			lastErr = newAuditModelCallError(
@@ -106,7 +117,7 @@ func (e *AuditEngine) callModelWithFailover(
 		checkpoint := newAuditChunkCheckpoint(ctx, profile)
 		for attempt := 0; attempt <= retries; attempt++ {
 			if ctx.Err() != nil {
-				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), ctx.Err()
+				return failOpen(ctx.Err())
 			}
 			if metadata.AttemptCount >= maxAuditTotalAttempts {
 				lastErr = newAuditModelCallError(
@@ -162,10 +173,11 @@ func (e *AuditEngine) callModelWithFailover(
 			lastErr = err
 			attemptRecord.ErrorClass, attemptRecord.HTTPStatus, attemptRecord.Reason = auditModelErrorDetails(err)
 			metadata.Attempts = append(metadata.Attempts, attemptRecord)
-			// A required fusion panel cannot be bypassed by a fallback profile
-			// that has no panel configured. Missing assessments are unresolved.
+			// A required fusion/verifier panel cannot safely be bypassed by a
+			// different profile. Under v29 this is terminal *uncertainty*: keep
+			// the failure diagnostic but fail open rather than convert it to 555.
 			if strings.HasPrefix(attemptRecord.ErrorClass, "cyber_") || strings.HasPrefix(attemptRecord.ErrorClass, "fusion_") || (cyberDenyActive(ctx) && (strings.HasPrefix(attemptRecord.ErrorClass, "semantic_verifier_") || attemptRecord.ErrorClass == "audit_capacity_exceeded" || attemptRecord.ErrorClass == "audit_http_budget" || attemptRecord.ErrorClass == "semantic_review_budget")) {
-				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), err
+				return failOpen(err)
 			}
 			if attempt >= retries || !auditErrorRetryableOnSameProfile(err) {
 				break
@@ -175,7 +187,7 @@ func (e *AuditEngine) callModelWithFailover(
 			}
 			metadata.ModelRetryCount++
 			if err := waitAuditRetry(ctx, attempt); err != nil {
-				return AuditDecision{}, usedProfile, semanticState.metadata(metadata), err
+				return failOpen(err)
 			}
 		}
 	}
@@ -183,7 +195,7 @@ func (e *AuditEngine) callModelWithFailover(
 	if lastErr == nil {
 		lastErr = newAuditModelCallError("fallback_unavailable", 0, "no enabled audit fallback model is available", nil)
 	}
-	return AuditDecision{}, usedProfile, semanticState.metadata(metadata), lastErr
+	return failOpen(lastErr)
 }
 
 func mergeAuditCallMetadata(existing auditCallMetadata, current auditCallMetadata) auditCallMetadata {
