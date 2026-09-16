@@ -67,9 +67,8 @@ func cyberDenyProfile(p AuditProfile) AuditProfile {
 	return p
 }
 
-// The enabled Cyber rule table is a deny list, including legacy review/allow
-// rows. Evaluate before model selection. Hard lexical relationships are valid
-// only inside one source role document; cross-role adoption is semantic.
+// Enabled block rules are hard vetoes. Review/allow rules are candidate signals
+// only and can never directly manufacture HTTP 555 under the v29 fail-open policy.
 func (e *AuditEngine) matchCyberDenyRules(text string) (*AuditDecision, *RuleMatchDiagnostics) {
 	d, diagnostic, _, _ := e.matchCyberDenyRulesContext(context.Background(), text)
 	return d, diagnostic
@@ -78,8 +77,7 @@ func (e *AuditEngine) matchCyberDenyRules(text string) (*AuditDecision, *RuleMat
 // Every regex/contains/exact rule is evaluated inside independently extracted
 // ROLE units. This prevents dot-all expressions from joining a benign user plan
 // to unrelated tool JSON keys or a later tool result. Precision suppressions are
-// still candidate-local and custom operator rules remain hard vetoes when they
-// actually match inside one source unit.
+// still candidate-local and custom operator block rules retain hard-veto semantics.
 func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text string) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic, error) {
 	loaded, _ := e.rules.Load().([]compiledRule)
 	rules := append(append([]compiledRule(nil), loaded...), cyberDenyBaseline...)
@@ -108,6 +106,10 @@ func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text strin
 		if !matched {
 			continue
 		}
+		if r.Action != DecisionBlock {
+			weak = appendRuleSuppressionV26(weak, r, unit, evidence, "non_block_rule_requires_semantic_review")
+			continue
+		}
 		if demoteGenericSecurityTestingRuleV28(r) {
 			weak = appendRuleSuppressionV26(weak, r, unit, evidence, "generic_security_testing_requires_semantic_review")
 			continue
@@ -115,7 +117,7 @@ func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text strin
 		diagnostic := buildRuleMatchDiagnostics(r, i+1, unit.Text, evidence)
 		diagnostic.UnitIndex = unit.Index
 		diagnostic.UnitKind = unit.Kind
-		d := AuditDecision{Decision: DecisionBlock, RiskCode: r.Code, Category: r.Category, Source: "rule", RuleID: r.ID, Reason: "enabled Cyber rule triggered; prohibited by business policy (testing/debugging is not an exemption)"}
+		d := AuditDecision{Decision: DecisionBlock, RiskCode: r.Code, Category: r.Category, Source: "rule", RuleID: r.ID, Reason: "enabled Cyber block rule triggered with current-request evidence"}
 		return &d, &diagnostic, weak, nil
 	}
 	return nil, nil, weak, nil
