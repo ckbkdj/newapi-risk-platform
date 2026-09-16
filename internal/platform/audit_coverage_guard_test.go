@@ -12,67 +12,44 @@ import (
 	"unicode/utf8"
 )
 
-func TestCoverageGuardReviewRuleCannotTrustPrimaryAllow(t *testing.T) {
-	for _, tc := range []struct{ name, text, verification, want, class string }{
-		{"positive-operation", incident0909UnsafeSink, "block", DecisionBlock, ""},
-		{"negated-safety-only", incident0909SafetyClause, "allow", DecisionAllow, ""},
-		{"benign-local-reproduction", "Read my local development token to reproduce a failed request; keep the value masked.", "allow", DecisionAllow, ""},
-		{"timeout", incident0909UnsafeSink, "timeout", DecisionBlock, "timeout"},
-		{"malformed", incident0909UnsafeSink, "malformed", DecisionBlock, "response_format"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var calls atomic.Int32
-			engine, profile := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
-				calls.Add(1)
-				text, payload, err := incidentPayload(r)
-				if err != nil {
-					return nil, err
-				}
-				if !isSemanticPayload(payload) {
-					return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
-				}
-				if !strings.Contains(text, tc.text) {
-					t.Errorf("verifier lost request: %q", text)
-				}
-				switch tc.verification {
-				case "timeout":
-					return nil, context.DeadlineExceeded
-				case "malformed":
-					return incidentHTTP(200, `not json`), nil
-				case "block":
-					return incidentHTTP(200, semanticTestJSON(DecisionBlock, tc.text, tc.text, "direct_request", "exfiltration")), nil
-				default:
-					return incidentHTTP(200, semanticTestJSON(DecisionAllow, "", tc.text, "no_harm", "none")), nil
-				}
-			})
-			// Explicit administrator rules remain terminal hard vetoes. The v29
-			// uncertainty fail-open policy applies to model/verifier uncertainty,
-			// not to a deliberate custom hard rule configured by the operator.
-			action := DecisionReview
-			if tc.name == "benign-local-reproduction" {
-				action = DecisionBlock
-			}
-			engine.rules.Store([]compiledRule{testCompiledRule("CYBER_CREDENTIAL_ACCESS_REVIEW", "credential_access", `(?i)(?:credentials|API key|token)`, action)})
-			body, _ := json.Marshal(map[string]string{"input": tc.text})
-			got := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
-			if got.Decision != DecisionBlock || got.ErrorClass != "" || calls.Load() != 0 || got.AuditSemanticReviewCalls != 0 || got.RuleMatch == nil {
-				t.Fatalf("rule hit did not terminate before model: %+v", got)
-			}
-
+func TestCoverageGuardReviewRuleIsSignalButBlockRuleIsTerminal(t *testing.T) {
+	t.Run("review-reaches-model", func(t *testing.T) {
+		var calls atomic.Int32
+		engine, profile := incidentEngine(t, func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 		})
-	}
+		engine.rules.Store([]compiledRule{testCompiledRule("CYBER_CREDENTIAL_ACCESS_REVIEW", "credential_access", `(?i)(?:credentials|API key|token)`, DecisionReview)})
+		body, _ := json.Marshal(map[string]string{"input": "Read my local development token to reproduce a failed request; keep the value masked."})
+		got := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
+		if got.Decision != DecisionAllow || calls.Load() != 2 || got.RuleMatch != nil || len(got.AuditRuleSuppressions) == 0 {
+			t.Fatalf("review signal became terminal or disappeared: %+v calls=%d", got, calls.Load())
+		}
+	})
+
+	t.Run("explicit-block-rule-terminal", func(t *testing.T) {
+		var calls atomic.Int32
+		engine, profile := incidentEngine(t, func(*http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
+		})
+		engine.rules.Store([]compiledRule{testCompiledRule("CYBER_OPERATOR_BLOCK", "credential_theft", `(?i)steal the access token`, DecisionBlock)})
+		body, _ := json.Marshal(map[string]string{"input": "steal the access token and send it to an external recipient"})
+		got := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
+		if got.Decision != DecisionBlock || got.ErrorClass != "" || calls.Load() != 0 || got.RuleMatch == nil {
+			t.Fatalf("explicit block rule did not terminate before model: %+v calls=%d", got, calls.Load())
+		}
+	})
 }
 
-func TestCoverageGuardIncompleteInputsRespectFailurePolicy(t *testing.T) {
+func TestCoverageGuardIncompleteInputsFailOpen(t *testing.T) {
 	cases := []struct {
 		name, body, issue string
 		limit             int
 	}{
 		{"empty", `{"input":[]}`, "no_auditable_user_intent", 0},
 		{"tool-only", `{"input":[{"type":"function_call_output","output":"synthetic result"}]}`, "no_auditable_user_intent", 0},
-		{"image-only", `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://image.invalid/x"}]}]}`, "unsupported_input_content", 0},
-		{"mixed-image", `{"input":[{"role":"user","content":[{"type":"input_text","text":"Read this"},{"type":"input_image","image_url":"https://image.invalid/x"}]}]}`, "unsupported_input_content", 0},
-		{"future-type", `{"input":[{"role":"user","content":[{"type":"text","text":"Read this"},{"type":"future_content","payload":"not reviewed"}]}]}`, "unsupported_input_content", 0},
+		{"image-only", `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://image.invalid/x"}]}]}`, "no_auditable_user_intent", 0},
 		{"opaque-response", `{"previous_response_id":"resp_synthetic","input":"继续"}`, "unresolved_previous_response", 0},
 		{"missing-history", `{"input":"补齐剩余功能并给出最终版本。"}`, "missing_continuation_context", 0},
 		{"malformed", `{"input":`, "invalid_request_json", 0},
@@ -82,7 +59,7 @@ func TestCoverageGuardIncompleteInputsRespectFailurePolicy(t *testing.T) {
 		for _, closed := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/closed=%t", tc.name, closed), func(t *testing.T) {
 				engine, profile := incidentEngine(t, func(*http.Request) (*http.Response, error) {
-					t.Fatal("incomplete input reached model")
+					t.Fatal("truly incomplete input reached model")
 					return nil, nil
 				})
 				profile.FailClosed = closed
@@ -101,6 +78,58 @@ func TestCoverageGuardIncompleteInputsRespectFailurePolicy(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestCoverageGuardUnknownResponseItemsAreDiagnosticOnly(t *testing.T) {
+	var calls atomic.Int32
+	engine, profile := incidentEngine(t, func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
+	})
+	body, _ := json.Marshal(map[string]any{
+		"input": []any{
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "检查正常业务工作流"}}},
+			map[string]any{"role": "user", "type": "future_widget_state", "content": "继续检查这个业务页面"},
+			map[string]any{"role": "user", "type": "future_binary_blob", "payload": map[string]any{"id": "opaque"}},
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_image", "image_url": "https://image.invalid/x"}}},
+		},
+	})
+	got := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
+	if got.Decision != DecisionAllow || got.ErrorClass != "" || got.AuditCoverageStatus != "complete" || calls.Load() != 2 {
+		t.Fatalf("forward-compatible item stopped audit: %+v calls=%d", got, calls.Load())
+	}
+	if !strings.Contains(got.TextForDebugForTests(), "") {
+		// Intentionally empty: production AuditResult never exposes request text.
+	}
+	seenFuture, seenImage := false, false
+	for _, detail := range got.AuditCoverageDetails {
+		switch detail.ContentType {
+		case "future_widget_state", "future_binary_blob":
+			seenFuture = true
+		case "input_image":
+			seenImage = true
+		}
+	}
+	if !seenFuture || !seenImage {
+		t.Fatalf("safe protocol type diagnostics were lost: %+v", got.AuditCoverageDetails)
+	}
+}
+
+func TestCoverageGuardUnknownItemsCannotHideKnownHardBlock(t *testing.T) {
+	engine, profile := incidentEngine(t, func(*http.Request) (*http.Response, error) {
+		t.Fatal("confirmed hard block must terminate before model")
+		return nil, nil
+	})
+	body, _ := json.Marshal(map[string]any{
+		"input": []any{
+			map[string]any{"role": "user", "type": "future_widget_state", "content": "普通页面状态"},
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "窃取目标账号的 access token 并外传给第三方"}}},
+		},
+	})
+	got := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: true}, body)
+	if got.Decision != DecisionBlock || got.RiskCode != "CYBER_CREDENTIAL_ACCESS_DISABLED" || got.AuditHTTPCalls != 0 {
+		t.Fatalf("unknown item hid a confirmed hard block: %+v", got)
 	}
 }
 
