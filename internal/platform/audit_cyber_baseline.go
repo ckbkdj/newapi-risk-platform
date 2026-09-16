@@ -12,7 +12,7 @@ func cyberPolicyRule(code, category, pattern string) compiledRule {
 
 // Compact, multilingual baseline independent of database migrations. Ambiguous
 // software terms such as a JSON "payload" are not stand-alone deny words.
-// All enabled administrator rules still have unconditional veto precedence.
+// All enabled administrator block rules still have unconditional veto precedence.
 var cyberDenyBaseline = []compiledRule{
 	cyberPolicyRule("CYBER_SECURITY_TEST_DISABLED", "security_testing", `(?i)(?:渗透(?:测试)?|(?:接口|网络|端口|漏洞).{0,12}扫描|扫描.{0,12}(?:接口|网络|端口|漏洞)|安全.{0,6}测试|\b(?:penetration\s+test\w*|vulnerability\s+scann\w*|port\s+scann\w*|network\s+scann\w*|nmap|masscan|sqlmap|nikto|ffuf|nuclei)\b)`),
 	cyberPolicyRule("CYBER_EXPLOIT_TEST_DISABLED", "exploitation", `(?i)(?:\b(?:exploit(?:s|ation)?|brute[-_ ]?forc(?:e|ing)|reverse[-_ ]shell|crack(?:ing)?|SQL\s+injection)\b|SQL\s*注入|暴力破解|反向\s*(?:shell|连接)|漏洞利用|\bXSS\b[ \t:_-]{0,8}(?:payloads?|assertions?|attacks?|inject\w*|tests?|攻击|注入|载荷|测试))`),
@@ -22,7 +22,11 @@ var cyberDenyBaseline = []compiledRule{
 	cyberPolicyRule("CYBER_CHATGPT_WEB_AUTOMATION_DISABLED", "web_automation", `(?is)(?:(?:selenium|puppeteer|playwright|scrap\w*).{0,300}(?:chatgpt(?:\.com)?|chat\.openai\.com)|(?:chatgpt(?:\.com)?|chat\.openai\.com).{0,300}(?:selenium|puppeteer|playwright|scrap\w*)|(?:自动化|脚本|批量).{0,120}(?:操作|操控|控制|发送|提问|对话|刷|抓取).{0,120}(?:chatgpt(?:\.com)?|chat\.openai\.com)|(?:chatgpt(?:\.com)?|chat\.openai\.com).{0,120}(?:网页|页面|浏览器|对话).{0,120}(?:自动化|脚本|批量)|\bautomate\w*.{0,120}(?:chatgpt(?:\.com)?|chat\.openai\.com).{0,100}\b(?:web|browser|conversation|prompt|chat)\b|(?:chatgpt(?:\.com)?|chat\.openai\.com).{0,100}\b(?:web|browser|conversation|prompt|chat)\b.{0,120}\bautomate\w*|越狱测试|jailbreak\s+test\w*)`),
 	cyberPolicyRule("CYBER_CLI_PROBING_DISABLED", "local_probing", `(?is)(?:探测.{0,20}端口|\bprob(?:e|es|ed|ing).{0,30}\bports?\b|(?:高频|压力测试|压测|high.frequency|stress test|load test).{0,50}(?:请求|接口|requests?|http)|(?:请求|接口).{0,20}(?:高频|压力测试|压测))`),
 	cyberPolicyRule("CYBER_SYSTEM_CONFIGURATION_DISABLED", "system_configuration", `(?is)(?:(?:修改|写入|更改|modify|patch|write).{0,100}(?:/etc/(?:sysctl|iptables|nftables|ssh/sshd|sudoers)|底层.{0,8}配置|内核.{0,8}配置|防火墙规则|安全配置|kernel configuration)|\b(?:sysctl\s+-w|iptables\s+-[AFIP]|nft\s+add)\b)`),
-	cyberPolicyRule("CYBER_CREDENTIAL_ACCESS_DISABLED", "credential_access", `(?is)(?:\b(?:extract|read|dump|export|steal)(?:[ \t\r\n]+|[(:][ \t]*)["\']?(?:(?:the|a|an|my|your|our|their|his|her|all|any|own|hidden|stored|saved|raw|plaintext|plain-text|current|local|user|users|admin|administrator|only)[ \t\r\n]+){0,8}\b(?:credentials?|authorization|cookies?|api[ _.-]?keys?|(?:access|auth|session|bearer)[ _.-]?tokens?)\b|(?:提取|读取|导出|窃取).{0,100}(?:credentials?|authorization|cookies?|api[ _.-]?key|(?:access|auth|session|bearer)[ _.-]?tokens?|凭据|令牌|密钥)|(?:api[ _.-]?key|密钥|令牌|凭据|(?:access|auth|session|bearer)[ _.-]?tokens?).{0,80}(?:公开日志|public log|原文.{0,10}(?:写|发送)|外传)|隐藏后门|窃取.{0,40}访问令牌)`),
+	// Credential presence/read/parse/export is not itself evidence of theft.
+	// Keep the hard baseline for explicit stealing, unauthorized disclosure,
+	// public-secret output, or exfiltration. Ambiguous access is handled by the
+	// database REVIEW rule and the semantic model; uncertainty fails open.
+	cyberPolicyRule("CYBER_CREDENTIAL_ACCESS_DISABLED", "credential_access", `(?is)(?:\b(?:steal|harvest|exfiltrat\w*|smuggl\w*)\b.{0,100}\b(?:credentials?|authorization|cookies?|api[ _.-]?keys?|(?:access|auth|session|bearer)[ _.-]?tokens?)\b|(?:窃取|盗取|偷取|外传|偷运).{0,100}(?:credentials?|authorization|cookies?|api[ _.-]?key|(?:access|auth|session|bearer)[ _.-]?tokens?|凭据|令牌|密钥)|(?:api[ _.-]?key|密钥|令牌|凭据|(?:access|auth|session|bearer)[ _.-]?tokens?).{0,100}(?:公开日志|public log|公开输出|原文.{0,10}(?:写|发送)|外传|发送给.{0,20}(?:第三方|外部|未授权)|exfiltrat\w*|send.{0,20}(?:third[- ]party|external|unauthorized))|隐藏后门)`),
 }
 
 func enforceCyberAuditPayload(profile AuditProfile, payload map[string]any) {
