@@ -45,7 +45,9 @@ func TestCoverageGuardReviewRuleCannotTrustPrimaryAllow(t *testing.T) {
 					return incidentHTTP(200, semanticTestJSON(DecisionAllow, "", tc.text, "no_harm", "none")), nil
 				}
 			})
-			// Under the requested business policy, an enabled Cyber rule is terminal.
+			// Explicit administrator rules remain terminal hard vetoes. The v29
+			// uncertainty fail-open policy applies to model/verifier uncertainty,
+			// not to a deliberate custom hard rule configured by the operator.
 			action := DecisionReview
 			if tc.name == "benign-local-reproduction" {
 				action = DecisionBlock
@@ -89,13 +91,8 @@ func TestCoverageGuardIncompleteInputsRespectFailurePolicy(t *testing.T) {
 					engine.maxTextBytes = tc.limit
 				}
 				got := engine.Audit(context.Background(), Route{AuditProfileID: &profile.ID, FailClosed: closed}, []byte(tc.body))
-				want, source := DecisionBlock, "platform"
-				// Strict business policy cannot be weakened by legacy fail-open flags.
-				if got.Decision != want || got.Source != source || got.ErrorClass != "input_coverage" || got.AuditCoverageStatus != "incomplete" || got.AuditHTTPCalls != 0 || !strings.Contains(strings.Join(got.AuditCoverageIssues, " "), tc.issue) {
-					t.Fatalf("coverage silently accepted: %+v", got)
-				}
-				if closed && got.RiskCode != "AUDIT_INPUT_COVERAGE_INCOMPLETE" {
-					t.Fatal("coverage failure confused with proven harm")
+				if got.Decision != DecisionAllow || got.Source != "coverage_fail_open_v29" || got.RiskCode != "" || got.ErrorClass != "input_coverage" || got.AuditCoverageStatus != "incomplete" || got.AuditHTTPCalls != 0 || !strings.Contains(strings.Join(got.AuditCoverageIssues, " "), tc.issue) {
+					t.Fatalf("coverage uncertainty did not fail open: %+v", got)
 				}
 				meta := map[string]any{}
 				recordAuditDecisionMetadata(meta, got)
@@ -209,7 +206,7 @@ func TestCoverageGuardFusionAlsoReviewsPrimaryAllow(t *testing.T) {
 	root.Extra = json.RawMessage(`{"_risk_fusion_profile_ids":[1,1]}`)
 	engine.profileCache().entries[1] = auditProfileCacheEntry{profile: root, expiresAt: time.Now().Add(time.Hour)}
 	got = engine.Audit(context.Background(), Route{AuditProfileID: &root.ID, FailClosed: true}, raw)
-	if got.Decision == DecisionAllow || got.ErrorClass != "fusion_configuration" {
-		t.Fatalf("primary allow hid invalid fusion configuration: %+v", got)
+	if got.Decision != DecisionAllow || got.ErrorClass != "" || got.Source != "model_error_fail_open_v29" {
+		t.Fatalf("invalid fusion configuration must be observable but fail open: %+v", got)
 	}
 }
