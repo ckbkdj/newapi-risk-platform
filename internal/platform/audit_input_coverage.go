@@ -96,8 +96,8 @@ func auditIncompleteInputDecision(failClosed bool, issues []string) AuditDecisio
 	}
 }
 
-// Paths are parser-generated. Type values are exposed only when they look like
-// bounded protocol identifiers; arbitrary values are normalized to "unknown".
+// Paths are parser-generated. Unknown protocol type values are not persisted:
+// only explicitly recognized non-text protocol identifiers are exposed.
 type AuditCoverageDetail struct {
 	Code        string `json:"code"`
 	Path        string `json:"path"`
@@ -116,14 +116,21 @@ func auditNonTextContentType(kind string) bool {
 
 func (r *AuditTextExtraction) coverageProblem(code, path, kind, role string) {
 	kind = strings.ToLower(strings.TrimSpace(kind))
-	if code == "unsupported_input_content" && auditNonTextContentType(kind) {
+	knownNonText := code == "unsupported_input_content" && auditNonTextContentType(kind)
+	if knownNonText {
 		code = "unsupported_nontext_content"
 	}
 	r.addCoverageIssue(code)
 	if len(r.CoverageDetails) >= 32 {
 		return
 	}
-	if kind == "" || !auditSafeContentTypePattern.MatchString(kind) {
+	if knownNonText {
+		if kind == "" || !auditSafeContentTypePattern.MatchString(kind) {
+			kind = "unknown"
+		}
+	} else if code == "unsupported_input_content" {
+		kind = "unknown"
+	} else if kind == "" || !auditSafeContentTypePattern.MatchString(kind) {
 		kind = "unknown"
 	}
 	switch role {
