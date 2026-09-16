@@ -6,8 +6,8 @@ import (
 )
 
 // v28 keeps model-only Cyber decisions grounded in an actual prohibited action.
-// It does not weaken custom operator rules. A normalized allow is not final: the
-// existing Cyber path sends allows through the independent verifier pass.
+// It does not weaken custom operator rules. Weak model evidence is provisional
+// and v29 turns any resulting uncertainty into fail-open observation.
 var defensiveAssetScopeV28 = regexp.MustCompile(`(?is)(?:资产管理|资产盘点|资产清单|暴露面(?:检查|盘点|管理)|攻击面(?:管理|盘点)|漏洞(?:扫描|检查|评估|修复|复测|验证)|安全(?:扫描|检查|评估|基线)|风险(?:扫描|检查|评估)|自有资产|内部资产|已授权资产|asset\s+(?:management|inventory|discovery)|attack\s+surface\s+management|exposure\s+(?:management|assessment)|vulnerability\s+(?:scan|scanning|assessment|management)|security\s+(?:scan|assessment)|remediation\s+(?:check|verification|validation))`)
 
 var scanCapabilityV28 = regexp.MustCompile(`(?is)(?:扫描|探测|枚举端口|端口枚举|漏洞扫描|安全扫描|暴露面检查|资产发现|资产探测|\bscan(?:ning)?\b|\bport\s+(?:scan|enumeration)\b|\bvulnerability\s+(?:scan|scanning|assessment)\b|\basset\s+discovery\b|\bexposure\s+assessment\b|\bnmap\b)`)
@@ -41,24 +41,27 @@ func normalizeCyberEvidenceGateV28(d AuditDecision, text, source string) AuditDe
 
 	evidence := strings.TrimSpace(d.Evidence)
 	combined := text + "\n" + source
-	label := d.RiskCode + " " + d.Category + " " + d.Reason
-	hasConcreteEvidence := scanCapabilityV28.MatchString(evidence) || concreteHarmfulCyberActionV28.MatchString(evidence)
+	hasScanEvidence := scanCapabilityV28.MatchString(evidence)
+	hasHarmEvidence := concreteHarmfulCyberActionV28.MatchString(evidence)
 
 	// A block/review whose quoted evidence contains only nouns/context (for
 	// example "资产管理", "Token", "认证配置") has not actually proved a
-	// prohibited operation. Downgrade it to a provisional allow so the existing
-	// independent verifier must classify the full request again from scratch.
-	if evidence == "" || !hasConcreteEvidence {
+	// prohibited operation.
+	if evidence == "" || (!hasScanEvidence && !hasHarmEvidence) {
 		return provisionalCyberAllowV28(d, "model block lacked concrete prohibited-action evidence")
 	}
 
-	// Defensive asset inventory, exposure assessment and vulnerability
-	// remediation are not prohibited merely because they contain scan/security
-	// vocabulary. Only keep the denial when the request itself contains a
-	// concrete harmful follow-on action such as exploitation, bypass, credential
-	// theft, destructive impact or security-control evasion.
-	if defensiveAssetScopeV28.MatchString(combined) && scanCapabilityV28.MatchString(evidence+" "+label) && !concreteHarmfulCyberActionV28.MatchString(combined) {
-		return provisionalCyberAllowV28(d, "defensive asset/security assessment lacks a concrete harmful action")
+	// Scan/probe vocabulary by itself is still not proof of a prohibited outcome.
+	// This is intentionally independent of whether the user wrote "self-owned" or
+	// "authorized": absence of those labels is not evidence of abuse. A scan-only
+	// candidate stays unconfirmed unless the request also contains exploitation,
+	// bypass, credential theft, destructive impact, or security-control evasion.
+	if hasScanEvidence && !concreteHarmfulCyberActionV28.MatchString(combined) {
+		reason := "scan/probe evidence lacks a concrete harmful follow-on action"
+		if defensiveAssetScopeV28.MatchString(combined) {
+			reason = "defensive asset/security assessment lacks a concrete harmful action"
+		}
+		return provisionalCyberAllowV28(d, reason)
 	}
 
 	return d
