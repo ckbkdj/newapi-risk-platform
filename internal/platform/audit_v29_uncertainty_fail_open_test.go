@@ -129,6 +129,21 @@ func TestAuditIncompleteInputDecisionV29AlwaysFailsOpen(t *testing.T) {
 	}
 }
 
+func TestAuditRuleSnapshotFailureV29FailsOpen(t *testing.T) {
+	engine, _ := incidentEngine(t, func(*http.Request) (*http.Response, error) {
+		t.Fatal("rule snapshot failure must stop before model call")
+		return nil, nil
+	})
+	engine.ruleLoadFailed.Store(true)
+	got := engine.Audit(context.Background(), Route{}, []byte(`{"input":"普通业务开发任务"}`))
+	if got.Decision != DecisionAllow || got.RiskCode != "" || got.Category != "audit_uncertainty" || got.Source != "platform_uncertainty_fail_open_v29" {
+		t.Fatalf("unavailable rule snapshot must fail open: %#v", got)
+	}
+	if got.ErrorClass != "rules_unavailable" || got.AuditFailureStage != "rules" {
+		t.Fatalf("rule failure diagnostics must be retained: %#v", got)
+	}
+}
+
 func TestCyberFailoverV29TransportErrorRetriesThenFailsOpen(t *testing.T) {
 	engine, profile := incidentEngine(t, func(*http.Request) (*http.Response, error) {
 		return nil, context.DeadlineExceeded
