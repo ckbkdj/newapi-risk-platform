@@ -44,12 +44,35 @@ func cyberModelErrorAllowV29(err error) AuditDecision {
 	}
 }
 
+// confirmedCyberBlockV29 separates a proved harmful operation from a model
+// label. A primary six-field model block needs both a canonical policy code and
+// concrete harmful evidence. A semantic verifier may use a noncanonical label,
+// but only after its stronger relation/harm/evidence contract has been validated.
+// This prevents a label mismatch from laundering an actually confirmed harmful
+// request while still failing open invented or weak classifications.
+func confirmedCyberBlockV29(e *AuditEngine, d AuditDecision) bool {
+	if d.Decision != DecisionBlock {
+		return false
+	}
+	evidence := strings.TrimSpace(d.Evidence)
+	if evidence == "" || !concreteHarmfulCyberActionV28.MatchString(evidence) {
+		return false
+	}
+	if e.canonicalCyberRiskCodeV25(d.RiskCode) {
+		return true
+	}
+	relation := strings.ToLower(strings.TrimSpace(d.EvidenceRelation))
+	harm := strings.ToLower(strings.TrimSpace(d.HarmType))
+	return d.EvidenceVerified && semanticHarmTypes[harm] &&
+		(relation == "direct_request" || relation == "adopted_reference")
+}
+
 func cyberDecisionNeedsFailOpenV29(e *AuditEngine, d AuditDecision) bool {
 	if d.Decision == DecisionReview {
 		return true
 	}
-	if d.Decision == DecisionBlock && !e.canonicalCyberRiskCodeV25(d.RiskCode) {
-		return true
+	if d.Decision == DecisionBlock {
+		return !confirmedCyberBlockV29(e, d)
 	}
 	// v28 uses policyOriginalDecision when a model block/review was downgraded
 	// because its evidence was only topical, descriptive, defensive, or otherwise
