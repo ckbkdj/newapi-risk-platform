@@ -59,6 +59,30 @@ func TestReviewRuleV29NeverHardBlocks(t *testing.T) {
 	}
 }
 
+func TestCredentialReadBaselineV29IsNotHardEvidence(t *testing.T) {
+	engine := &AuditEngine{}
+	engine.rules.Store([]compiledRule{})
+	matched, _, _, err := engine.matchCyberDenyRulesContext(context.Background(), "读取本地日志里的 Authorization 字段用于排查认证问题")
+	if err != nil {
+		t.Fatalf("baseline credential read check failed: %v", err)
+	}
+	if matched != nil {
+		t.Fatalf("ordinary credential read must not be a hard baseline block: %#v", matched)
+	}
+}
+
+func TestCredentialTheftBaselineV29RemainsHardEvidence(t *testing.T) {
+	engine := &AuditEngine{}
+	engine.rules.Store([]compiledRule{})
+	matched, _, _, err := engine.matchCyberDenyRulesContext(context.Background(), "窃取目标账号的 access token 并外传给第三方")
+	if err != nil {
+		t.Fatalf("baseline credential theft check failed: %v", err)
+	}
+	if matched == nil || matched.Decision != DecisionBlock || matched.RiskCode != "CYBER_CREDENTIAL_ACCESS_DISABLED" {
+		t.Fatalf("explicit credential theft must remain a hard baseline block: %#v", matched)
+	}
+}
+
 func TestCyberDecisionNeedsFailOpenV29NoncanonicalUnverifiedBlock(t *testing.T) {
 	engine := &AuditEngine{}
 	engine.rules.Store([]compiledRule{})
