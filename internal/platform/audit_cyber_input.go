@@ -14,8 +14,7 @@ import (
 // and tool data. Historical material is marked as untrusted reference; hard
 // policy hits are still vetoes. Never silently clip it and then call it safe.
 // Control prompts and tool schemas are excluded, not executed or trusted as
-// proof. Unknown future Responses API items are projected through known textual
-// fields and recorded diagnostically instead of stopping the request.
+// proof. Opaque remote history and non-text modalities remain unsupported.
 func extractCyberAuditText(body []byte, limit int) AuditTextExtraction {
 	out, _ := extractCyberAuditTextContext(context.Background(), body, limit, 0)
 	return out
@@ -136,9 +135,9 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 			}
 		case map[string]any:
 			kind, _ := x["type"].(string)
-			kind = strings.ToLower(strings.TrimSpace(kind))
+			kind = strings.ToLower(kind)
 			actual, _ := x["role"].(string)
-			actual = strings.ToLower(strings.TrimSpace(actual))
+			actual = strings.ToLower(actual)
 			if actual != "" {
 				switch {
 				case isEndUserRole(actual):
@@ -156,19 +155,10 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 					return
 				}
 			}
-
-			unknownKind := false
 			switch kind {
 			case "reasoning":
 				out.IgnoredInputTypes = append(out.IgnoredInputTypes, "REASONING")
 				out.IgnoredContextBytes += countContextTextBytes(x, "")
-				return
-			case "input_image", "image_url", "input_audio", "audio", "output_audio", "video", "input_file", "file", "item_reference", "refusal":
-				// Non-text/opaque modalities are not grounds to stop a request. The
-				// textual portion is still audited; the ignored type remains visible.
-				out.IgnoredInputTypes = append(out.IgnoredInputTypes, strings.ToUpper(kind))
-				out.IgnoredContextBytes += countContextTextBytes(x, "")
-				out.coverageProblem("unsupported_input_content", path, kind, role)
 				return
 			case "function_call", "custom_tool_call", "tool_search_call", "function":
 				role = "TOOL_ACTION"
@@ -176,20 +166,8 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 				role = "TOOL_DATA"
 			case "", "message", "input_text", "text", "output_text":
 			default:
-				// Forward-compatible Responses API behavior: unknown call/result
-				// families are projected as tool data/action when their naming makes
-				// that provenance clear. Other future item types are still traversed
-				// through explicit text-bearing keys below instead of being dropped.
-				if isNonUserInputType(kind) {
-					if strings.Contains(kind, "output") || strings.Contains(kind, "result") {
-						role = "TOOL_DATA"
-					} else {
-						role = "TOOL_ACTION"
-					}
-				} else {
-					unknownKind = true
-					out.coverageProblem("unsupported_input_content", path, kind, role)
-				}
+				out.coverageProblem("unsupported_input_content", path, kind, role)
+				return
 			}
 			found := false
 			// Loaded tool definitions are returned under tools, not output. Keep
@@ -207,10 +185,10 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 					}
 				}
 			}
-			for _, key := range []string{"content", "text", "input", "input_text", "prompt", "query", "arguments", "output", "result", "tool_calls", "function_call", "function", "description"} {
+			for _, key := range []string{"content", "text", "input", "prompt", "query", "arguments", "output", "tool_calls", "function_call", "function"} {
 				if child, exists := x[key]; exists {
 					found = true
-					if (role == "TOOL_DATA" || role == "TOOL_ACTION") && (key == "arguments" || key == "output" || key == "result") {
+					if (role == "TOOL_DATA" || role == "TOOL_ACTION") && (key == "arguments" || key == "output") {
 						if str, ok := child.(string); ok {
 							appendText(role, str, role != "TOOL_ACTION")
 						} else {
@@ -226,15 +204,12 @@ func extractCyberAuditTextContext(ctx context.Context, body []byte, limit, capac
 					}
 				}
 			}
-			if !found && !unknownKind {
+			if !found {
 				out.coverageProblem("unsupported_input_content", path, kind, role)
 			}
 		case nil:
 		default:
-			// Numeric/bool/other scalar metadata in a heterogeneous Responses item
-			// carries no executable text. Ignore it rather than turning the entire
-			// request into a coverage failure.
-			out.IgnoredContextBytes += countContextTextBytes(v, "")
+			out.coverageProblem("unsupported_input_content", path, "unknown", role)
 		}
 	}
 	if obj, ok := root.(map[string]any); ok {
@@ -355,6 +330,7 @@ func isResponsesOutputTextConfig(value any) bool {
 							if _, ok := item.(string); !ok {
 								return false
 							}
+						}
 					default:
 						return false
 					}
