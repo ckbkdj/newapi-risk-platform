@@ -346,16 +346,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		if result.ErrorClass == "audit_deadline_exceeded" || result.ErrorClass == "audit_cancelled" {
 			reason = "audit stopped during " + stage + ": " + result.ErrorClass
 		}
-		riskCode := "AUDIT_MODEL_ERROR"
-		switch result.ErrorClass {
-		case "rules_unavailable":
-			riskCode = "AUDIT_RULES_UNAVAILABLE"
-		case "audit_profile_not_found", "audit_profile_disabled", "audit_profile_lookup_failed", "audit_profile_lookup_timeout":
-			riskCode = "AUDIT_MODEL_UNAVAILABLE"
-		case "audit_capacity_exceeded", "input_too_large":
-			riskCode = "AUDIT_CONTEXT_TOO_LARGE"
-		}
-		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: riskCode, Category: "audit_infrastructure", Reason: reason, Source: "platform"}
+		result.AuditDecision = AuditDecision{Decision: DecisionAllow, Category: "audit_uncertainty", Confidence: 0, Reason: reason, Source: "platform_uncertainty_fail_open_v29"}
 	}
 	if extractionErr != nil {
 		fail(extractionErr, "extraction")
@@ -478,11 +469,7 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		if errorClass == "audit_capacity_exceeded" {
 			result.AuditFailureStage = "planning"
 		}
-		riskCode := "AUDIT_MODEL_ERROR"
-		if errorClass == "context_length" || errorClass == "input_too_large" || errorClass == "audit_capacity_exceeded" {
-			riskCode = "AUDIT_CONTEXT_TOO_LARGE"
-		}
-		result.AuditDecision = AuditDecision{Decision: DecisionBlock, RiskCode: riskCode, Category: "audit_infrastructure", Confidence: 1, Reason: reason, Source: "platform"}
+		result.AuditDecision = AuditDecision{Decision: DecisionAllow, Category: "audit_uncertainty", Confidence: 0, Reason: reason, Source: "model_error_fail_open_v29"}
 		return result
 	}
 	rawModelDecision := cleanSemanticDecision(decision)
@@ -493,13 +480,10 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 		rawModelDecision.Decision = rawModelDecision.policyOriginalDecision
 	}
 	result.AuditModelDecision = &rawModelDecision
-	// A valid Cyber denial is terminal. Confidence, old engineering options,
-	// another model and an adjudicator cannot convert it into authorization.
+	// Review means the audit could not confirm a prohibited operation. Preserve
+	// the model candidate in SemanticReview, but do not manufacture HTTP 555.
 	if decision.Decision == DecisionReview {
-		decision.Decision = DecisionBlock
-		if decision.RiskCode == "" {
-			decision.RiskCode = "AUDIT_REVIEW_REQUIRED"
-		}
+		decision = cyberUncertaintyAllowV29(decision, "final Cyber decision remained review; uncertainty is fail-open", "model_review_fail_open_v29")
 	}
 	result.AuditDecision = decision
 	return result
