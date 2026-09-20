@@ -68,3 +68,32 @@ func TestProxySSEHeartbeatKeepsSilentGenerationAlive(t *testing.T) {
 		t.Fatalf("bytesWritten=%d body=%d", bytesWritten, len(body))
 	}
 }
+
+func TestProxySSEPromptErrorPreservesHTTP555(t *testing.T) {
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://upstream.invalid/v1/chat/completions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{"Content-Type": {"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("event: error\ndata: {\"error\":{\"message\":\"synthetic\"}}\n\n")),
+		Request: request,
+	}
+	gateway := &Gateway{cfg: Config{
+		ErrorHTTPStatus:       555,
+		SSELineMaxBytes:      1024 * 1024,
+		SSEHeartbeatInterval: 15 * time.Second,
+	}}
+	recorder := httptest.NewRecorder()
+	_, riskCode, status, _, committed := gateway.proxySSE(recorder, response, "early-error-test", nil, nil)
+	if riskCode != "UPSTREAM_STREAM_ERROR" || status != 555 || committed {
+		t.Fatalf("pre-stream error contract changed: risk=%q status=%d committed=%v", riskCode, status, committed)
+	}
+	if recorder.Code != 555 {
+		t.Fatalf("HTTP status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "risk-gateway-keepalive") {
+		t.Fatalf("heartbeat committed before prompt upstream error: %q", recorder.Body.String())
+	}
+}
