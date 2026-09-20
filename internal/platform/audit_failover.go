@@ -133,7 +133,9 @@ func (e *AuditEngine) callModelWithFailover(
 			attemptContext, outputState := withAuditOutputAttempt(ctx, outputPlan)
 			attemptContext = context.WithValue(attemptContext, auditResumeChunksKey{}, profileChunks)
 			attemptContext = context.WithValue(attemptContext, auditChunkCheckpointKey{}, checkpoint)
+			attemptStarted := time.Now()
 			decision, callMetadata, err := e.callModel(attemptContext, profile, text)
+			attemptLatency := time.Since(attemptStarted)
 			profileChunks = callMetadata
 			outputDiagnostics := outputState.snapshot(false)
 			if err != nil {
@@ -149,6 +151,7 @@ func (e *AuditEngine) callModelWithFailover(
 				ProfileName:          profile.Name,
 				Model:                profile.Model,
 				Attempt:              attempt + 1,
+				LatencyMS:            attemptLatency.Milliseconds(),
 				Success:              err == nil,
 				OutputMode:           outputDiagnostics.Mode,
 				OutputMaxTokens:      outputDiagnostics.MaxTokens,
