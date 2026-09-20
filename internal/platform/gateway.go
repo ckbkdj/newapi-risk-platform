@@ -531,6 +531,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// onto a socket that is already gone.
 			riskCode = "CLIENT_DISCONNECT"
 			failureStage = "client_disconnect"
+			trace.Metadata["failure_stage"] = failureStage
+			trace.Metadata["error_class"] = riskCode
 			trace.Metadata["client_disconnect_after_ms"] = time.Since(started).Milliseconds()
 			finish("error", riskCode, 499, 0, 0)
 			return
