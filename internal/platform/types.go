@@ -140,6 +140,7 @@ type AuditAttempt struct {
 	ProfileName          string  `json:"profile_name"`
 	Model                string  `json:"model"`
 	Attempt              int     `json:"attempt"`
+	LatencyMS            int64   `json:"latency_ms,omitempty"`
 	Success              bool    `json:"success"`
 	Decision             string  `json:"decision,omitempty"`
 	RiskCode             string  `json:"risk_code,omitempty"`
