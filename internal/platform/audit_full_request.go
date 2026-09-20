@@ -2,7 +2,7 @@ package platform
 
 import "context"
 
-const defaultAuditModelConcurrency = 16
+const defaultAuditModelConcurrency = 4
 
 // The caller retains cancellation ownership. A zero total timeout permits the
 // finite complete plan, not unbounded retries or work after disconnection.
