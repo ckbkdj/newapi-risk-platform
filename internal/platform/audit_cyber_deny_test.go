@@ -121,15 +121,15 @@ func TestCyberDenyDisabledRuleAndMissingProfile(t *testing.T) {
 	r.Enabled = false
 	e.rules.Store([]compiledRule{r})
 	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, []byte(`{"input":"ordinary labels"}`))
-	if got.Decision != DecisionAllow || calls.Load() != 2 {
-		t.Fatalf("disabled rule became enabled: %+v", got)
+	if got.Decision != DecisionAllow || calls.Load() != 1 || got.AuditHTTPCalls != 1 || got.AuditSemanticReviewCalls != 0 {
+		t.Fatalf("clean allow did not use the single-pass fast path: %+v calls=%d", got, calls.Load())
 	}
 	// A valid explicit administrator block rule must not depend on model/profile lookup.
 	r.Enabled = true
 	e.rules.Store([]compiledRule{r})
 	e.profileCache().entries = map[int64]auditProfileCacheEntry{}
 	got = e.Audit(context.Background(), Route{}, []byte(`{"input":"ordinary labels"}`))
-	if got.Decision != DecisionBlock || got.Source != "rule" || calls.Load() != 2 {
+	if got.Decision != DecisionBlock || got.Source != "rule" || calls.Load() != 1 {
 		t.Fatalf("model configuration weakened explicit block rule: %+v", got)
 	}
 }
