@@ -809,6 +809,42 @@ func (g *Gateway) proxySSE(
 			observation.Duration = time.Since(started)
 		}
 	}()
+
+	copyResponseHeaders(w.Header(), response.Header)
+	w.Header().Set("X-Risk-Request-ID", requestID)
+	w.Header().Set("X-Oneapi-Request-Id", requestID)
+	// SSE must never be buffered by an nginx-style intermediary. The initial
+	// comment is deliberately flushed before the first model token so callers
+	// with an idle/header watchdog see a live response even when the model has a
+	// long prefill/reasoning phase.
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(response.StatusCode)
+	flusher, canFlush := w.(http.Flusher)
+
+	var total int64
+	writeLines := func(lines []string) error {
+		for _, line := range lines {
+			count, err := io.WriteString(w, line+"\n")
+			total += int64(count)
+			if err != nil {
+				return err
+			}
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		return nil
+	}
+	writeHeartbeat := func() error {
+		// A colon-prefixed SSE line is a standards-compliant comment. OpenAI
+		// clients ignore it, while proxies observe actual response bytes.
+		return writeLines([]string{": risk-gateway-keepalive", ""})
+	}
+	if err := writeHeartbeat(); err != nil {
+		return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
+	}
+
 	observeEvent := func(event []string) {
 		if onProgress != nil {
 			onProgress()
@@ -824,75 +860,50 @@ func (g *Gateway) proxySSE(
 		return classifyUpstreamStreamReadError(response, readError)
 	}
 
+	type sseReadResult struct {
+		event []string
+		ok    bool
+		err   error
+	}
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), g.cfg.SSELineMaxBytes)
-	buffered := make([][]string, 0, 4)
-	bufferedBytes := 0
-	for len(buffered) < 16 && bufferedBytes < 64*1024 {
-		event, ok, err := nextSSEEvent(scanner)
-		if err != nil {
-			riskCode, evidence := readFailure(err)
-			if riskCode != "CLIENT_DISCONNECT" {
-				writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, "upstream stream failed before starting")
+	results := make(chan sseReadResult, 1)
+	streamContext := context.Background()
+	if response.Request != nil {
+		streamContext = response.Request.Context()
+	}
+	go func() {
+		defer close(results)
+		for {
+			event, ok, err := nextSSEEvent(scanner)
+			result := sseReadResult{event: event, ok: ok, err: err}
+			select {
+			case results <- result:
+			case <-streamContext.Done():
+				return
 			}
-			return 0, riskCode, g.cfg.ErrorHTTPStatus, evidence, false
+			if err != nil || !ok {
+				return
+			}
 		}
-		if !ok {
-			break
-		}
-		observeEvent(event)
-		if isSSEErrorEvent(event) {
-			writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_STREAM_ERROR", "upstream model returned a stream error")
-			return 0, "UPSTREAM_STREAM_ERROR", g.cfg.ErrorHTTPStatus, sseEventEvidence(event), false
-		}
-		buffered = append(buffered, event)
-		bufferedBytes += sseEventSize(event)
-		if isMeaningfulSSEEvent(event) {
-			break
-		}
+	}()
+
+	var heartbeat <-chan time.Time
+	var heartbeatTicker *time.Ticker
+	if g.cfg.SSEHeartbeatInterval > 0 {
+		heartbeatTicker = time.NewTicker(g.cfg.SSEHeartbeatInterval)
+		heartbeat = heartbeatTicker.C
+		defer heartbeatTicker.Stop()
 	}
 
-	copyResponseHeaders(w.Header(), response.Header)
-	w.Header().Set("X-Risk-Request-ID", requestID)
-	w.Header().Set("X-Oneapi-Request-Id", requestID)
-	w.WriteHeader(response.StatusCode)
-	flusher, canFlush := w.(http.Flusher)
-	var total int64
-	writeEvent := func(lines []string) error {
-		for _, line := range lines {
-			count, err := io.WriteString(w, line+"\n")
-			total += int64(count)
-			if err != nil {
-				return err
-			}
-		}
-		if canFlush {
-			flusher.Flush()
-		}
-		return nil
-	}
-	for _, event := range buffered {
-		if err := writeEvent(event); err != nil {
-			return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
-		}
-	}
 	for {
-		event, hasEvent, readError := nextSSEEvent(scanner)
-		if readError != nil {
-			if observation != nil {
-				observation.ReadError = readError.Error()
-				if observation.CompletionObserved {
-					observation.TransportClosedAfterTerminal = true
-					if observation.CompletionSemantics != "" {
-						observation.CompletionSemantics += "_then_transport_close"
-					}
-					// A provider may close with a TCP reset immediately after a
-					// valid finish_reason/[DONE]/response.completed event. The
-					// generation is already complete and must not become a false 555.
-					return total, "", response.StatusCode, nil, true
-				}
+		select {
+		case <-heartbeat:
+			if err := writeHeartbeat(); err != nil {
+				return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
 			}
-			riskCode, evidence := readFailure(readError)
+		case <-streamContext.Done():
+			riskCode, evidence := readFailure(streamContext.Err())
 			if riskCode == "CLIENT_DISCONNECT" {
 				return total, riskCode, response.StatusCode, nil, true
 			}
@@ -902,27 +913,55 @@ func (g *Gateway) proxySSE(
 				flusher.Flush()
 			}
 			return total, riskCode, response.StatusCode, evidence, true
-		}
-		if !hasEvent {
-			if observation != nil && observation.CompletionSemantics == "" {
-				observation.CompletionSemantics = "clean_eof"
+		case result, open := <-results:
+			if !open {
+				if observation != nil && observation.CompletionSemantics == "" {
+					observation.CompletionSemantics = "clean_eof"
+				}
+				return total, "", response.StatusCode, nil, true
 			}
-			break
-		}
-		observeEvent(event)
-		if isSSEErrorEvent(event) {
-			written, _ := writeSSELogicalError(w, requestID, "UPSTREAM_STREAM_ERROR")
-			total += written
-			if canFlush {
-				flusher.Flush()
+			if result.err != nil {
+				if observation != nil {
+					observation.ReadError = result.err.Error()
+					if observation.CompletionObserved {
+						observation.TransportClosedAfterTerminal = true
+						if observation.CompletionSemantics != "" {
+							observation.CompletionSemantics += "_then_transport_close"
+						}
+						return total, "", response.StatusCode, nil, true
+					}
+				}
+				riskCode, evidence := readFailure(result.err)
+				if riskCode == "CLIENT_DISCONNECT" {
+					return total, riskCode, response.StatusCode, nil, true
+				}
+				written, _ := writeSSELogicalError(w, requestID, riskCode)
+				total += written
+				if canFlush {
+					flusher.Flush()
+				}
+				return total, riskCode, response.StatusCode, evidence, true
 			}
-			return total, "UPSTREAM_STREAM_ERROR", response.StatusCode, sseEventEvidence(event), true
-		}
-		if err := writeEvent(event); err != nil {
-			return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
+			if !result.ok {
+				if observation != nil && observation.CompletionSemantics == "" {
+					observation.CompletionSemantics = "clean_eof"
+				}
+				return total, "", response.StatusCode, nil, true
+			}
+			observeEvent(result.event)
+			if isSSEErrorEvent(result.event) {
+				written, _ := writeSSELogicalError(w, requestID, "UPSTREAM_STREAM_ERROR")
+				total += written
+				if canFlush {
+					flusher.Flush()
+				}
+				return total, "UPSTREAM_STREAM_ERROR", response.StatusCode, sseEventEvidence(result.event), true
+			}
+			if err := writeLines(result.event); err != nil {
+				return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
+			}
 		}
 	}
-	return total, "", response.StatusCode, nil, true
 }
 
 func nextSSEEvent(scanner *bufio.Scanner) ([]string, bool, error) {
