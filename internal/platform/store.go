@@ -227,7 +227,7 @@ func (s *Store) ListRoutes(ctx context.Context) ([]Route, error) {
 func (s *Store) SaveRoute(ctx context.Context, input RouteInput, security *Security) (Route, error) {
 	input.FailClosed = true // Cyber deny policy is fail-closed, including legacy API clients.
 	if input.RequestTimeoutMS == 0 {
-		input.RequestTimeoutMS = 120000
+		input.RequestTimeoutMS = defaultRouteRequestTimeoutMS
 	}
 	if input.MaxConcurrency == 0 {
 		input.MaxConcurrency = 256
