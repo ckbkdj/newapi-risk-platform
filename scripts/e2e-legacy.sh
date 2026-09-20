@@ -777,7 +777,7 @@ public_log = next((item for item in items if item.get("request_id") == "e2e-own-
 if not public_log:
     raise RuntimeError("public-log credential refusal trace is missing")
 pm = public_log.get("metadata", {})
-if pm.get("audit_rule_code") != "CYBER_CREDENTIAL_ACCESS_REVIEW" or pm.get("audit_rule_action") != "block":
+if pm.get("audit_rule_code") != "CYBER_CREDENTIAL_ACCESS_DISABLED" or pm.get("audit_rule_action") != "block":
     raise RuntimeError(f"public disclosure must retain native credential-rule veto: {pm}")
 if pm.get("audit_rule_downgraded_to_review") is True:
     raise RuntimeError(f"native credential rule was incorrectly downgraded: {pm}")
