@@ -22,6 +22,7 @@ type AuditModelInputDiagnostics struct {
 	RequestContextBytes      int    `json:"request_context_bytes"`
 	RequestContextCount      int    `json:"request_context_count"`
 	PayloadBytes             int    `json:"payload_bytes"`
+	QueueWaitMS              int64  `json:"queue_wait_ms"`
 	SourceMatchesRequestText bool   `json:"source_matches_request_text"`
 	RequestTextHMAC          string `json:"request_text_hmac,omitempty"`
 	DocumentHMAC             string `json:"document_hmac,omitempty"`
