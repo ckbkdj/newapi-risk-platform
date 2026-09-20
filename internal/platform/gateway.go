@@ -810,20 +810,25 @@ func (g *Gateway) proxySSE(
 		}
 	}()
 
-	copyResponseHeaders(w.Header(), response.Header)
-	w.Header().Set("X-Risk-Request-ID", requestID)
-	w.Header().Set("X-Oneapi-Request-Id", requestID)
-	// SSE must never be buffered by an nginx-style intermediary. The initial
-	// comment is deliberately flushed before the first model token so callers
-	// with an idle/header watchdog see a live response even when the model has a
-	// long prefill/reasoning phase.
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(response.StatusCode)
-	flusher, canFlush := w.(http.Flusher)
-
 	var total int64
+	committed := false
+	var flusher http.Flusher
+	canFlush := false
+	commit := func() {
+		if committed {
+			return
+		}
+		copyResponseHeaders(w.Header(), response.Header)
+		w.Header().Set("X-Risk-Request-ID", requestID)
+		w.Header().Set("X-Oneapi-Request-Id", requestID)
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(response.StatusCode)
+		flusher, canFlush = w.(http.Flusher)
+		committed = true
+	}
 	writeLines := func(lines []string) error {
+		commit()
 		for _, line := range lines {
 			count, err := io.WriteString(w, line+"\n")
 			total += int64(count)
@@ -838,13 +843,9 @@ func (g *Gateway) proxySSE(
 	}
 	writeHeartbeat := func() error {
 		// A colon-prefixed SSE line is a standards-compliant comment. OpenAI
-		// clients ignore it, while proxies observe actual response bytes.
+		// clients ignore it, while reverse proxies observe response bytes.
 		return writeLines([]string{": risk-gateway-keepalive", ""})
 	}
-	if err := writeHeartbeat(); err != nil {
-		return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
-	}
-
 	observeEvent := func(event []string) {
 		if onProgress != nil {
 			onProgress()
@@ -887,6 +888,83 @@ func (g *Gateway) proxySSE(
 			}
 		}
 	}()
+
+	// Preserve the historical HTTP-555 contract for an upstream SSE error that
+	// arrives promptly at stream start. If the model stays silent longer than
+	// the heartbeat interval, commit the successful SSE response and emit a
+	// comment heartbeat before any 60-second intermediary idle timeout can fire.
+	pending := make([][]string, 0, 4)
+	pendingBytes := 0
+	var firstHeartbeat <-chan time.Time
+	var firstHeartbeatTimer *time.Timer
+	if g.cfg.SSEHeartbeatInterval > 0 {
+		firstHeartbeatTimer = time.NewTimer(g.cfg.SSEHeartbeatInterval)
+		firstHeartbeat = firstHeartbeatTimer.C
+	}
+initial:
+	for !committed {
+		select {
+		case <-firstHeartbeat:
+			if err := writeHeartbeat(); err != nil {
+				return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
+			}
+			for _, event := range pending {
+				if err := writeLines(event); err != nil {
+					return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
+				}
+			}
+			break initial
+		case <-streamContext.Done():
+			riskCode, evidence := readFailure(streamContext.Err())
+			if riskCode != "CLIENT_DISCONNECT" {
+				writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, "upstream stream failed before starting")
+			}
+			return total, riskCode, g.cfg.ErrorHTTPStatus, evidence, false
+		case result, open := <-results:
+			if !open {
+				commit()
+				for _, event := range pending {
+					if err := writeLines(event); err != nil {
+						return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
+					}
+				}
+				if observation != nil && observation.CompletionSemantics == "" {
+					observation.CompletionSemantics = "clean_eof"
+				}
+				return total, "", response.StatusCode, nil, true
+			}
+			if result.err != nil {
+				riskCode, evidence := readFailure(result.err)
+				if riskCode != "CLIENT_DISCONNECT" {
+					writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, "upstream stream failed before starting")
+				}
+				return total, riskCode, g.cfg.ErrorHTTPStatus, evidence, false
+			}
+			if !result.ok {
+				commit()
+				return total, "", response.StatusCode, nil, true
+			}
+			observeEvent(result.event)
+			if isSSEErrorEvent(result.event) {
+				writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, "UPSTREAM_STREAM_ERROR", "upstream model returned a stream error")
+				return total, "UPSTREAM_STREAM_ERROR", g.cfg.ErrorHTTPStatus, sseEventEvidence(result.event), false
+			}
+			pending = append(pending, result.event)
+			pendingBytes += sseEventSize(result.event)
+			if isMeaningfulSSEEvent(result.event) || len(pending) >= 16 || pendingBytes >= 64*1024 {
+				commit()
+				for _, event := range pending {
+					if err := writeLines(event); err != nil {
+						return total, "CLIENT_DISCONNECT", response.StatusCode, nil, true
+					}
+				}
+				break initial
+			}
+		}
+	}
+	if firstHeartbeatTimer != nil {
+		firstHeartbeatTimer.Stop()
+	}
 
 	var heartbeat <-chan time.Time
 	var heartbeatTicker *time.Ticker
