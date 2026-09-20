@@ -81,6 +81,23 @@ must be long enough for non-streaming generations because many providers do not 
 headers until the whole completion is ready. `STREAMING_TIMEOUT` is the allowed idle
 time between streaming data events.
 
+If nginx (or an nginx-compatible ingress) sits anywhere in front of New API or the
+risk gateway, its default proxy read timeout is commonly 60 seconds. Configure the relay
+location for long model requests, for example:
+
+```nginx
+proxy_http_version 1.1;
+proxy_buffering off;
+proxy_request_buffering off;
+proxy_read_timeout 3600s;
+proxy_send_timeout 3600s;
+send_timeout 3600s;
+```
+
+Reload nginx after validating the configuration. A caller/proxy timeout cannot be repaired
+only by increasing the gateway route timeout, because the caller closes the HTTP request
+context first and the gateway correctly observes that as a client disconnect.
+
 A trace with `failure_stage=client_disconnect`, `upstream_error_class=CLIENT_DISCONNECT`
 and an upstream HTTP status of 200 means the caller disconnected first; it is not an
 upstream model failure.
