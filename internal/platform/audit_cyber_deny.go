@@ -170,8 +170,11 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 	// without adding evidence. Uncertainty is fail-open by policy, while explicit
 	// rule blocks and primary model blocks remain terminal above.
 	required, _ := ctx.Value(auditRequireIntentVerificationKey{}).(bool)
-	_, fusionEnabled := auditProfileExtra(profile)["_risk_fusion_profile_ids"]
-	if !required && !fusionEnabled {
+	extra := auditProfileExtra(profile)
+	_, fusionEnabled := extra["_risk_fusion_profile_ids"]
+	_, verifierConfigured := extra["_risk_verifier_profile_id"]
+	verifyCleanAllows, _ := extra["_risk_verify_clean_allows"].(bool)
+	if !required && !fusionEnabled && !verifierConfigured && !verifyCleanAllows {
 		return cyberDenyVerdict(candidate)
 	}
 
