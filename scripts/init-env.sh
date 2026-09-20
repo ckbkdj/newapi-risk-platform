@@ -96,7 +96,7 @@ audit_defaults = {
     "AUDIT_CHUNK_CONCURRENCY": "4",
     "AUDIT_MAX_CHUNKS": "0",
     "AUDIT_REQUEST_TIMEOUT": "0s",
-    "AUDIT_MODEL_CONCURRENCY": "16",
+    "AUDIT_MODEL_CONCURRENCY": "4",
     "SSE_HEARTBEAT_INTERVAL": "15s",
 }
 for key, default in audit_defaults.items():
@@ -116,6 +116,11 @@ for key, default in audit_defaults.items():
         should_set = True
         warnings.append(
             "AUDIT_CHUNK_CONCURRENCY legacy default was increased from 2 to 4 so long-context audit chunks do not queue in three serial waves before upstream starts."
+        )
+    if key == "AUDIT_MODEL_CONCURRENCY" and current == "16":
+        should_set = True
+        warnings.append(
+            "AUDIT_MODEL_CONCURRENCY legacy default was reduced from 16 to 4 to avoid oversubscribing the audit model and inflating single-request latency."
         )
     if key == "AUDIT_MAX_CHUNKS" and current in {"64", "256"}:
         should_set = True
