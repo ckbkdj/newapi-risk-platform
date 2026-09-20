@@ -163,8 +163,18 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 		return cyberDenyVerdict(candidate)
 	}
 
-	// Preserve the independent verifier/fusion path for a clean primary allow so
-	// an explicit prohibited action missed by the primary can still be confirmed.
+	// v31 latency policy: a clean primary allow is terminal unless deterministic
+	// preprocessing found a weak/review signal that genuinely needs semantic
+	// adjudication, or the operator explicitly enabled Fusion. The old behavior
+	// re-ran every benign request through the same 27B model, doubling latency
+	// without adding evidence. Uncertainty is fail-open by policy, while explicit
+	// rule blocks and primary model blocks remain terminal above.
+	required, _ := ctx.Value(auditRequireIntentVerificationKey{}).(bool)
+	_, fusionEnabled := auditProfileExtra(profile)["_risk_fusion_profile_ids"]
+	if !required && !fusionEnabled {
+		return cyberDenyVerdict(candidate)
+	}
+
 	verified, verifyErr := e.semanticAdjudicateCyberCandidateV25(ctx, profile, text, source, candidate, state)
 	if verifyErr != nil {
 		// Do not turn verifier failure into a block here. Return it to the outer
