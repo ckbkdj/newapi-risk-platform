@@ -22,7 +22,7 @@ func TestProxySSEHeartbeatKeepsSilentGenerationAlive(t *testing.T) {
 			"Content-Type": {"text/event-stream"},
 		},
 		Body:    reader,
-		Request:    request,
+		Request: request,
 	}
 	gateway := &Gateway{cfg: Config{
 		SSELineMaxBytes:      1024 * 1024,
@@ -77,8 +77,8 @@ func TestProxySSEPromptErrorPreservesHTTP555(t *testing.T) {
 	response := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": {"text/event-stream"}},
-		Body: io.NopCloser(strings.NewReader("event: error\ndata: {\"error\":{\"message\":\"synthetic\"}}\n\n")),
-		Request: request,
+		Body:       io.NopCloser(strings.NewReader("event: error\ndata: {\"error\":{\"message\":\"synthetic\"}}\n\n")),
+		Request:    request,
 	}
 	gateway := &Gateway{cfg: Config{
 		ErrorHTTPStatus:      555,
