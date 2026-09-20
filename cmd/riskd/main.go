@@ -116,7 +116,7 @@ func main() {
 		Addr:              cfg.HTTPAddr,
 		Handler:           httpService.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
+		ReadTimeout:       0,
 		WriteTimeout:      0,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,
