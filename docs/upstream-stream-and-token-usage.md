@@ -57,3 +57,30 @@ Web 请求列表以 `输入 / 输出` 的形式展示，例如：
 平台不会伪造精确数字；字段保持为空。对于 OpenAI 兼容流，NewAPI/调用方应
 保留 `stream_options.include_usage=true`，Responses API 通常会在
 `response.completed` 事件中携带 usage。
+
+
+## Long-running requests and 60-second caller disconnects
+
+The gateway itself does not impose a 60-second total response deadline. For SSE, it now
+flushes response headers immediately after the upstream returns a successful SSE response
+and writes a standards-compliant comment heartbeat every `SSE_HEARTBEAT_INTERVAL`
+(default `15s`). It also sets `X-Accel-Buffering: no` so nginx-style proxies do not
+buffer the stream.
+
+When New API is the caller, its relay settings still control the caller-side lifetime.
+For long generations use, at minimum:
+
+```env
+RELAY_TIMEOUT=0
+RELAY_RESPONSE_HEADER_TIMEOUT=1800
+STREAMING_TIMEOUT=3600
+```
+
+`RELAY_TIMEOUT=0` disables New API's total relay deadline. The response-header timeout
+must be long enough for non-streaming generations because many providers do not send
+headers until the whole completion is ready. `STREAMING_TIMEOUT` is the allowed idle
+time between streaming data events.
+
+A trace with `failure_stage=client_disconnect`, `upstream_error_class=CLIENT_DISCONNECT`
+and an upstream HTTP status of 200 means the caller disconnected first; it is not an
+upstream model failure.
