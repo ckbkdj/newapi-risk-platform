@@ -97,6 +97,7 @@ audit_defaults = {
     "AUDIT_MAX_CHUNKS": "0",
     "AUDIT_REQUEST_TIMEOUT": "0s",
     "AUDIT_MODEL_CONCURRENCY": "16",
+    "SSE_HEARTBEAT_INTERVAL": "15s",
 }
 for key, default in audit_defaults.items():
     current = values.get(key, "").strip()
