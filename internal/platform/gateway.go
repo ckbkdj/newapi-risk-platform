@@ -519,12 +519,23 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	response, err := g.client.Do(upstreamRequest)
 	trace.Metadata["upstream_header_latency_ms"] = time.Since(upstreamStarted).Milliseconds()
 	if err != nil {
+		cause := context.Cause(requestContext)
 		riskCode := "UPSTREAM_CONNECTION_ERROR"
-		if errors.Is(context.Cause(requestContext), errUpstreamRequestTimeout) ||
-			errors.Is(err, context.DeadlineExceeded) || errors.Is(context.Cause(requestContext), context.DeadlineExceeded) {
+		failureStage := "upstream_connect"
+		if errors.Is(cause, errUpstreamRequestTimeout) ||
+			errors.Is(err, context.DeadlineExceeded) || errors.Is(cause, context.DeadlineExceeded) {
 			riskCode = "UPSTREAM_TIMEOUT"
+		} else if errors.Is(cause, context.Canceled) && r.Context().Err() != nil {
+			// The downstream caller closed first. Do not attribute its timeout or
+			// cancellation to the model/channel and do not try to synthesize a 555
+			// onto a socket that is already gone.
+			riskCode = "CLIENT_DISCONNECT"
+			failureStage = "client_disconnect"
+			trace.Metadata["client_disconnect_after_ms"] = time.Since(started).Milliseconds()
+			finish("error", riskCode, 499, 0, 0)
+			return
 		}
-		trace.Metadata["failure_stage"] = "upstream_connect"
+		trace.Metadata["failure_stage"] = failureStage
 		trace.Metadata["error_class"] = riskCode
 		finish("error", riskCode, g.cfg.ErrorHTTPStatus, 0, 0)
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, "upstream model request failed")
