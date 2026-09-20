@@ -482,7 +482,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	timeout := time.Duration(route.RequestTimeoutMS) * time.Millisecond
 	if timeout <= 0 {
-		timeout = 120 * time.Second
+		timeout = defaultRouteRequestTimeout
 	}
 	release, ok := g.redis.Acquire(
 		r.Context(),
