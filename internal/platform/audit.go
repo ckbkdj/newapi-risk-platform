@@ -421,6 +421,12 @@ func (e *AuditEngine) Audit(ctx context.Context, route Route, body []byte) (resu
 	phaseStarted = time.Now()
 	defer func() { stages["model"] = time.Since(phaseStarted).Milliseconds() }()
 	profile = cyberDenyProfile(profile)
+	// A weak deterministic signal (review rule, demoted generic security test,
+	// embedded reference, etc.) merits a second semantic pass. Ordinary requests
+	// with no such signal use one model call only.
+	if len(weak) > 0 {
+		ctx = context.WithValue(ctx, auditRequireIntentVerificationKey{}, true)
+	}
 	decision, usedProfile, failoverMetadata, err := e.callModelWithFailover(ctx, profile, text)
 	callMetadata := failoverMetadata.CallMetadata
 	result.Model = usedProfile.Model
