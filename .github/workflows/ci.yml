@@ -70,7 +70,7 @@ jobs:
               'AUDIT_CHUNK_CONCURRENCY': '4',
               'AUDIT_MAX_CHUNKS': '0',
               'AUDIT_REQUEST_TIMEOUT': '0s',
-              'AUDIT_MODEL_CONCURRENCY': '16',
+              'AUDIT_MODEL_CONCURRENCY': '4',
           }
           for key, value in expected.items():
               assert current.get(key) == value, (key, current.get(key), value)
