@@ -63,6 +63,7 @@ type Config struct {
 	AuditRequestTimeout            time.Duration
 	AuditModelConcurrency          int
 	SSELineMaxBytes                int
+	SSEHeartbeatInterval           time.Duration
 	TraceQueueSize                 int
 	TraceBatchSize                 int
 	TraceFlushInterval             time.Duration
@@ -128,6 +129,7 @@ func LoadConfig() (Config, error) {
 		AuditRequestTimeout:            envDuration("AUDIT_REQUEST_TIMEOUT", 0),
 		AuditModelConcurrency:          envInt("AUDIT_MODEL_CONCURRENCY", defaultAuditModelConcurrency),
 		SSELineMaxBytes:                envInt("SSE_LINE_MAX_BYTES", 1024*1024),
+		SSEHeartbeatInterval:           envDuration("SSE_HEARTBEAT_INTERVAL", 15*time.Second),
 		TraceQueueSize:                 envInt("TRACE_QUEUE_SIZE", 32768),
 		TraceBatchSize:                 envInt("TRACE_BATCH_SIZE", 256),
 		TraceFlushInterval:             envDuration("TRACE_FLUSH_INTERVAL", 250*time.Millisecond),
@@ -229,6 +231,9 @@ func (c Config) Validate() error {
 	}
 	if c.SSELineMaxBytes < 64*1024 || c.SSELineMaxBytes > 8*1024*1024 {
 		problems = append(problems, "SSE_LINE_MAX_BYTES must be between 64 KiB and 8 MiB")
+	}
+	if c.SSEHeartbeatInterval < 0 || (c.SSEHeartbeatInterval > 0 && c.SSEHeartbeatInterval < time.Second) || c.SSEHeartbeatInterval > 5*time.Minute {
+		problems = append(problems, "SSE_HEARTBEAT_INTERVAL must be 0 to disable or between 1s and 5m")
 	}
 	if c.TraceQueueSize < 100 || c.TraceQueueSize > 1000000 || c.TraceBatchSize < 1 || c.TraceBatchSize > 5000 {
 		problems = append(problems, "trace queue or batch settings are invalid")
