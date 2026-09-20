@@ -601,7 +601,9 @@ func (e *AuditEngine) callModelRawWithEvidenceSource(
 	if originalBytes, ok := ctx.Value(auditOriginalTextBytesKey{}).(int); ok && originalBytes > textBytes {
 		textBytes = originalBytes
 	}
+	queueStarted := time.Now()
 	release, slotErr := e.acquireAuditModelSlot(ctx)
+	inputDiag.QueueWaitMS = time.Since(queueStarted).Milliseconds()
 	if slotErr != nil {
 		return AuditDecision{}, slotErr
 	}
