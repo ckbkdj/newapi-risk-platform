@@ -7,7 +7,6 @@ import (
 )
 
 const cyberDenyMode = "cyber_deny"
-const cyberDenyChunkBytes = 16 * 1024 // Engineering guard, not a measured model accuracy limit.
 const cyberDenyHTTPBudget = 64
 const cyberDenyDeadline = 120 * time.Second
 
