@@ -1,0 +1,39 @@
+name: Input archive verification
+on:
+  push:
+    branches: [main, 'feat/input-review-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  input-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: risk
+          POSTGRES_PASSWORD: disposable-test-password
+          POSTGRES_DB: input_review_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U risk -d input_review_test"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+    env:
+      TRACE_INPUT_TEST_DATABASE_URL: postgres://risk:disposable-test-password@127.0.0.1:5432/input_review_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.6'
+      - name: Build both services
+        run: go build ./cmd/...
+      - name: New feature race and database tests
+        run: go test -race -count=1 -timeout=120s ./internal/platform -run '^TestTraceInput'
+      - name: Browser script syntax and Go formatting
+        run: |
+          node --check internal/platform/web/trace-inputs.js
+          test -z "$(gofmt -l internal/platform/trace_input*.go)"

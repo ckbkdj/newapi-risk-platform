@@ -110,11 +110,16 @@ func main() {
 		traceWriter,
 		logger,
 	)
+	handler, waitForInputs, err := httpService.HandlerWithInputReview(traceContext)
+	if err != nil {
+		logger.Error("input archive configuration failed", "error", err)
+		os.Exit(1)
+	}
 
 	go maintainPartitions(backgroundContext, cfg, store, logger)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpService.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       0,
 		WriteTimeout:      0,
@@ -153,6 +158,7 @@ func main() {
 	}
 
 	traceCancel()
+	waitForInputs()
 	traceWriter.Wait()
 	eventCancel()
 	eventSink.Wait()
