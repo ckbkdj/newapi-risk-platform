@@ -8,9 +8,13 @@ import (
 // v28 keeps model-only Cyber decisions grounded in an actual prohibited action.
 // It does not weaken custom operator rules. Weak model evidence is provisional
 // and v29 turns any resulting uncertainty into fail-open observation.
-var defensiveAssetScopeV28 = regexp.MustCompile(`(?is)(?:资产管理|资产盘点|资产清单|暴露面(?:检查|盘点|管理)|攻击面(?:管理|盘点)|漏洞(?:扫描|检查|评估|修复|复测|验证)|安全(?:扫描|检查|评估|基线)|风险(?:扫描|检查|评估)|自有资产|内部资产|已授权资产|asset\s+(?:management|inventory|discovery)|attack\s+surface\s+management|exposure\s+(?:management|assessment)|vulnerability\s+(?:scan|scanning|assessment|management)|security\s+(?:scan|assessment)|remediation\s+(?:check|verification|validation))`)
+var defensiveAssetScopeV28 = regexp.MustCompile(`(?is)(?:资产管理|资产盘点|资产清单|暴露面(?:检查|盘点|管理)|攻击面(?:管理|盘点)|漏洞(?:检查|评估|修复|复测|验证)|安全(?:检查|评估|基线)|风险(?:检查|评估)|自有资产|内部资产|已授权资产|asset\s+(?:management|inventory)|attack\s+surface\s+management|exposure\s+(?:management|assessment)|vulnerability\s+(?:assessment|management)|security\s+assessment|remediation\s+(?:check|verification|validation))`)
 
 var scanCapabilityV28 = regexp.MustCompile(`(?is)(?:扫描|探测|枚举端口|端口枚举|漏洞扫描|安全扫描|暴露面检查|资产发现|资产探测|\bscan(?:ning)?\b|\bport\s+(?:scan|enumeration)\b|\bvulnerability\s+(?:scan|scanning|assessment)\b|\basset\s+discovery\b|\bexposure\s+assessment\b|\bnmap\b)`)
+
+var activeSecurityScanV32 = regexp.MustCompile(`(?is)(?:(?:扫描|探测|枚举).{0,32}(?:接口|网络|网段|主机|端口|漏洞|服务)|(?:接口|网络|网段|主机|端口|漏洞|服务).{0,32}(?:扫描|探测|枚举)|(?:安全|漏洞).{0,8}扫描|(?:主动|自动化|批量).{0,24}(?:扫描|探测|枚举)|\b(?:run|use|execute)?\s*(?:nmap|masscan|nuclei|nikto|ffuf|sqlmap)\b|\b(?:security|vulnerability|port|network)\s+scann?\w*\b|\bscan\w*.{0,24}\b(?:network|subnet|host|ports?|vulnerabilit\w*|services?)\b)`)
+
+var passiveSecurityScanReferenceV32 = regexp.MustCompile(`(?is)(?:(?:分析|查看|审阅|复盘|总结|整理|解释|读取).{0,48}(?:扫描报告|扫描结果|扫描日志|扫描输出|nmap\s*输出|scan\s+(?:report|result|log|output))|(?:扫描报告|扫描结果|扫描日志|扫描输出|nmap\s*输出|scan\s+(?:report|result|log|output)).{0,48}(?:分析|查看|审阅|复盘|总结|整理|解释)|(?:修复|整改).{0,32}(?:复测|验证)(?:结果|报告|记录)?)`)
 
 // These are concrete harmful operations rather than topic words. The absence of
 // ownership/authorization language is intentionally not included: lack of such
@@ -22,15 +26,10 @@ var concreteHarmfulCyberActionV28 = regexp.MustCompile(`(?is)(?:(?:绕过|规避
 // veto. Demote only the unchanged shipped baseline pattern to semantic audit;
 // administrator-authored rules with different patterns keep hard precedence.
 func demoteGenericSecurityTestingRuleV28(rule compiledRule) bool {
-	if !strings.EqualFold(strings.TrimSpace(rule.Code), "CYBER_SECURITY_TEST_DISABLED") {
-		return false
-	}
-	for _, baseline := range cyberDenyBaseline {
-		if !strings.EqualFold(strings.TrimSpace(baseline.Code), "CYBER_SECURITY_TEST_DISABLED") {
-			continue
-		}
-		return strings.TrimSpace(rule.Pattern) == strings.TrimSpace(baseline.Pattern)
-	}
+	// v32: the shipped security-scan rule is a hard veto for an active current
+	// scan operation. Passive report/history references are filtered earlier by
+	// semanticOnlyRuleMatchV26. Keep this function for compatibility with older
+	// callers/tests, but never demote an active baseline match.
 	return false
 }
 
@@ -51,15 +50,17 @@ func normalizeCyberEvidenceGateV28(d AuditDecision, text, source string) AuditDe
 		return provisionalCyberAllowV28(d, "model block lacked concrete prohibited-action evidence")
 	}
 
-	// Scan/probe vocabulary by itself is still not proof of a prohibited outcome.
-	// This is intentionally independent of whether the user wrote "self-owned" or
-	// "authorized": absence of those labels is not evidence of abuse. A scan-only
-	// candidate stays unconfirmed unless the request also contains exploitation,
-	// bypass, credential theft, destructive impact, or security-control evasion.
+	// v32: an explicit active security/vulnerability/network/port scan is itself
+	// a governed Cyber capability. Ownership/authorization wording does not turn
+	// the operation into an allow. Passive analysis of an already-produced scan
+	// report/result remains non-operational and can fail open.
+	if hasScanEvidence && activeSecurityScanV32.MatchString(combined) && !passiveSecurityScanReferenceV32.MatchString(evidence) {
+		return d
+	}
 	if hasScanEvidence && !concreteHarmfulCyberActionV28.MatchString(combined) {
-		reason := "scan/probe evidence lacks a concrete harmful follow-on action"
-		if defensiveAssetScopeV28.MatchString(combined) {
-			reason = "defensive asset/security assessment lacks a concrete harmful action"
+		reason := "scan terminology is descriptive or passive rather than an active scan operation"
+		if defensiveAssetScopeV28.MatchString(combined) || passiveSecurityScanReferenceV32.MatchString(combined) {
+			reason = "asset/security report review does not request an active scan operation"
 		}
 		return provisionalCyberAllowV28(d, reason)
 	}
