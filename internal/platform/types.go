@@ -235,29 +235,29 @@ type AuditResult struct {
 }
 
 type TraceEvent struct {
-	RequestID       string         `json:"request_id"`
-	ExternalEventID string         `json:"external_event_id,omitempty"`
-	Source          string         `json:"source"`
-	RouteSlug       string         `json:"route_slug,omitempty"`
-	NewAPIRequestID string         `json:"newapi_request_id,omitempty"`
-	ExternalUserID  string         `json:"external_user_id,omitempty"`
-	Model           string         `json:"model,omitempty"`
-	Endpoint        string         `json:"endpoint,omitempty"`
-	Decision        string         `json:"decision"`
-	RiskCode        string         `json:"risk_code,omitempty"`
-	HTTPStatus      int            `json:"http_status"`
-	UpstreamStatus  int            `json:"upstream_status,omitempty"`
-	LatencyMS       int64          `json:"latency_ms"`
-	AuditLatencyMS  int64          `json:"audit_latency_ms"`
-	RequestBytes    int64          `json:"request_bytes"`
-	ResponseBytes   int64          `json:"response_bytes"`
-	PromptHMAC      string         `json:"prompt_hmac,omitempty"`
-	RequestPayloadCiphertext []byte `json:"-"`
-	Metadata        map[string]any `json:"metadata,omitempty"`
-	StartedAt       time.Time      `json:"started_at"`
-	CompletedAt     time.Time      `json:"completed_at"`
-	IngestedAt      time.Time      `json:"ingested_at"`
-	CreatedAt       time.Time      `json:"created_at"`
+	RequestID                string         `json:"request_id"`
+	ExternalEventID          string         `json:"external_event_id,omitempty"`
+	Source                   string         `json:"source"`
+	RouteSlug                string         `json:"route_slug,omitempty"`
+	NewAPIRequestID          string         `json:"newapi_request_id,omitempty"`
+	ExternalUserID           string         `json:"external_user_id,omitempty"`
+	Model                    string         `json:"model,omitempty"`
+	Endpoint                 string         `json:"endpoint,omitempty"`
+	Decision                 string         `json:"decision"`
+	RiskCode                 string         `json:"risk_code,omitempty"`
+	HTTPStatus               int            `json:"http_status"`
+	UpstreamStatus           int            `json:"upstream_status,omitempty"`
+	LatencyMS                int64          `json:"latency_ms"`
+	AuditLatencyMS           int64          `json:"audit_latency_ms"`
+	RequestBytes             int64          `json:"request_bytes"`
+	ResponseBytes            int64          `json:"response_bytes"`
+	PromptHMAC               string         `json:"prompt_hmac,omitempty"`
+	RequestPayloadCiphertext []byte         `json:"-"`
+	Metadata                 map[string]any `json:"metadata,omitempty"`
+	StartedAt                time.Time      `json:"started_at"`
+	CompletedAt              time.Time      `json:"completed_at"`
+	IngestedAt               time.Time      `json:"ingested_at"`
+	CreatedAt                time.Time      `json:"created_at"`
 }
 
 type TrackingEvent struct {
