@@ -366,20 +366,46 @@ func appendRuleSuppressionV26(items []RuleSuppressionDiagnostic, rule compiledRu
 	return append(items, RuleSuppressionDiagnostic{RuleCode: rule.Code, UnitIndex: unit.Index, Reason: reason, MatchedText: redactCyberTraceText(evidence.matchedRaw)})
 }
 
-func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text string) (cyberRuleEvidence, bool, auditRuleUnit, []RuleSuppressionDiagnostic, error) {
-	units := splitCyberRuleRoleUnitsV25(text)
+type preparedCyberRuleUnitV31 struct {
+	unit   auditRuleUnit
+	lower  string
+	folded string
+}
+
+func prepareCyberRuleTextV31(text string) ([]preparedCyberRuleUnitV31, string, string) {
+	rawUnits := splitCyberRuleRoleUnitsV25(text)
+	units := make([]preparedCyberRuleUnitV31, 0, len(rawUnits))
+	for _, unit := range rawUnits {
+		prepared := preparedCyberRuleUnitV31{unit: unit, lower: strings.ToLower(unit.Text)}
+		if len(unit.Text) > 8192 {
+			prepared.folded = auditCanonicalFold(unit.Text)
+		}
+		units = append(units, prepared)
+	}
+	lower := strings.ToLower(text)
+	folded := ""
+	if len(text) > 8192 {
+		folded = auditCanonicalFold(text)
+	}
+	return units, lower, folded
+}
+
+func matchCyberRuleStructuredPreparedV31(
+	ctx context.Context,
+	rule compiledRule,
+	text string,
+	units []preparedCyberRuleUnitV31,
+	fullLower string,
+	fullFolded string,
+) (cyberRuleEvidence, bool, auditRuleUnit, []RuleSuppressionDiagnostic, error) {
 	var suppressions []RuleSuppressionDiagnostic
 	candidateCount := 0
-	for _, unit := range units {
+	for _, prepared := range units {
+		unit := prepared.unit
 		if err := ctx.Err(); err != nil {
 			return cyberRuleEvidence{}, false, auditRuleUnit{}, suppressions, err
 		}
-		lower := strings.ToLower(unit.Text)
-		folded := ""
-		if len(unit.Text) > 8192 {
-			folded = auditCanonicalFold(unit.Text)
-		}
-		evidence, matched := matchCyberRuleEvidence(rule, unit.Text, lower, folded)
+		evidence, matched := matchCyberRuleEvidence(rule, unit.Text, prepared.lower, prepared.folded)
 		offset := 0
 		for matched {
 			if err := ctx.Err(); err != nil {
@@ -417,12 +443,7 @@ func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text st
 	}
 
 	if len(suppressions) == 0 && strings.TrimSpace(text) != "" {
-		lower := strings.ToLower(text)
-		folded := ""
-		if len(text) > 8192 {
-			folded = auditCanonicalFold(text)
-		}
-		if evidence, legacyMatched := matchCyberRuleEvidence(rule, text, lower, folded); legacyMatched {
+		if evidence, legacyMatched := matchCyberRuleEvidence(rule, text, fullLower, fullFolded); legacyMatched {
 			reason := "cross_role_or_noncurrent_match_disallowed"
 			if rule.PatternType == "regex" && precisionRule(rule) {
 				if specific := weakDevelopmentRuleEvidence(rule, text, evidence); specific != "" {
@@ -433,6 +454,11 @@ func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text st
 		}
 	}
 	return cyberRuleEvidence{}, false, auditRuleUnit{}, suppressions, nil
+}
+
+func matchCyberRuleStructuredV25(ctx context.Context, rule compiledRule, text string) (cyberRuleEvidence, bool, auditRuleUnit, []RuleSuppressionDiagnostic, error) {
+	units, lower, folded := prepareCyberRuleTextV31(text)
+	return matchCyberRuleStructuredPreparedV31(ctx, rule, text, units, lower, folded)
 }
 
 func (e *AuditEngine) canonicalCyberRiskCodeV25(code string) bool {
