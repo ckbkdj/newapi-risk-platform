@@ -44,18 +44,29 @@ func (s *Store) InsertTraceBatch(ctx context.Context, events []TraceEvent) error
 			(request_id,external_event_id,source,route_slug,newapi_request_id,external_user_id,
 			model,endpoint,decision,risk_code,http_status,upstream_status,latency_ms,
 			audit_latency_ms,request_bytes,response_bytes,prompt_hmac,metadata,
-			started_at,completed_at,ingested_at,created_at)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+			request_payload_ciphertext,started_at,completed_at,ingested_at,created_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
 			event.RequestID, event.ExternalEventID, event.Source, event.RouteSlug,
 			event.NewAPIRequestID, event.ExternalUserID, event.Model, event.Endpoint,
 			event.Decision, event.RiskCode, event.HTTPStatus, event.UpstreamStatus,
 			event.LatencyMS, event.AuditLatencyMS, event.RequestBytes, event.ResponseBytes,
-			event.PromptHMAC, metadata, event.StartedAt, event.CompletedAt, event.IngestedAt, event.CreatedAt)
+			event.PromptHMAC, metadata, event.RequestPayloadCiphertext,
+			event.StartedAt, event.CompletedAt, event.IngestedAt, event.CreatedAt)
 		if err != nil {
 			return err
 		}
 	}
 	return transaction.Commit(ctx)
+}
+
+
+func (s *Store) GetTraceRequestPayloadCiphertext(ctx context.Context, requestID string) ([]byte, error) {
+	var ciphertext []byte
+	err := s.pool.QueryRow(ctx, `SELECT request_payload_ciphertext
+		FROM request_traces
+		WHERE request_id=$1 AND request_payload_ciphertext IS NOT NULL
+		ORDER BY created_at DESC LIMIT 1`, requestID).Scan(&ciphertext)
+	return ciphertext, err
 }
 
 func (s *Store) QueryTraces(ctx context.Context, filter TraceFilter) ([]TraceEvent, error) {
