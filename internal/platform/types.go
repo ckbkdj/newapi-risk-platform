@@ -252,6 +252,7 @@ type TraceEvent struct {
 	RequestBytes    int64          `json:"request_bytes"`
 	ResponseBytes   int64          `json:"response_bytes"`
 	PromptHMAC      string         `json:"prompt_hmac,omitempty"`
+	RequestPayloadCiphertext []byte `json:"-"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
 	StartedAt       time.Time      `json:"started_at"`
 	CompletedAt     time.Time      `json:"completed_at"`
