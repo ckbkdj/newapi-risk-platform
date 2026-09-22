@@ -98,6 +98,7 @@ audit_defaults = {
     "AUDIT_REQUEST_TIMEOUT": "0s",
     "AUDIT_MODEL_CONCURRENCY": "4",
     "SSE_HEARTBEAT_INTERVAL": "15s",
+    "TRACE_STORE_REQUEST_PAYLOAD": "true",
 }
 for key, default in audit_defaults.items():
     current = values.get(key, "").strip()
