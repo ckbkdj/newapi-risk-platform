@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -61,6 +63,51 @@ type TraceSearchResponse struct {
 	Summary    TraceSearchSummary `json:"summary"`
 	TimeBasis  string             `json:"time_basis"`
 	ServerTime time.Time          `json:"server_time"`
+}
+
+func (s *HTTPService) adminTraceRequestPayload(w http.ResponseWriter, r *http.Request) {
+	requestID := normalizeRequestID(chi.URLParam(r, "requestID"))
+	if requestID == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request_id", "request ID is invalid")
+		return
+	}
+	ciphertext, err := s.store.GetTraceRequestPayloadCiphertext(r.Context(), requestID)
+	if err != nil {
+		s.log.Warn("trace request payload lookup failed", "request_id", requestID, "error", err)
+		writeAPIError(w, http.StatusInternalServerError, "trace_payload_error", "could not load request payload")
+		return
+	}
+	if len(ciphertext) == 0 {
+		writeAPIError(w, http.StatusNotFound, "trace_payload_not_found", "complete request payload was not retained for this trace")
+		return
+	}
+	payload, err := openTraceRequestPayload(s.security, requestID, ciphertext, s.cfg.RequestHardMaxBytes)
+	if err != nil {
+		s.log.Warn("trace request payload decrypt failed", "request_id", requestID, "error", err)
+		writeAPIError(w, http.StatusInternalServerError, "trace_payload_decrypt_error", "could not decrypt request payload")
+		return
+	}
+	claims := claimsFromContext(r.Context())
+	s.store.WriteAdminAudit(
+		r.Context(),
+		claims,
+		"view_trace_request_payload",
+		"request_trace",
+		requestID,
+		middleware.GetReqID(r.Context()),
+		remoteIP(r),
+		map[string]any{"payload_bytes": len(payload)},
+	)
+	contentType := "text/plain"
+	if json.Valid(payload) {
+		contentType = "application/json"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"request_id":   requestID,
+		"content_type": contentType,
+		"bytes":        len(payload),
+		"body":         string(payload),
+	})
 }
 
 func (s *HTTPService) adminSearchTraces(w http.ResponseWriter, r *http.Request) {
