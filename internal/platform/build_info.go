@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 )
 
-const auditEngineRevision = "cyber-deny-qwen27b.v15"
+const auditEngineRevision = "cyber-deny-qwen27b.v32"
 
 type BuildInformation struct {
 	Version        string `json:"version"`
