@@ -21,24 +21,24 @@ func TestNormalizeCyberEvidenceGateV28RejectsTopicOnlyModelBlock(t *testing.T) {
 	}
 }
 
-func TestNormalizeCyberEvidenceGateV28AllowsDefensiveAssessmentWithoutHarm(t *testing.T) {
+func TestNormalizeCyberEvidenceGateV28KeepsActiveDefensiveScanBlock(t *testing.T) {
 	d := AuditDecision{
 		Decision:   DecisionBlock,
-		RiskCode:   "CYBER_NETWORK_SCAN",
-		Category:   "network_scan",
+		RiskCode:   "CYBER_SECURITY_TEST_DISABLED",
+		Category:   "security_testing",
 		Confidence: 0.98,
-		Reason:     "请求包含漏洞扫描",
+		Reason:     "请求明确发起漏洞扫描",
 		Evidence:   "对资产做漏洞扫描和暴露面检查",
 		Source:     "model",
 	}
-	text := "做资产盘点，对资产做漏洞扫描和暴露面检查，并跟踪漏洞修复后的复测结果。"
+	text := "做资产盘点，对自有资产做漏洞扫描和暴露面检查。"
 	got := normalizeCyberEvidenceGateV28(d, text, "")
-	if got.Decision != DecisionAllow {
-		t.Fatalf("defensive assessment without harmful follow-on must become provisional allow, got %#v", got)
+	if got.Decision != DecisionBlock {
+		t.Fatalf("active vulnerability scanning must remain blocked even in defensive/self-owned context, got %#v", got)
 	}
 }
 
-func TestNormalizeCyberEvidenceGateV28AllowsScanOnlyWithoutOwnershipWording(t *testing.T) {
+func TestNormalizeCyberEvidenceGateV28KeepsActivePortScanBlock(t *testing.T) {
 	d := AuditDecision{
 		Decision:   DecisionBlock,
 		RiskCode:   "CYBER_SECURITY_TEST_DISABLED",
@@ -49,8 +49,24 @@ func TestNormalizeCyberEvidenceGateV28AllowsScanOnlyWithoutOwnershipWording(t *t
 		Source:     "model",
 	}
 	got := normalizeCyberEvidenceGateV28(d, "使用 nmap 扫描目标端口并整理开放服务。", "")
+	if got.Decision != DecisionBlock {
+		t.Fatalf("active scan evidence must remain blocked, got %#v", got)
+	}
+}
+
+func TestNormalizeCyberEvidenceGateV28AllowsPassiveScanReportReview(t *testing.T) {
+	d := AuditDecision{
+		Decision:   DecisionBlock,
+		RiskCode:   "CYBER_SECURITY_TEST_DISABLED",
+		Category:   "security_testing",
+		Confidence: 0.97,
+		Reason:     "模型看到了扫描词",
+		Evidence:   "分析已有漏洞扫描报告",
+		Source:     "model",
+	}
+	got := normalizeCyberEvidenceGateV28(d, "分析已有漏洞扫描报告，总结高风险项和修复状态。", "")
 	if got.Decision != DecisionAllow {
-		t.Fatalf("scan-only evidence without concrete harmful follow-on must be unconfirmed/fail-open, got %#v", got)
+		t.Fatalf("passive review of an existing scan report must not be treated as an active scan, got %#v", got)
 	}
 }
 
@@ -119,7 +135,7 @@ func TestNormalizeCyberEvidenceGateV28DoesNotOverrideHardRules(t *testing.T) {
 	}
 }
 
-func TestDemoteGenericSecurityTestingRuleV28OnlyDemotesShippedPattern(t *testing.T) {
+func TestDemoteGenericSecurityTestingRuleV28DoesNotDemoteActiveScanBaseline(t *testing.T) {
 	var shipped compiledRule
 	found := false
 	for _, rule := range cyberDenyBaseline {
@@ -132,12 +148,20 @@ func TestDemoteGenericSecurityTestingRuleV28OnlyDemotesShippedPattern(t *testing
 	if !found {
 		t.Fatal("shipped security-testing baseline not found")
 	}
-	if !demoteGenericSecurityTestingRuleV28(shipped) {
-		t.Fatal("shipped generic scan rule must be demoted to semantic review")
+	if demoteGenericSecurityTestingRuleV28(shipped) {
+		t.Fatal("active security scan baseline must remain a hard veto")
 	}
-	custom := shipped
-	custom.Pattern = `(?i)custom-hard-scan-rule`
-	if demoteGenericSecurityTestingRuleV28(custom) {
-		t.Fatal("custom operator pattern must keep hard-rule precedence")
+}
+
+func TestCyberBaselineV32BlocksActiveScanButNotReportReview(t *testing.T) {
+	e := &AuditEngine{}
+	e.rules.Store([]compiledRule{})
+	blocked, _ := e.matchCyberDenyRules("ROLE=USER\n自有沙箱自动化扫描接口漏洞")
+	if blocked == nil || blocked.Decision != DecisionBlock || blocked.RiskCode != "CYBER_SECURITY_TEST_DISABLED" {
+		t.Fatalf("active security scan was not blocked: %#v", blocked)
+	}
+	allowed, _ := e.matchCyberDenyRules("ROLE=USER\n分析已有漏洞扫描报告，总结修复状态")
+	if allowed != nil {
+		t.Fatalf("passive scan-report review was hard-blocked: %#v", allowed)
 	}
 }
