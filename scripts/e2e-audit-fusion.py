@@ -39,5 +39,5 @@ for name,panel,arbiter,decision,status in [
     assert reviews[0]['fusion']['status']==status,(name,result)
     if name!='consensus':
         assert result.get('source') in {'verifier_uncertainty_fail_open_v29','model_error_fail_open_v29','model_uncertainty_fail_open_v29'},(name,result)
-    assert result['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v15', (name, result['gateway_build'])
+    assert result['gateway_build']['audit_engine']=='cyber-deny-qwen27b.v32', (name, result['gateway_build'])
 print('Fusion consensus and all unconfirmed disagreement/incomplete cases fail open with diagnostics')
