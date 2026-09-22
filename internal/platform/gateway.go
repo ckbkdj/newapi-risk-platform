@@ -315,6 +315,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	trace.RequestBytes = int64(len(body))
 	trace.Model = ExtractRequestedModel(body)
+	if g.cfg.TraceStoreRequestPayload && len(body) > 0 {
+		ciphertext, payloadErr := sealTraceRequestPayload(g.security, requestID, body)
+		if payloadErr != nil {
+			trace.Metadata["request_payload_stored"] = false
+			trace.Metadata["request_payload_error"] = "encryption_failed"
+			g.log.Warn("trace request payload encryption failed", "request_id", requestID, "error", payloadErr)
+		} else {
+			trace.RequestPayloadCiphertext = ciphertext
+			trace.Metadata["request_payload_stored"] = len(ciphertext) > 0
+			trace.Metadata["request_payload_bytes"] = len(body)
+			trace.Metadata["request_payload_ciphertext_bytes"] = len(ciphertext)
+			trace.Metadata["request_payload_format"] = "gzip+aes256gcm-v1"
+		}
+	}
 
 	trace.Metadata["audit_started"] = true
 	auditResult := g.audit.Audit(r.Context(), route, body)
