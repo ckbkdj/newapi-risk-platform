@@ -95,6 +95,7 @@ func (s *HTTPService) Handler() http.Handler {
 		admin.With(s.requireRole("admin")).Post("/api/admin/v1/cyber-rule-candidates/{id}/promote", s.adminPromoteCyberRuleCandidate)
 		admin.With(s.requireRole("operator")).Post("/api/admin/v1/audit/dry-run", s.adminAuditDryRun)
 		admin.Get("/api/admin/v1/traces", s.adminSearchTraces)
+		admin.Get("/api/admin/v1/traces/{requestID}/request", s.adminTraceRequestPayload)
 		admin.Get("/api/admin/v1/settings", s.adminGetSettings)
 		admin.With(s.requireRole("admin")).Put("/api/admin/v1/settings/storage", s.adminSaveStorageSettings)
 		admin.Get("/api/admin/v1/tracking-clients", s.adminListTrackingClients)
