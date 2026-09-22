@@ -67,6 +67,7 @@ type Config struct {
 	TraceQueueSize                 int
 	TraceBatchSize                 int
 	TraceFlushInterval             time.Duration
+	TraceStoreRequestPayload       bool
 	AllowPrivateUpstreams          bool
 	UpstreamTLSMinVersion          uint16
 	GlobalMaxConcurrency           int
@@ -133,6 +134,7 @@ func LoadConfig() (Config, error) {
 		TraceQueueSize:                 envInt("TRACE_QUEUE_SIZE", 32768),
 		TraceBatchSize:                 envInt("TRACE_BATCH_SIZE", 256),
 		TraceFlushInterval:             envDuration("TRACE_FLUSH_INTERVAL", 250*time.Millisecond),
+		TraceStoreRequestPayload:       envBool("TRACE_STORE_REQUEST_PAYLOAD", true),
 		AllowPrivateUpstreams:          envBool("ALLOW_PRIVATE_UPSTREAMS", false),
 		GlobalMaxConcurrency:           envInt("GLOBAL_MAX_CONCURRENCY", 4096),
 		TrackingClockSkew:              envDuration("TRACKING_CLOCK_SKEW", 5*time.Minute),
