@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"testing"
 )
@@ -155,6 +156,32 @@ func TestV26BareContinuationAdoptsPreviousExplicitUserOperation(t *testing.T) {
 		if !matched || evidence.matchedRaw == "" || unit.Kind != "user_adopted" {
 			t.Fatalf("bare continuation lost previous user operation follow=%q matched=%v unit=%+v evidence=%+v", follow, matched, unit, evidence)
 		}
+	}
+}
+
+func TestV32ProductionExtractionContinuationAdoptsActiveScan(t *testing.T) {
+	body, err := json.Marshal(map[string]any{
+		"messages": []map[string]string{
+			{"role": "user", "content": "Use nmap for an authorized scan"},
+			{"role": "assistant", "content": "noted"},
+			{"role": "user", "content": "Continue"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	extraction, err := extractCyberAuditTextContext(context.Background(), body, 1<<20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &AuditEngine{}
+	e.rules.Store([]compiledRule{})
+	decision, diagnostics, _, err := e.matchCyberDenyRulesContext(context.Background(), extraction.ruleText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision == nil || diagnostics == nil || decision.Decision != DecisionBlock || decision.RiskCode != "CYBER_SECURITY_TEST_DISABLED" {
+		t.Fatalf("continued active scan escaped hard rule: decision=%+v diagnostics=%+v ruleText=%q", decision, diagnostics, extraction.ruleText)
 	}
 }
 
