@@ -214,6 +214,9 @@
             <div class="trace-modal-card" role="dialog" aria-modal="true" aria-labelledby="trace-detail-title">
               <div class="panel-head"><h3 id="trace-detail-title">请求详情</h3><button id="trace-detail-close" class="btn btn-secondary" type="button">关闭</button></div>
               <div id="trace-detail-fields" class="trace-detail-grid"></div>
+              <div class="panel-head"><h3>完整用户输入</h3><button id="trace-request-load" class="btn btn-secondary" type="button">查看完整输入</button></div>
+              <div class="muted">请求正文按 PostgreSQL 追踪保留窗口保存，数据库中使用主密钥加密；仅在此处按需解密展示。</div>
+              <pre id="trace-detail-request" class="code">点击“查看完整输入”加载。</pre>
               <h3>清洗后的元数据</h3>
               <pre id="trace-detail-metadata" class="code"></pre>
             </div>
@@ -223,7 +226,7 @@
         <section id="view-storage" class="view" hidden>
           <div class="view-head"><div><h2>存储策略</h2><p>PostgreSQL 是 7 天默认检索窗口；Kafka 用于长期事件流，Redis Stream 用作故障队列。</p></div></div>
           <div class="grid split">
-            <form id="storage-form" class="form-card"><h3>保留设置</h3><div class="field"><label for="retention-days">PostgreSQL 保留天数</label><input id="retention-days" type="number" min="1" max="365" value="7"></div><div class="field"><label for="kafka-retention-days">Kafka Topic 保留天数</label><input id="kafka-retention-days" type="number" min="1" max="3650" value="30"><small>运行账户需要 Kafka ALTER_CONFIGS 权限。</small></div><div class="field"><label for="redis-stream-maxlen">Redis DLQ 最大事件数</label><input id="redis-stream-maxlen" type="number" min="1000" value="100000"></div><div class="notice warning">原始提示词存储被平台硬性关闭，页面不能开启，避免风控日志形成敏感内容仓库。</div><div class="form-actions"><button class="btn btn-primary" type="submit">保存并应用</button></div></form>
+            <form id="storage-form" class="form-card"><h3>保留设置</h3><div class="field"><label for="retention-days">PostgreSQL 保留天数</label><input id="retention-days" type="number" min="1" max="365" value="7"></div><div class="field"><label for="kafka-retention-days">Kafka Topic 保留天数</label><input id="kafka-retention-days" type="number" min="1" max="3650" value="30"><small>运行账户需要 Kafka ALTER_CONFIGS 权限。</small></div><div class="field"><label for="redis-stream-maxlen">Redis DLQ 最大事件数</label><input id="redis-stream-maxlen" type="number" min="1000" value="100000"></div><div class="notice warning">Gateway 请求正文默认随 PostgreSQL 追踪窗口加密保留，用于审计复盘；列表和 Kafka 不携带明文正文，仅在请求详情中按需解密查看。</div><div class="form-actions"><button class="btn btn-primary" type="submit">保存并应用</button></div></form>
             <div class="card"><h3>当前配置</h3><div id="storage-status" class="status-grid"></div></div>
           </div>
         </section>
@@ -564,11 +567,36 @@
         ];
         $('trace-detail-fields').innerHTML = fields.map(([label,value]) => `<div><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong></div>`).join('');
         $('trace-detail-metadata').textContent = JSON.stringify(item.metadata || {},null,2);
+        $('trace-request-load').dataset.requestId = item.request_id || '';
+        $('trace-request-load').disabled = item.metadata?.request_payload_stored !== true;
+        $('trace-detail-request').textContent = item.metadata?.request_payload_stored === true
+          ? '点击“查看完整输入”加载。'
+          : '该记录没有保留完整请求正文（升级前记录或已关闭 TRACE_STORE_REQUEST_PAYLOAD）。';
         $('trace-detail').hidden = false;
         document.body.classList.add('modal-open');
       }
+      async function loadTraceRequestPayload() {
+        const requestId = $('trace-request-load').dataset.requestId || '';
+        if (!requestId) return;
+        $('trace-request-load').disabled = true;
+        $('trace-detail-request').textContent = '正在解密并加载完整请求…';
+        try {
+          const data = await api(`/api/admin/v1/traces/${encodeURIComponent(requestId)}/request`);
+          let body = String(data.body ?? '');
+          if (data.content_type === 'application/json') {
+            try { body = JSON.stringify(JSON.parse(body), null, 2); } catch {}
+          }
+          $('trace-detail-request').textContent = body || '(空请求正文)';
+        } catch (error) {
+          $('trace-detail-request').textContent = error.message || '完整请求加载失败';
+          toast(error.message || '完整请求加载失败','error');
+        } finally {
+          $('trace-request-load').disabled = false;
+        }
+      }
       function closeTraceDetail() {
         $('trace-detail').hidden = true;
+        $('trace-detail-request').textContent = '';
         document.body.classList.remove('modal-open');
       }
       function filterByTraceUser(index) {
@@ -624,6 +652,7 @@
       $('trace-presets').addEventListener('click',event=>{const button=event.target.closest('[data-trace-hours]');if(button)setTraceRange(Number(button.dataset.traceHours),true);});
       $('trace-prev').addEventListener('click',()=>changeTracePage(-1));$('trace-next').addEventListener('click',()=>changeTracePage(1));$('trace-export').addEventListener('click',exportTraceCSV);
       $('traces-table').addEventListener('click',event=>{const detail=event.target.closest('[data-trace-detail-index]');const user=event.target.closest('[data-trace-user-index]');if(detail)openTraceDetail(detail.dataset.traceDetailIndex);if(user)filterByTraceUser(user.dataset.traceUserIndex);});
+      $('trace-request-load').addEventListener('click',()=>loadTraceRequestPayload().catch(error=>toast(error.message,'error')));
       $('trace-detail-close').addEventListener('click',closeTraceDetail);$('trace-detail').addEventListener('click',event=>{if(event.target===$('trace-detail'))closeTraceDetail();});document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('trace-detail').hidden)closeTraceDetail();});
       $('storage-form').addEventListener('submit',saveStorage);$('client-form').addEventListener('submit',saveClient);$('clients-table').addEventListener('click',event=>{const edit=event.target.closest('[data-client-edit]');if(edit)editClient(edit.dataset.clientEdit);});
       $('copy-snippet').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(snippet);toast('签名示例已复制');}catch{toast('浏览器拒绝复制，请手动选择','error');}});
