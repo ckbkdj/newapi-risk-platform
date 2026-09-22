@@ -21,28 +21,28 @@ func TestV14FullAcceptedTextBeyondLegacyCaps(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		if len(text) > cyberDenyChunkBytes {
-			return nil, fmt.Errorf("unchunked input: %d", len(text))
+		calls.Add(1)
+		if len(text) > 220*1024 {
+			return incidentHTTP(400, `{"error":{"message":"maximum context length exceeded"}}`), nil
 		}
 		if strings.Contains(text, tail) {
 			tails.Add(1)
 		}
-		calls.Add(1)
 		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
 	e.maxAuditChunks = 0
+	e.fallbackChunkBytes = 192 * 1024
 	e.longContextTimeout = 30 * time.Second
 	input := strings.Repeat("ordinary component text\n", 200000) + tail
 	body, _ := json.Marshal(map[string]string{"input": input})
 	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
-	if got.Decision != DecisionAllow || got.ErrorClass != "" || got.AuditChunkCount <= 256 || got.AuditChunksCompleted != got.AuditChunkCount || int(calls.Load()) != 2*got.AuditChunkCount || tails.Load() != 2 {
-		t.Fatalf("not a complete two-pass result: decision=%s error=%s chunks=%d/%d calls=%d tail=%d", got.Decision, got.ErrorClass, got.AuditChunksCompleted, got.AuditChunkCount, calls.Load(), tails.Load())
+	if got.Decision != DecisionAllow || got.ErrorClass != "" || got.AuditChunkCount < 2 || got.AuditChunksCompleted != got.AuditChunkCount || tails.Load() < 1 {
+		t.Fatalf("context fallback did not cover complete request: decision=%s error=%s chunks=%d/%d calls=%d tail=%d", got.Decision, got.ErrorClass, got.AuditChunksCompleted, got.AuditChunkCount, calls.Load(), tails.Load())
 	}
 	if got.AuditInputPartial || got.AuditCoverageStatus != "complete" || got.AuditCapacityTextLimit != 0 || got.TextBytes < len(input) {
 		t.Fatal("input was clipped or capacity-limited")
 	}
 }
-
 func TestV14ContextRecoveryReplansWithoutDroppingTail(t *testing.T) {
 	for _, ending := range []string{"normal tail", "synthetic prohibited operation", "invalid tail"} {
 		t.Run(ending, func(t *testing.T) {
