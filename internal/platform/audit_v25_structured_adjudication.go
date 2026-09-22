@@ -313,6 +313,11 @@ func semanticOnlyRuleMatchV26(rule compiledRule, unit auditRuleUnit, evidence cy
 	if rule.Code == "CYBER_UNTRUSTED_CONTEXT_CLAIM" || ((rule.Action == DecisionReview || rule.Action == DecisionAllow) && precisionRule(rule)) {
 		return "lexical_guard_requires_semantic_review"
 	}
+	if strings.EqualFold(strings.TrimSpace(rule.Code), "CYBER_SECURITY_TEST_DISABLED") &&
+		passiveSecurityScanReferenceV32.MatchString(unit.Text) &&
+		!activeSecurityScanV32.MatchString(unit.Text) {
+		return "scan_report_or_result_analysis_requires_semantic_review"
+	}
 	if descriptiveOrConditionalMentionV26(unit.Text, evidence) {
 		return "descriptive_or_conditional_mention_requires_semantic_review"
 	}
