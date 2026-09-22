@@ -59,7 +59,6 @@ func (s *Store) InsertTraceBatch(ctx context.Context, events []TraceEvent) error
 	return transaction.Commit(ctx)
 }
 
-
 func (s *Store) GetTraceRequestPayloadCiphertext(ctx context.Context, requestID string) ([]byte, error) {
 	var ciphertext []byte
 	err := s.pool.QueryRow(ctx, `SELECT request_payload_ciphertext
