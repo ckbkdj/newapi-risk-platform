@@ -80,6 +80,7 @@ func (e *AuditEngine) matchCyberDenyRules(text string) (*AuditDecision, *RuleMat
 func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text string) (*AuditDecision, *RuleMatchDiagnostics, []RuleSuppressionDiagnostic, error) {
 	loaded, _ := e.rules.Load().([]compiledRule)
 	rules := append(append([]compiledRule(nil), loaded...), cyberDenyBaseline...)
+	preparedUnits, fullLower, fullFolded := prepareCyberRuleTextV31(text)
 	var weak []RuleSuppressionDiagnostic
 	for i, r := range rules {
 		if err := ctx.Err(); err != nil {
@@ -93,7 +94,7 @@ func (e *AuditEngine) matchCyberDenyRulesContext(ctx context.Context, text strin
 		if r.Code == "CYBER_SECURITY_EVASION" && precisionRule(r) {
 			r.regularExpression = completeSecurityTarget
 		}
-		evidence, matched, unit, suppressions, err := matchCyberRuleStructuredV25(ctx, r, text)
+		evidence, matched, unit, suppressions, err := matchCyberRuleStructuredPreparedV31(ctx, r, text, preparedUnits, fullLower, fullFolded)
 		for _, item := range suppressions {
 			if len(weak) < 16 {
 				weak = append(weak, item)
