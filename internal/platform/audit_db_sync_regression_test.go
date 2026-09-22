@@ -106,10 +106,21 @@ func TestDBSyncMixedForbiddenOperationsKeepRuleVeto(t *testing.T) {
 }
 
 func TestDBSyncEarlyChunkBlockDoesNotClaimComplete(t *testing.T) {
-	e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
-		return incidentHTTP(200, incidentDecision(DecisionBlock, "synthetic prohibited operation")), nil
+	e, p := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
+		text, _, err := incidentPayload(r)
+		if err != nil {
+			return nil, err
+		}
+		if len(text) > 20*1024 {
+			return incidentHTTP(400, `{"error":{"message":"maximum context length exceeded"}}`), nil
+		}
+		if strings.Contains(text, "synthetic prohibited operation") {
+			return incidentHTTP(200, incidentDecision(DecisionBlock, "synthetic prohibited operation")), nil
+		}
+		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
 	e.chunkConcurrency = 1
+	e.fallbackChunkBytes = 16 * 1024
 	body, _ := json.Marshal(map[string]string{"input": "synthetic prohibited operation\n" + strings.Repeat("normal business text\n", 5000)})
 	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, body)
 	meta := map[string]any{}
@@ -119,20 +130,18 @@ func TestDBSyncEarlyChunkBlockDoesNotClaimComplete(t *testing.T) {
 	}
 }
 
-func TestDBSyncSixtyChunksRetainBothAudits(t *testing.T) {
+func TestDBSyncLargeCleanRequestStaysSinglePass(t *testing.T) {
 	var calls atomic.Int32
 	e, p := incidentEngine(t, func(*http.Request) (*http.Response, error) {
 		calls.Add(1)
 		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
-	e.chunkOverlapBytes = 0
 	ctx := context.WithValue(context.Background(), cyberDenyContextKey{}, true)
-	d, _, m, err := e.callModelWithFailover(ctx, p, strings.Repeat("z", cyberDenyChunkBytes*59+100))
-	if m.CallMetadata.ChunkCount != 60 || d.Decision != DecisionAllow || calls.Load() != 120 || err != nil {
-		t.Fatalf("60-chunk two-pass audit cannot finish: chunks=%d decision=%s error=%v calls=%d", m.CallMetadata.ChunkCount, d.Decision, err, calls.Load())
+	d, _, m, err := e.callModelWithFailover(ctx, p, strings.Repeat("z", 16*1024*59+100))
+	if m.CallMetadata.ChunkCount != 1 || m.CallMetadata.Mode != "single" || d.Decision != DecisionAllow || calls.Load() != 1 || err != nil {
+		t.Fatalf("large clean request did not stay single-pass: chunks=%d mode=%s decision=%s error=%v calls=%d", m.CallMetadata.ChunkCount, m.CallMetadata.Mode, d.Decision, err, calls.Load())
 	}
 }
-
 func TestDBSyncAdmissionIsNotAnAllowlist(t *testing.T) {
 	d := AuditDecision{Decision: DecisionBlock, RiskCode: "CYBER_CREDENTIAL_EXFIL", Category: "credential_access"}
 	for _, source := range []string{
