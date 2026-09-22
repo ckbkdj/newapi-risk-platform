@@ -149,7 +149,7 @@ func weakDevelopmentRuleEvidence(r compiledRule, text string, ev cyberRuleEviden
 	// tool named in the search expression. Evaluate this broad engineering escape
 	// hatch only inside the clause that actually contains the matched evidence;
 	// neighboring "logs/records/summarize" text must not demote a later operation.
-	if r.ID == 0 && (r.Category == "security_testing" || r.Category == "reverse_engineering" || r.Category == "exploitation" || r.Category == "system_configuration") {
+	if r.ID == 0 && (r.Category == "reverse_engineering" || r.Category == "exploitation" || r.Category == "system_configuration") {
 		clause, clauseEvidence := cyberEvidenceClauseV27(text, ev)
 		if engineeringEvidenceAt(clause, clauseEvidence.start, clauseEvidence.end) || developmentDataEvidenceAt(clause, clauseEvidence.start, clauseEvidence.end) {
 			return "ordinary_engineering_command_requires_semantic_audit"
