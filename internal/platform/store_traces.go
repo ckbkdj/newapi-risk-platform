@@ -66,6 +66,9 @@ func (s *Store) GetTraceRequestPayloadCiphertext(ctx context.Context, requestID 
 		FROM request_traces
 		WHERE request_id=$1 AND request_payload_ciphertext IS NOT NULL
 		ORDER BY created_at DESC LIMIT 1`, requestID).Scan(&ciphertext)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
 	return ciphertext, err
 }
 
