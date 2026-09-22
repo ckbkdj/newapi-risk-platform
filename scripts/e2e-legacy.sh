@@ -655,7 +655,7 @@ assert qm["audit_model_confidence"] is None
 assert qm["audit_http_calls"] == 1, "clean qualitative allow must remain single-pass"
 assert qm["audit_semantic_review_calls"] == 0, "clean qualitative allow unexpectedly invoked verifier"
 assert qm["audit_output_contract"] == "risk_audit_output.v2"
-assert qm["gateway_build"]["audit_engine"] == "cyber-deny-qwen27b.v15"
+assert qm["gateway_build"]["audit_engine"] == "cyber-deny-qwen27b.v32"
 assert "allow_none_risk_code" in qm["audit_output_normalizations"]
 
 structured_recovery = next((item for item in items if item.get("request_id") == "e2e-audit-structured-recovery"), None)
