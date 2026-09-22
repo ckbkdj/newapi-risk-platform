@@ -94,7 +94,7 @@ func (s *HTTPService) adminTraceRequestPayload(w http.ResponseWriter, r *http.Re
 		"view_trace_request_payload",
 		"request_trace",
 		requestID,
-		middleware.GetReqID(r.Context()),
+		requestID,
 		remoteIP(r),
 		map[string]any{"payload_bytes": len(payload)},
 	)
