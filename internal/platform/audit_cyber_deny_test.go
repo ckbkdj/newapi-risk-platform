@@ -93,9 +93,11 @@ func TestCyberDenyOrdinaryAllowRequiresBoundedSecondPass(t *testing.T) {
 	}
 }
 
-func TestCyberDenyQwenProactiveBudget(t *testing.T) {
+func TestCyberDenyQwenUsesSinglePassUntilContextLimit(t *testing.T) {
 	var largest atomic.Int32
+	var calls atomic.Int32
 	e, p := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
 		text, _, err := incidentPayload(r)
 		if err != nil {
 			return nil, err
@@ -106,8 +108,8 @@ func TestCyberDenyQwenProactiveBudget(t *testing.T) {
 	})
 	body, _ := json.Marshal(map[string]string{"input": strings.Repeat("ordinary label changes. ", 1800)})
 	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID, FailClosed: true}, body)
-	if got.Decision != DecisionAllow || largest.Load() > 16384 || got.AuditChunkCount < 2 {
-		t.Fatalf("oversized Qwen audit: %+v largest=%d", got, largest.Load())
+	if got.Decision != DecisionAllow || got.AuditChunkCount != 1 || calls.Load() != 1 || largest.Load() <= 16384 {
+		t.Fatalf("clean long request did not use one full-context audit call: %+v largest=%d calls=%d", got, largest.Load(), calls.Load())
 	}
 }
 
