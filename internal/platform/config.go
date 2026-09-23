@@ -127,7 +127,7 @@ func LoadConfig() (Config, error) {
 		AuditChunkOverlapBytes:         envInt("AUDIT_CHUNK_OVERLAP_BYTES", 4096),
 		AuditChunkConcurrency:          envInt("AUDIT_CHUNK_CONCURRENCY", 2),
 		AuditMaxChunks:                 envInt("AUDIT_MAX_CHUNKS", 0),
-		AuditRequestTimeout:            envDuration("AUDIT_REQUEST_TIMEOUT", 0),
+		AuditRequestTimeout:            envDuration("AUDIT_REQUEST_TIMEOUT", 20*time.Second),
 		AuditModelConcurrency:          envInt("AUDIT_MODEL_CONCURRENCY", defaultAuditModelConcurrency),
 		SSELineMaxBytes:                envInt("SSE_LINE_MAX_BYTES", 1024*1024),
 		SSEHeartbeatInterval:           envDuration("SSE_HEARTBEAT_INTERVAL", 15*time.Second),
