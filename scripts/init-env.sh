@@ -95,7 +95,7 @@ audit_defaults = {
     "AUDIT_CHUNK_OVERLAP_BYTES": "4096",
     "AUDIT_CHUNK_CONCURRENCY": "4",
     "AUDIT_MAX_CHUNKS": "0",
-    "AUDIT_REQUEST_TIMEOUT": "0s",
+    "AUDIT_REQUEST_TIMEOUT": "20s",
     "AUDIT_MODEL_CONCURRENCY": "4",
     "SSE_HEARTBEAT_INTERVAL": "15s",
     "TRACE_STORE_REQUEST_PAYLOAD": "true",
@@ -122,6 +122,11 @@ for key, default in audit_defaults.items():
         should_set = True
         warnings.append(
             "AUDIT_MODEL_CONCURRENCY legacy default was reduced from 16 to 4 to avoid oversubscribing the audit model and inflating single-request latency."
+        )
+    if key == "AUDIT_REQUEST_TIMEOUT" and current in {"0", "0s"}:
+        should_set = True
+        warnings.append(
+            "AUDIT_REQUEST_TIMEOUT legacy unlimited value was changed to 20s so audit uncertainty fails open before downstream clients time out."
         )
     if key == "AUDIT_MAX_CHUNKS" and current in {"64", "256"}:
         should_set = True
