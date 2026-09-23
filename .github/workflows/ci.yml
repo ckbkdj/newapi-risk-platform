@@ -69,7 +69,7 @@ jobs:
               'AUDIT_CHUNK_OVERLAP_BYTES': '4096',
               'AUDIT_CHUNK_CONCURRENCY': '4',
               'AUDIT_MAX_CHUNKS': '0',
-              'AUDIT_REQUEST_TIMEOUT': '0s',
+              'AUDIT_REQUEST_TIMEOUT': '20s',
               'AUDIT_MODEL_CONCURRENCY': '4',
           }
           for key, value in expected.items():
