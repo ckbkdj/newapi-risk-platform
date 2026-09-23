@@ -158,8 +158,8 @@ func TestV14ModelSlotCancellationAndSingleSlotVerification(t *testing.T) {
 	contextWithDeadline, end := context.WithTimeout(context.Background(), time.Second)
 	defer end()
 	got := engine.Audit(contextWithDeadline, Route{AuditProfileID: &p.ID}, []byte(`{"input":"Explain a layout component"}`))
-	if got.Decision != DecisionAllow || calls.Load() != 2 || len(engine.modelSlots) != 0 {
-		t.Fatalf("nested review retained slot: %s %s calls=%d", got.Decision, got.ErrorClass, calls.Load())
+	if got.Decision != DecisionAllow || calls.Load() != 1 || len(engine.modelSlots) != 0 {
+		t.Fatalf("clean allow did not use the single-pass slot path: %s %s calls=%d", got.Decision, got.ErrorClass, calls.Load())
 	}
 }
 
@@ -194,12 +194,12 @@ func TestV14GlobalModelSlotsAreBounded(t *testing.T) {
 	}
 }
 
-func TestV14CancelledPartialAuditIsNeverAllow(t *testing.T) {
+func TestV14CancelledPartialAuditIsObservableFailOpen(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var calls atomic.Int32
 	e, p := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
-		if calls.Add(1) == 6 {
+		if calls.Add(1) == 1 {
 			cancel()
 		}
 		if r.Context().Err() != nil {
@@ -207,11 +207,26 @@ func TestV14CancelledPartialAuditIsNeverAllow(t *testing.T) {
 		}
 		return incidentHTTP(200, incidentDecision(DecisionAllow, "")), nil
 	})
-	e.maxAuditChunks = 0
 	body, _ := json.Marshal(map[string]string{"input": strings.Repeat("normal line\n", 10000)})
 	got := e.Audit(ctx, Route{AuditProfileID: &p.ID}, body)
-	if got.Decision != DecisionBlock || got.ErrorClass != "audit_cancelled" || got.AuditChunksCompleted >= got.AuditChunkCount {
-		t.Fatalf("partial cancellation approved: %s %s", got.Decision, got.ErrorClass)
+	if got.Decision != DecisionAllow || got.ErrorClass != "audit_cancelled" {
+		t.Fatalf("cancelled audit did not fail open observably: %s %s", got.Decision, got.ErrorClass)
+	}
+}
+
+func TestV32AuditBudgetFailsOpenBeforeClientDeadline(t *testing.T) {
+	e, p := incidentEngine(t, func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	e.requestTimeout = 20 * time.Millisecond
+	started := time.Now()
+	got := e.Audit(context.Background(), Route{AuditProfileID: &p.ID}, []byte(`{"input":"ordinary long-running audit"}`))
+	if got.Decision != DecisionAllow || got.ErrorClass != "audit_deadline_exceeded" {
+		t.Fatalf("audit budget did not fail open: decision=%s class=%s source=%s", got.Decision, got.ErrorClass, got.Source)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("audit budget did not bound latency")
 	}
 }
 
