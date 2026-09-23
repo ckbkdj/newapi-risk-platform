@@ -331,6 +331,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	trace.Metadata["audit_started"] = true
+	if g.cfg.AuditRequestTimeout > 0 {
+		trace.Metadata["audit_budget_ms"] = g.cfg.AuditRequestTimeout.Milliseconds()
+	}
 	auditResult := g.audit.Audit(r.Context(), route, body)
 	trace.AuditLatencyMS = auditResult.Latency.Milliseconds()
 	trace.PromptHMAC = auditResult.PromptHMAC
@@ -492,6 +495,21 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeRiskError(w, g.cfg.ErrorHTTPStatus, requestID, riskCode, message)
 		return
+	}
+
+	if err := r.Context().Err(); err != nil {
+		// The downstream caller disappeared while audit was running. Never turn
+		// a fail-open audit result into an orphaned upstream request.
+		trace.Metadata["failure_stage"] = "client_disconnect"
+		trace.Metadata["error_class"] = "CLIENT_DISCONNECT"
+		trace.Metadata["client_disconnect_during_audit"] = true
+		trace.Metadata["client_disconnect_after_ms"] = time.Since(started).Milliseconds()
+		finish("error", "CLIENT_DISCONNECT", 499, 0, 0)
+		return
+	}
+	if auditResult.Decision == DecisionAllow && auditResult.ErrorClass == "audit_deadline_exceeded" {
+		trace.Metadata["audit_timeout_fail_open"] = true
+		trace.Metadata["audit_timeout_fail_open_after_ms"] = trace.AuditLatencyMS
 	}
 
 	timeout := time.Duration(route.RequestTimeoutMS) * time.Millisecond
