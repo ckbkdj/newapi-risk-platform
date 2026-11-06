@@ -73,7 +73,7 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 			"choices": []any{map[string]any{
 				"finish_reason": "stop",
 				"message": map[string]any{
-					"role": "assistant",
+					"role":    "assistant",
 					"content": `{"decision":"allow","risk_code":"","category":"benign","confidence":0.99,"reason":"editor_system_prompt_was_forwarded","evidence":""}`,
 				},
 			}},
