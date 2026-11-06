@@ -53,7 +53,8 @@ func cyberDenyActive(ctx context.Context) bool {
 }
 
 func cyberDenyProfile(p AuditProfile) AuditProfile {
-	p.SystemPrompt = CyberDenyAuditSystemPrompt
+	// Keep operator-authored supplemental instructions intact. The model request
+	// always starts with CyberDenyAuditSystemPrompt, regardless of this field.
 	p.FailClosed = true
 	extra := auditProfileExtra(p)
 	if extra == nil {
