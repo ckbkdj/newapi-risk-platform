@@ -13,7 +13,7 @@ func TestAuditProfileEditorCustomPromptPreservesCyberPolicy(t *testing.T) {
 	engine := &AuditEngine{}
 	for _, tc := range []struct {
 		name, prompt string
-		wantCustom bool
+		wantCustom   bool
 	}{
 		{name: "empty"},
 		{name: "legacy built-in", prompt: CyberDenyAuditSystemPrompt},
