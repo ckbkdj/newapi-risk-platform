@@ -119,9 +119,12 @@ func TestAuditProfileEditorVerificationThresholdAndStrategy(t *testing.T) {
 	}
 	for _, weak := range []bool{false, true} {
 		mode := "false"
-		if weak { mode = "true" }
+		if weak {
+			mode = "true"
+		}
 		profile := cyberDenyProfile(AuditProfile{Extra: json.RawMessage(`{"_risk_verify_weak_allows":` + mode + `}`)})
-		if auditProfileExtra(profile)["_risk_verify_weak_allows"] != weak { t.Fatalf("low confidence review mode lost: %v", weak) }
+		if auditProfileExtra(profile)["_risk_verify_weak_allows"] != weak {
+			t.Fatalf("low confidence review mode lost: %v", weak)
+		}
 	}
-
 }
