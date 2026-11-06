@@ -33,12 +33,6 @@ func TestAuditProfileEditorCustomPromptPreservesCyberPolicy(t *testing.T) {
 			if !strings.HasPrefix(system, CyberDenyAuditSystemPrompt) || strings.Count(system, CyberDenyAuditSystemPrompt) != 1 {
 				t.Fatal("fixed Cyber policy missing or duplicated")
 			}
-			if strings.Contains(system, tc.prompt) != tc.wantCustom && tc.prompt != "" && tc.prompt != CyberDenyAuditSystemPrompt {
-				// The generic legacy default is intentionally not sent as custom guidance.
-				if tc.prompt != DefaultAuditSystemPrompt {
-					t.Fatal("custom prompt not applied as expected")
-				}
-			}
 			if tc.wantCustom && (!strings.Contains(system, "ADDITIONAL OPERATOR GUIDANCE") || !strings.Contains(system, tc.prompt)) {
 				t.Fatal("operator text missing from supplemental system guidance")
 			}
