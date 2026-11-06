@@ -74,6 +74,8 @@ func TestAuditProfileEditorWebControls(t *testing.T) {
 	for _, required := range []string{
 		`id="profile-model-options"`,
 		`value="cyber_deny_verify_all"`,
+		`value="cyber_deny_threshold"`,
+		`extra._risk_verify_weak_allows=$('profile-policy-mode').value`,
 		`extra._risk_verify_clean_allows=$('profile-policy-mode').value`,
 		`id="profile-threshold" type="number"`,
 		`editableProfileExtra(extra)`,
@@ -89,19 +91,20 @@ func TestAuditProfileEditorWebControls(t *testing.T) {
 // Operator UI settings have real effects without replacing hard Cyber vetoes.
 func TestAuditProfileEditorVerificationThresholdAndStrategy(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name                  string
 		threshold, confidence float64
-		decision string
-		want bool
+		decision              string
+		want                  bool
 	}{
 		{name: "below threshold", threshold: 0.65, confidence: 0.64, decision: DecisionAllow, want: true},
 		{name: "at threshold", threshold: 0.65, confidence: 0.65, decision: DecisionAllow},
 		{name: "above threshold", threshold: 0.65, confidence: 0.99, decision: DecisionAllow},
 		{name: "disabled threshold", threshold: 0, confidence: 0.2, decision: DecisionAllow},
 		{name: "block stays terminal", threshold: 0.95, confidence: 0.1, decision: DecisionBlock},
+		{name: "qualitative allow has no numeric threshold", threshold: 0.65, confidence: 0, decision: DecisionAllow},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := cyberLowConfidenceAllowNeedsVerification(AuditProfile{BlockThreshold: tc.threshold}, AuditDecision{Decision: tc.decision, Confidence: tc.confidence})
+			got := cyberLowConfidenceAllowNeedsVerification(AuditProfile{BlockThreshold: tc.threshold}, AuditDecision{Decision: tc.decision, Confidence: tc.confidence, ConfidenceKind: map[string]string{"qualitative allow has no numeric threshold": "qualitative"}[tc.name]})
 			if got != tc.want {
 				t.Fatalf("threshold trigger got=%v want=%v", got, tc.want)
 			}
@@ -114,4 +117,11 @@ func TestAuditProfileEditorVerificationThresholdAndStrategy(t *testing.T) {
 			t.Fatalf("strategy was not preserved under fixed Cyber policy: %+v", extra)
 		}
 	}
+	for _, weak := range []bool{false, true} {
+		mode := "false"
+		if weak { mode = "true" }
+		profile := cyberDenyProfile(AuditProfile{Extra: json.RawMessage(`{"_risk_verify_weak_allows":` + mode + `}`)})
+		if auditProfileExtra(profile)["_risk_verify_weak_allows"] != weak { t.Fatalf("low confidence review mode lost: %v", weak) }
+	}
+
 }
