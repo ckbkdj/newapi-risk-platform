@@ -67,14 +67,51 @@ func TestAuditProfileEditorWebControls(t *testing.T) {
 		!strings.Contains(html, `id="profile-system-prompt" maxlength="65536"`) {
 		t.Fatal("admin system prompt is not editable")
 	}
+	if strings.Contains(html, `id="profile-threshold" disabled`) ||
+		strings.Contains(html, `id="profile-policy-mode" disabled`) {
+		t.Fatal("review threshold or audit strategy selector is still locked")
+	}
 	for _, required := range []string{
 		`id="profile-model-options"`,
+		`value="cyber_deny_verify_all"`,
+		`extra._risk_verify_clean_allows=$('profile-policy-mode').value`,
+		`id="profile-threshold" type="number"`,
 		`editableProfileExtra(extra)`,
 		`protectedProfileExtras.has(key)`,
 		`额外参数必须是 JSON 对象`,
 	} {
 		if !strings.Contains(html, required) {
 			t.Fatalf("model editor regression: missing %q", required)
+		}
+	}
+}
+
+// Operator UI settings have real effects without replacing hard Cyber vetoes.
+func TestAuditProfileEditorVerificationThresholdAndStrategy(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		threshold, confidence float64
+		decision string
+		want bool
+	}{
+		{name: "below threshold", threshold: 0.65, confidence: 0.64, decision: DecisionAllow, want: true},
+		{name: "at threshold", threshold: 0.65, confidence: 0.65, decision: DecisionAllow},
+		{name: "above threshold", threshold: 0.65, confidence: 0.99, decision: DecisionAllow},
+		{name: "disabled threshold", threshold: 0, confidence: 0.2, decision: DecisionAllow},
+		{name: "block stays terminal", threshold: 0.95, confidence: 0.1, decision: DecisionBlock},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cyberLowConfidenceAllowNeedsVerification(AuditProfile{BlockThreshold: tc.threshold}, AuditDecision{Decision: tc.decision, Confidence: tc.confidence})
+			if got != tc.want {
+				t.Fatalf("threshold trigger got=%v want=%v", got, tc.want)
+			}
+		})
+	}
+	for _, enhanced := range []bool{false, true} {
+		profile := cyberDenyProfile(AuditProfile{Extra: json.RawMessage(`{"_risk_verify_clean_allows":` + map[bool]string{true: "true", false: "false"}[enhanced] + `,"_risk_policy_mode":"legacy"}`)})
+		extra := auditProfileExtra(profile)
+		if extra["_risk_verify_clean_allows"] != enhanced || extra["_risk_policy_mode"] != cyberDenyMode || !profile.FailClosed {
+			t.Fatalf("strategy was not preserved under fixed Cyber policy: %+v", extra)
 		}
 	}
 }
