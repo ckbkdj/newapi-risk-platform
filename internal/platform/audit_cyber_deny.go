@@ -145,7 +145,7 @@ func cyberDenyVerdict(d AuditDecision) (AuditDecision, error) {
 // The editable legacy block_threshold now controls only additional allow
 // verification; hard rule/model denials remain independent of this value.
 func cyberLowConfidenceAllowNeedsVerification(profile AuditProfile, d AuditDecision) bool {
-	return d.Decision == DecisionAllow && profile.BlockThreshold > 0 && d.Confidence < profile.BlockThreshold
+	return d.Decision == DecisionAllow && d.ConfidenceKind != "qualitative" && profile.BlockThreshold > 0 && d.Confidence < profile.BlockThreshold
 }
 
 func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfile, text, source string) (AuditDecision, error) {
@@ -183,7 +183,8 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 	verifyCleanAllows, _ := extra["_risk_verify_clean_allows"].(bool)
 	// Operator-set threshold controls an additional verification pass for a low-
 	// confidence primary allow. It never converts a confirmed Cyber block to allow.
-	lowConfidenceAllow := cyberLowConfidenceAllowNeedsVerification(profile, candidate)
+	verifyWeakAllows, _ := extra["_risk_verify_weak_allows"].(bool)
+	lowConfidenceAllow := verifyWeakAllows && cyberLowConfidenceAllowNeedsVerification(profile, candidate)
 	if !required && !fusionEnabled && !verifierConfigured && !verifyCleanAllows && !lowConfidenceAllow {
 		return cyberDenyVerdict(candidate)
 	}
