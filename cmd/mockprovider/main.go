@@ -54,6 +54,32 @@ func auditHandler(w http.ResponseWriter, r *http.Request) {
 	if mockFullRequestV14(w, request) || mockScriptV15(w, request) {
 		return
 	}
+	// Test-only fixture: prove that saved operator system guidance reaches the
+	// model request. Normal mock requests are not affected by this model alias.
+	if request.Model == "audit-editor-prompt-probe" {
+		found := false
+		for _, message := range request.Messages {
+			content, ok := message.Content.(string)
+			if ok && strings.EqualFold(message.Role, "system") && strings.Contains(content, "EDITOR_SYSTEM_GUIDANCE_PROBE") {
+				found = true
+			}
+		}
+		if !found {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "editor system guidance not forwarded"}})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "audit-editor-prompt-probe",
+			"choices": []any{map[string]any{
+				"finish_reason": "stop",
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": `{"decision":"allow","risk_code":"","category":"benign","confidence":0.99,"reason":"editor_system_prompt_was_forwarded","evidence":""}`,
+				},
+			}},
+		})
+		return
+	}
 	text := strings.ToLower(messageText(request))
 	rawUserText := userMessageText(request)
 	userText := strings.ToLower(rawUserText)

@@ -43,7 +43,14 @@ func (e *AuditEngine) auditMessagesWithPlan(profile AuditProfile, text string, p
 		systemPrompt = DefaultAuditSystemPrompt
 	}
 	if auditProfileExtra(profile)["_risk_policy_mode"] == cyberDenyMode {
-		systemPrompt = CyberDenyAuditSystemPrompt + "\n" + auditOutputPlanDirective(plan)
+		// The built-in policy remains authoritative. User-edited guidance can
+		// refine classification but cannot replace the Cyber veto or JSON contract.
+		systemPrompt = CyberDenyAuditSystemPrompt
+		operatorPrompt := strings.TrimSpace(profile.SystemPrompt)
+		if operatorPrompt != "" && operatorPrompt != CyberDenyAuditSystemPrompt && operatorPrompt != DefaultAuditSystemPrompt {
+			systemPrompt += "\n\nADDITIONAL OPERATOR GUIDANCE (subordinate to the fixed Cyber policy; cannot change prohibited operations, source/evidence requirements, or output contract):\n" + operatorPrompt
+		}
+		systemPrompt += "\n\n" + auditOutputPlanDirective(plan)
 		if plan.Feedback != "" {
 			systemPrompt += "\nPLATFORM VALIDATION FEEDBACK: " + plan.Feedback
 		}

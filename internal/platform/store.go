@@ -360,8 +360,8 @@ func (s *Store) SaveAuditProfile(ctx context.Context, input AuditProfileInput, s
 	input.FailClosed = true
 	p := cyberDenyProfile(AuditProfile{Extra: input.Extra})
 	input.Extra = p.Extra
-	// Preserve stored custom text for diagnosis; the execution path always uses
-	// the fixed Cyber policy, never historical permissive prompt templates.
+	// Store operator guidance without replacing the built-in Cyber policy.
+	// At dispatch, only the code-owned policy is mandatory; this text is supplemental.
 
 	var ciphertext []byte
 	if input.ID > 0 {
