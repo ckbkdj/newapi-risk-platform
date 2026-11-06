@@ -175,7 +175,10 @@ func (e *AuditEngine) callCyberDenyModel(ctx context.Context, profile AuditProfi
 	_, fusionEnabled := extra["_risk_fusion_profile_ids"]
 	_, verifierConfigured := extra["_risk_verifier_profile_id"]
 	verifyCleanAllows, _ := extra["_risk_verify_clean_allows"].(bool)
-	if !required && !fusionEnabled && !verifierConfigured && !verifyCleanAllows {
+	// Operator-set threshold controls an additional verification pass for a low-
+	// confidence primary allow. It never converts a confirmed Cyber block to allow.
+	lowConfidenceAllow := candidate.Decision == DecisionAllow && profile.BlockThreshold > 0 && candidate.Confidence < profile.BlockThreshold
+	if !required && !fusionEnabled && !verifierConfigured && !verifyCleanAllows && !lowConfidenceAllow {
 		return cyberDenyVerdict(candidate)
 	}
 
